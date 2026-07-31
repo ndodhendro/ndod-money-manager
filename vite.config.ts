@@ -18,8 +18,8 @@ export default defineConfig({
         short_name: 'Ndod Budget',
         description:
           'Pencatatan pemasukan & pengeluaran rumah tangga, kolaboratif untuk suami dan istri.',
-        theme_color: '#10b981',
-        background_color: '#f9fafb',
+        theme_color: '#0a0a0a',
+        background_color: '#0a0a0a',
         display: 'standalone',
         orientation: 'portrait',
         start_url: '.',

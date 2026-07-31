@@ -15,7 +15,7 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#10b981" />
+    <meta name="theme-color" content="#0a0a0a" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -25,9 +25,49 @@
       content="Pencatatan pemasukan dan pengeluaran rumah tangga, kolaboratif untuk suami dan istri."
     />
     <title>Ndod Budget</title>
+    <style>
+      html,
+      body,
+      #root {
+        height: 100%;
+        margin: 0;
+        background: #0a0a0a;
+      }
+      #app-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0.75rem;
+        background: #0a0a0a;
+        color: #fafafa;
+        font-family: 'Segoe UI', system-ui, sans-serif;
+      }
+      #app-splash img {
+        width: 5.5rem;
+        height: 5.5rem;
+        object-fit: contain;
+      }
+      #app-splash span {
+        font-size: 1.125rem;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="app-splash" aria-hidden="true">
+        <img
+          src="https://tfhjucyewzidbcyfntvb.supabase.co/storage/v1/object/public/ndod-budget/logo/ndod-budget-logo-transparent.png"
+          alt=""
+        />
+        <span>Ndod Budget</span>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

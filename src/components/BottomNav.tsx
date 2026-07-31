@@ -1,10 +1,11 @@
 import { NavLink } from 'react-router-dom'
+import { requestAmountFocus } from '../lib/keyboardFocus'
 
 const TABS = [
-  { to: '/', label: 'Tambah', icon: '➕', end: true },
-  { to: '/riwayat', label: 'Riwayat', icon: '🧾', end: false },
-  { to: '/ringkasan', label: 'Ringkasan', icon: '📊', end: false },
-  { to: '/pengaturan', label: 'Pengaturan', icon: '⚙️', end: false },
+  { to: '/', label: 'Tambah', icon: '➕', end: true, openKeyboard: true },
+  { to: '/riwayat', label: 'Riwayat', icon: '🧾', end: false, openKeyboard: false },
+  { to: '/ringkasan', label: 'Ringkasan', icon: '📊', end: false, openKeyboard: false },
+  { to: '/pengaturan', label: 'Pengaturan', icon: '⚙️', end: false, openKeyboard: false },
 ]
 
 export function BottomNav() {
@@ -16,6 +17,11 @@ export function BottomNav() {
             key={tab.to}
             to={tab.to}
             end={tab.end}
+            onPointerDown={() => {
+              // Harus di pointerdown (masih dalam user gesture) supaya keyboard
+              // numerik HP ikut muncul, bukan cuma focus visual di input.
+              if (tab.openKeyboard) requestAmountFocus()
+            }}
             className={({ isActive }) =>
               `flex flex-1 flex-col items-center gap-0.5 py-2.5 text-xs font-medium ${
                 isActive

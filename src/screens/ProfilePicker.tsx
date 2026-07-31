@@ -1,3 +1,4 @@
+import { openNumericKeyboard } from '../lib/keyboardFocus'
 import { setStoredProfile } from '../lib/profile'
 import type { Owner } from '../lib/types'
 
@@ -12,6 +13,7 @@ const PROFILES: { owner: Owner; label: string; icon: string }[] = [
 
 export function ProfilePicker({ onPicked }: ProfilePickerProps) {
   function choose(owner: Owner) {
+    // Keyboard sudah dibuka di onPointerDown — jangan buka ulang (bisa kedip).
     setStoredProfile(owner)
     onPicked(owner)
   }
@@ -21,7 +23,7 @@ export function ProfilePicker({ onPicked }: ProfilePickerProps) {
       <div className="text-center">
         <div className="text-4xl">💸</div>
         <h1 className="mt-3 text-xl font-semibold text-neutral-900 dark:text-neutral-50">
-          Money Manager
+          Ndod Budget
         </h1>
         <p className="mt-1 text-sm text-neutral-500">
           HP ini dipakai oleh siapa?
@@ -33,6 +35,7 @@ export function ProfilePicker({ onPicked }: ProfilePickerProps) {
           <button
             key={profile.owner}
             type="button"
+            onPointerDown={() => openNumericKeyboard()}
             onClick={() => choose(profile.owner)}
             className="flex flex-col items-center gap-2 rounded-2xl bg-white px-4 py-8 shadow-sm active:scale-95 dark:bg-neutral-900"
           >

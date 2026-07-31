@@ -7,7 +7,7 @@ import {
   formatDateLabel,
   formatRupiah,
 } from '../lib/format'
-import { OWNER_LABELS, type Owner } from '../lib/types'
+import { OWNER_LABELS, categoryIcon, formatCategoryLabel, type Owner } from '../lib/types'
 
 export function History() {
   const navigate = useNavigate()
@@ -95,11 +95,11 @@ export function History() {
                     className="flex w-full items-center gap-3 rounded-xl bg-white px-3 py-2.5 text-left shadow-sm dark:bg-neutral-800"
                   >
                     <span className="text-xl">
-                      {tx.category?.icon ?? '💸'}
+                      {categoryIcon(tx.category)}
                     </span>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-neutral-800 dark:text-neutral-100">
-                        {tx.category?.name ?? 'Tanpa kategori'}
+                        {formatCategoryLabel(tx.category)}
                       </p>
                       <p className="truncate text-xs text-neutral-400">
                         {tx.description || '—'} · {OWNER_LABELS[tx.owner]}

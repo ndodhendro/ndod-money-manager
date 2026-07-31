@@ -1,5 +1,10 @@
 import { useState } from 'react'
-import { HashRouter, Route, Routes } from 'react-router-dom'
+import {
+  HashRouter,
+  Route,
+  Routes,
+  useLocation,
+} from 'react-router-dom'
 import { BottomNav } from './components/BottomNav'
 import { getStoredProfile } from './lib/profile'
 import { History } from './screens/History'
@@ -17,20 +22,42 @@ function App() {
 
   return (
     <HashRouter>
-      <div className="min-h-dvh bg-neutral-50 dark:bg-neutral-950">
-        <Routes>
-          <Route path="/" element={<QuickAdd />} />
-          <Route path="/transaksi/:id" element={<QuickAdd />} />
-          <Route path="/riwayat" element={<History />} />
-          <Route path="/ringkasan" element={<Summary />} />
-          <Route
-            path="/pengaturan"
-            element={<Settings onProfileReset={() => setHasProfile(false)} />}
-          />
-        </Routes>
-        <BottomNav />
-      </div>
+      <AppShell onProfileReset={() => setHasProfile(false)} />
     </HashRouter>
+  )
+}
+
+function AppShell({ onProfileReset }: { onProfileReset: () => void }) {
+  const location = useLocation()
+  // Quick Add (buat baru) tetap di-mount; hanya "aktif" saat di route /.
+  const createAddActive =
+    location.pathname === '/' || location.pathname === ''
+
+  return (
+    <div className="min-h-dvh bg-neutral-50 dark:bg-neutral-950">
+      <div
+        className={
+          createAddActive
+            ? 'block'
+            : 'pointer-events-none fixed inset-0 -z-10 overflow-hidden opacity-0'
+        }
+        aria-hidden={!createAddActive}
+      >
+        <QuickAdd isActive={createAddActive} />
+      </div>
+
+      <Routes>
+        <Route path="/" element={null} />
+        <Route path="/transaksi/:id" element={<QuickAdd isActive />} />
+        <Route path="/riwayat" element={<History />} />
+        <Route path="/ringkasan" element={<Summary />} />
+        <Route
+          path="/pengaturan"
+          element={<Settings onProfileReset={onProfileReset} />}
+        />
+      </Routes>
+      <BottomNav />
+    </div>
   )
 }
 

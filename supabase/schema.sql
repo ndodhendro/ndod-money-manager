@@ -20,14 +20,22 @@ exception when duplicate_object then null; end $$;
 -- ============================================================
 create table if not exists categories (
   id uuid primary key default gen_random_uuid(),
-  name text not null unique,
+  name text not null,
   type transaction_type not null,
   budget_group budget_group,
   icon text not null default '🏷️',
   sort_order integer not null default 0,
   is_active boolean not null default true,
+  parent_id uuid references categories(id) on delete cascade,
   created_at timestamptz not null default now()
 );
+
+-- Nama unik di antara sibling (termasuk root: parent_id null).
+create unique index if not exists categories_name_parent_uidx
+  on categories (name, (coalesce(parent_id, '00000000-0000-0000-0000-000000000000')));
+
+create index if not exists categories_parent_id_idx on categories (parent_id);
+create index if not exists categories_type_active_idx on categories (type, is_active);
 
 -- ============================================================
 -- transactions (MVP inti - dipakai layar Quick Add / Riwayat / Ringkasan)

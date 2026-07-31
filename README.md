@@ -1,4 +1,4 @@
-# Money Manager
+# Ndod Budget
 
 PWA (Progressive Web App) pencatatan keuangan rumah tangga, dipakai kolaboratif oleh suami & istri. Bisa diinstall langsung ke home screen HP (Android/Samsung) seperti aplikasi biasa, tanpa perlu buka browser atau cari tab.
 
@@ -24,7 +24,8 @@ MVP saat ini fokus ke **input transaksi yang cepat & tanpa friksi** + riwayat + 
 
 1. Buat project baru di [supabase.com](https://supabase.com).
 2. Buka **SQL Editor**, jalankan isi [`supabase/schema.sql`](supabase/schema.sql).
-3. Jalankan isi [`supabase/seed.sql`](supabase/seed.sql) untuk mengisi kategori awal.
+3. Jalankan isi [`supabase/seed.sql`](supabase/seed.sql) untuk mengisi kategori + sub-kategori.
+4. **Kalau project Supabase sudah dibuat sebelumnya** (sebelum sub-kategori), jalankan juga [`supabase/migrate_subcategories.sql`](supabase/migrate_subcategories.sql) sekali.
 4. (Opsional) Jalankan [`supabase/seed_recurring_example.sql`](supabase/seed_recurring_example.sql) untuk mengisi tagihan rutin bulan ini supaya tidak mulai dari nol — sesuaikan dulu nominalnya kalau perlu.
 5. Ambil `Project URL` dan `anon public key` dari **Project Settings > API**.
 

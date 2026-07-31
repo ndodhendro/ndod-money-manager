@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { useTransactions } from '../hooks/useTransactions'
 import { currentMonthLabel, currentMonthRange, formatRupiah } from '../lib/format'
+import { categoryIcon } from '../lib/types'
 
 export function Summary() {
   const range = useMemo(() => currentMonthRange(), [])
@@ -14,6 +15,7 @@ export function Summary() {
     .reduce((sum, t) => sum + t.amount, 0)
   const net = totalIncome - totalExpense
 
+  // Roll-up ke parent category supaya ringkasan tetap compact.
   const expenseByCategory = useMemo(() => {
     const map = new Map<
       string,
@@ -21,26 +23,35 @@ export function Summary() {
     >()
     for (const tx of transactions) {
       if (tx.type !== 'expense') continue
-      const key = tx.category_id ?? 'lain'
+      const parent = tx.category?.parent
+      const key = parent?.id ?? tx.category_id ?? 'lain'
+      const name = parent?.name ?? tx.category?.name ?? 'Tanpa kategori'
+      const icon = categoryIcon(tx.category)
       const existing = map.get(key)
       if (existing) {
         existing.total += tx.amount
       } else {
-        map.set(key, {
-          name: tx.category?.name ?? 'Tanpa kategori',
-          icon: tx.category?.icon ?? '💸',
-          total: tx.amount,
-        })
+        map.set(key, { name, icon, total: tx.amount })
       }
     }
     return [...map.values()].sort((a, b) => b.total - a.total)
   }, [transactions])
 
   const needsTotal = transactions
-    .filter((t) => t.type === 'expense' && t.category?.budget_group === 'needs')
+    .filter((t) => {
+      if (t.type !== 'expense') return false
+      const group =
+        t.category?.budget_group ?? t.category?.parent?.budget_group ?? null
+      return group === 'needs'
+    })
     .reduce((sum, t) => sum + t.amount, 0)
   const wantsTotal = transactions
-    .filter((t) => t.type === 'expense' && t.category?.budget_group === 'wants')
+    .filter((t) => {
+      if (t.type !== 'expense') return false
+      const group =
+        t.category?.budget_group ?? t.category?.parent?.budget_group ?? null
+      return group === 'wants'
+    })
     .reduce((sum, t) => sum + t.amount, 0)
 
   return (

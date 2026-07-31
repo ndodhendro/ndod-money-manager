@@ -1,7 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import type { Category, TransactionType } from '../lib/types'
 import { getCategoryUsage } from '../lib/profile'
+
+export interface CategoryTreeNode extends Category {
+  children: Category[]
+}
 
 export function useCategories(type?: TransactionType) {
   const [categories, setCategories] = useState<Category[]>([])
@@ -34,9 +38,59 @@ export function useCategories(type?: TransactionType) {
     load()
   }, [load])
 
-  const sortedByUsage = [...categories].sort(
-    (a, b) => getCategoryUsage(b.id) - getCategoryUsage(a.id),
+  const parents = useMemo(
+    () => categories.filter((c) => !c.parent_id),
+    [categories],
   )
 
-  return { categories, sortedByUsage, loading, error, reload: load }
+  const childrenByParent = useMemo(() => {
+    const map = new Map<string, Category[]>()
+    for (const c of categories) {
+      if (!c.parent_id) continue
+      const list = map.get(c.parent_id) ?? []
+      list.push(c)
+      map.set(c.parent_id, list)
+    }
+    return map
+  }, [categories])
+
+  const tree: CategoryTreeNode[] = useMemo(
+    () =>
+      parents.map((p) => ({
+        ...p,
+        children: childrenByParent.get(p.id) ?? [],
+      })),
+    [parents, childrenByParent],
+  )
+
+  // Urut parent berdasarkan total usage anak-anaknya (untuk hint di sheet).
+  const treeByUsage = useMemo(() => {
+    return [...tree].sort((a, b) => {
+      const usageA =
+        getCategoryUsage(a.id) +
+        a.children.reduce((s, c) => s + getCategoryUsage(c.id), 0)
+      const usageB =
+        getCategoryUsage(b.id) +
+        b.children.reduce((s, c) => s + getCategoryUsage(c.id), 0)
+      return usageB - usageA
+    })
+  }, [tree])
+
+  const byId = useMemo(() => {
+    const map = new Map<string, Category>()
+    for (const c of categories) map.set(c.id, c)
+    return map
+  }, [categories])
+
+  return {
+    categories,
+    parents,
+    childrenByParent,
+    tree,
+    treeByUsage,
+    byId,
+    loading,
+    error,
+    reload: load,
+  }
 }

@@ -7,7 +7,7 @@ export async function fetchTransactions(range: {
 }): Promise<TransactionWithCategory[]> {
   const { data, error } = await supabase
     .from('transactions')
-    .select('*, category:categories(*)')
+    .select('*, category:categories(*, parent:categories!parent_id(*))')
     .gte('occurred_on', range.start)
     .lte('occurred_on', range.end)
     .order('occurred_on', { ascending: false })

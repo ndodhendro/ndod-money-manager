@@ -14,8 +14,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon-32.png', 'pwa-192.png', 'pwa-512.png', 'maskable-512.png'],
       manifest: {
-        name: 'Money Manager',
-        short_name: 'Money Manager',
+        name: 'Ndod Budget',
+        short_name: 'Ndod Budget',
         description:
           'Pencatatan pemasukan & pengeluaran rumah tangga, kolaboratif untuk suami dan istri.',
         theme_color: '#10b981',

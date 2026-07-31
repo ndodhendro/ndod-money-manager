@@ -1,7 +1,5 @@
 export type Owner = 'suami' | 'istri'
 
-// 'suami'/'istri' tetap dipakai sebagai identifier teknis (cocok dengan enum
-// owner_type di database), tapi ditampilkan ke user dengan nama panggilan.
 export const OWNER_LABELS: Record<Owner, string> = {
   suami: 'Ndod',
   istri: 'Devi',
@@ -19,6 +17,11 @@ export interface Category {
   icon: string
   sort_order: number
   is_active: boolean
+  parent_id: string | null
+}
+
+export interface CategoryWithParent extends Category {
+  parent?: Category | null
 }
 
 export interface Transaction {
@@ -35,7 +38,7 @@ export interface Transaction {
 }
 
 export interface TransactionWithCategory extends Transaction {
-  category: Category | null
+  category: CategoryWithParent | null
 }
 
 export interface NewTransactionInput {
@@ -46,4 +49,20 @@ export interface NewTransactionInput {
   owner: Owner
   occurred_on: string
   is_recurring: boolean
+}
+
+/** Label tampilan: "🚗 Transportasi/Parkir" atau "🏠 Tempat Tinggal" */
+export function formatCategoryLabel(
+  category: CategoryWithParent | null | undefined,
+): string {
+  if (!category) return 'Tanpa kategori'
+  if (category.parent) {
+    return `${category.parent.icon} ${category.parent.name}/${category.name}`
+  }
+  return `${category.icon} ${category.name}`
+}
+
+export function categoryIcon(category: CategoryWithParent | null | undefined): string {
+  if (!category) return '💸'
+  return category.parent?.icon ?? category.icon
 }

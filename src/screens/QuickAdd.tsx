@@ -1,37 +1,76 @@
-import { useEffect, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { AmountKeypad } from '../components/AmountKeypad'
-import { CategoryGrid } from '../components/CategoryGrid'
+import { CategoryPicker } from '../components/CategoryPicker'
 import { useCategories } from '../hooks/useCategories'
 import { bumpCategoryUsage, getStoredProfile } from '../lib/profile'
+import { formatNumber, todayIso } from '../lib/format'
+import {
+  claimNumericKeyboard,
+  openNumericKeyboard,
+  registerAmountInput,
+} from '../lib/keyboardFocus'
 import { supabase } from '../lib/supabase'
 import {
   createTransaction,
   deleteTransaction,
   updateTransaction,
 } from '../lib/transactionsApi'
-import { todayIso } from '../lib/format'
-import type { Owner, TransactionType } from '../lib/types'
+import { OWNER_LABELS, type Owner, type TransactionType } from '../lib/types'
 
-export function QuickAdd() {
+interface QuickAddProps {
+  /** False saat layar Tambah di-park (opacity-0). Jangan register/claim input tersembunyi. */
+  isActive?: boolean
+}
+
+export function QuickAdd({ isActive = true }: QuickAddProps) {
   const { id } = useParams<{ id: string }>()
   const [searchParams] = useSearchParams()
   const isEditing = Boolean(id)
   const navigate = useNavigate()
+  const profileOwner: Owner = getStoredProfile() ?? 'suami'
 
   const [type, setType] = useState<TransactionType>(
     searchParams.get('type') === 'income' ? 'income' : 'expense',
   )
-  const [amount, setAmount] = useState('0')
+  const [amountDigits, setAmountDigits] = useState('')
   const [categoryId, setCategoryId] = useState<string | null>(null)
   const [description, setDescription] = useState('')
   const [occurredOn, setOccurredOn] = useState(todayIso())
-  const [owner, setOwner] = useState<Owner>(getStoredProfile() ?? 'suami')
+  const [owner, setOwner] = useState<Owner>(profileOwner)
   const [saving, setSaving] = useState(false)
   const [loadingExisting, setLoadingExisting] = useState(isEditing)
   const [toast, setToast] = useState<string | null>(null)
+  const [categoryOpen, setCategoryOpen] = useState(false)
 
-  const { sortedByUsage, loading: loadingCategories } = useCategories(type)
+  const amountRef = useRef<HTMLInputElement | null>(null)
+  const descriptionRef = useRef<HTMLInputElement>(null)
+
+  const amountCallbackRef = useCallback((el: HTMLInputElement | null) => {
+    amountRef.current = el
+  }, [])
+
+  // Hanya register input saat layar benar-benar terlihat.
+  useEffect(() => {
+    if (isEditing) return
+    if (isActive) {
+      registerAmountInput(amountRef.current)
+    } else {
+      registerAmountInput(null)
+    }
+    return () => {
+      if (!isEditing) registerAmountInput(null)
+    }
+  }, [isActive, isEditing])
+
+  const { treeByUsage, parents, byId, loading: loadingCategories, reload } =
+    useCategories(type)
 
   useEffect(() => {
     if (!isEditing || !id) return
@@ -45,7 +84,7 @@ export function QuickAdd() {
       if (cancelled) return
       if (!error && data) {
         setType(data.type)
-        setAmount(String(Math.round(Number(data.amount))))
+        setAmountDigits(String(Math.round(Number(data.amount))))
         setCategoryId(data.category_id)
         setDescription(data.description ?? '')
         setOccurredOn(data.occurred_on)
@@ -59,13 +98,17 @@ export function QuickAdd() {
     }
   }, [id, isEditing])
 
-  // Kategori terpilih harus reset kalau ganti tab income/expense (kategori beda tipe).
+  // Claim ghost → nominal HANYA setelah layar Tambah aktif & terlihat.
+  useLayoutEffect(() => {
+    if (isEditing || !isActive || loadingExisting) return
+    claimNumericKeyboard(amountRef.current)
+  }, [isEditing, isActive, loadingExisting])
+
+  // Reset kategori kalau ganti income/expense dan pilihan lama tidak valid.
   useEffect(() => {
-    if (loadingCategories) return
-    if (categoryId && !sortedByUsage.some((c) => c.id === categoryId)) {
-      setCategoryId(null)
-    }
-  }, [type, loadingCategories, sortedByUsage, categoryId])
+    if (loadingCategories || !categoryId) return
+    if (!byId.has(categoryId)) setCategoryId(null)
+  }, [type, loadingCategories, byId, categoryId])
 
   useEffect(() => {
     if (!toast) return
@@ -74,31 +117,134 @@ export function QuickAdd() {
   }, [toast])
 
   function resetForm() {
-    setAmount('0')
+    setAmountDigits('')
     setCategoryId(null)
     setDescription('')
     setOccurredOn(todayIso())
+    setOwner(profileOwner)
+    setCategoryOpen(false)
+  }
+
+  function isAmountFilled() {
+    return Number(amountDigits) > 0
+  }
+
+  /** Field wajib di atas posisi saat ini yang belum diisi. Nominal 0 = belum diisi. */
+  function findIncompleteAbove(
+    from: 'category' | 'description' | 'save',
+  ): 'amount' | 'category' | null {
+    if (!isAmountFilled()) return 'amount'
+    if (from !== 'category' && !categoryId) return 'category'
+    return null
+  }
+
+  function focusAmountField(message?: string) {
+    setCategoryOpen(false)
+    if (message) setToast(message)
+    // Dipanggil dari tap/gesture → boleh buka numpad.
+    openNumericKeyboard()
+    if (!claimNumericKeyboard(amountRef.current)) {
+      amountRef.current?.focus()
+    }
+  }
+
+  function focusIncompleteField(
+    field: 'amount' | 'category',
+  ) {
+    if (field === 'amount') {
+      focusAmountField('Isi nominal dulu ya')
+      return
+    }
+    setToast('Pilih kategori dulu ya')
+    setCategoryOpen(true)
+  }
+
+  /** Coba maju ke langkah berikutnya; kalau ada field di atas yang kosong, fokus ke situ. */
+  function advanceOrFixAbove(
+    from: 'amount' | 'category' | 'description' | 'save',
+  ): boolean {
+    if (from === 'amount') {
+      if (!isAmountFilled()) {
+        focusAmountField('Isi nominal dulu ya')
+        return false
+      }
+      // Kalau kategori sudah terisi (user isi kategori dulu), lanjut ke catatan.
+      if (categoryId) {
+        setTimeout(() => descriptionRef.current?.focus(), 50)
+        return true
+      }
+      setCategoryOpen(true)
+      return true
+    }
+
+    const incomplete = findIncompleteAbove(
+      from === 'category'
+        ? 'category'
+        : from === 'description'
+          ? 'description'
+          : 'save',
+    )
+    if (incomplete) {
+      focusIncompleteField(incomplete)
+      return false
+    }
+    return true
+  }
+
+  function handleCategoryOpenChange(open: boolean) {
+    if (open) {
+      // Lompat ke kategori: cek dulu field di atas (nominal).
+      if (!advanceOrFixAbove('category')) return
+    }
+    setCategoryOpen(open)
+  }
+
+  function handleAmountKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      amountRef.current?.blur()
+      advanceOrFixAbove('amount')
+    }
+  }
+
+  function handleCategorySelect(id: string) {
+    setCategoryId(id)
+    setCategoryOpen(false)
+    // Setelah pilih kategori, next ke catatan — tapi kalau nominal masih 0, balik ke atas.
+    if (!isAmountFilled()) {
+      focusAmountField('Isi nominal dulu ya')
+      return
+    }
+    setTimeout(() => descriptionRef.current?.focus(), 50)
+  }
+
+  function handleDescriptionFocus() {
+    const incomplete = findIncompleteAbove('description')
+    if (incomplete) {
+      descriptionRef.current?.blur()
+      focusIncompleteField(incomplete)
+    }
+  }
+
+  function handleDescriptionKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      void handleSave()
+    }
   }
 
   async function handleSave() {
-    const numericAmount = Number(amount)
-    if (!numericAmount || numericAmount <= 0) {
-      setToast('Isi nominal dulu ya')
-      return
-    }
-    if (!categoryId) {
-      setToast('Pilih kategori dulu ya')
-      return
-    }
+    if (!advanceOrFixAbove('save')) return
 
+    const numericAmount = Number(amountDigits)
     setSaving(true)
     try {
       const input = {
         type,
-        category_id: categoryId,
+        category_id: categoryId!,
         amount: numericAmount,
         description,
-        owner,
+        owner: isEditing ? owner : profileOwner,
         occurred_on: occurredOn,
         is_recurring: false,
       }
@@ -107,7 +253,7 @@ export function QuickAdd() {
         navigate('/riwayat')
       } else {
         await createTransaction(input)
-        bumpCategoryUsage(categoryId)
+        bumpCategoryUsage(categoryId!)
         setToast('Tersimpan ✓')
         resetForm()
       }
@@ -135,11 +281,18 @@ export function QuickAdd() {
     return <div className="p-6 text-center text-neutral-400">Memuat…</div>
   }
 
+  const displayAmount = amountDigits ? formatNumber(Number(amountDigits)) : ''
+
   return (
     <div className="mx-auto max-w-md px-4 pt-5 pb-28">
-      <h1 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50">
-        {isEditing ? 'Edit Transaksi' : 'Catat Transaksi'}
-      </h1>
+      <div className="flex items-start justify-between gap-3">
+        <h1 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50">
+          {isEditing ? 'Edit Transaksi' : 'Catat Transaksi'}
+        </h1>
+        <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+          {OWNER_LABELS[isEditing ? owner : profileOwner]}
+        </span>
+      </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2 rounded-xl bg-neutral-100 p-1 dark:bg-neutral-800">
         {(['expense', 'income'] as TransactionType[]).map((t) => (
@@ -158,50 +311,75 @@ export function QuickAdd() {
         ))}
       </div>
 
-      <div className="mt-4">
-        <AmountKeypad value={amount} onChange={setAmount} />
-      </div>
+      <label className="mt-4 block">
+        <span className="mb-1.5 block text-xs text-neutral-400">
+          Tanggal
+        </span>
+        <input
+          type="date"
+          value={occurredOn}
+          onChange={(e) => setOccurredOn(e.target.value)}
+          tabIndex={-1}
+          className="w-full rounded-xl bg-white px-4 py-3 text-sm shadow-sm outline-none dark:bg-neutral-800 dark:text-neutral-100"
+        />
+      </label>
 
-      <div className="mt-5">
-        <p className="mb-2 text-sm font-medium text-neutral-600 dark:text-neutral-300">
-          Kategori
-        </p>
+      <label className="mt-5 block">
+        <span className="mb-1.5 block text-sm font-medium text-neutral-600 dark:text-neutral-300">
+          Nominal
+        </span>
+        <div className="flex items-center gap-2 rounded-xl bg-white px-4 py-3 shadow-sm dark:bg-neutral-800">
+          <span className="text-sm font-medium text-neutral-400">Rp</span>
+          <input
+            ref={amountCallbackRef}
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            enterKeyHint="next"
+            autoComplete="off"
+            value={displayAmount}
+            onChange={(e) => {
+              const digits = e.target.value.replace(/\D/g, '').slice(0, 11)
+              setAmountDigits(digits)
+            }}
+            onKeyDown={handleAmountKeyDown}
+            placeholder="0"
+            className="w-full bg-transparent text-2xl font-semibold tabular-nums text-neutral-900 outline-none placeholder:text-neutral-300 dark:text-neutral-50"
+          />
+        </div>
+      </label>
+
+      <div className="mt-4">
         {loadingCategories ? (
           <p className="text-sm text-neutral-400">Memuat kategori…</p>
         ) : (
-          <CategoryGrid
-            categories={sortedByUsage}
+          <CategoryPicker
+            tree={treeByUsage}
+            parents={parents}
             selectedId={categoryId}
-            onSelect={setCategoryId}
+            byId={byId}
+            open={categoryOpen}
+            onOpenChange={handleCategoryOpenChange}
+            onSelect={handleCategorySelect}
+            transactionType={type}
+            onCategoriesChanged={reload}
+            highlighted={categoryOpen}
           />
         )}
       </div>
 
-      <div className="mt-5 space-y-3">
+      <div className="mt-5">
         <input
+          ref={descriptionRef}
           type="text"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
+          onFocus={handleDescriptionFocus}
+          onKeyDown={handleDescriptionKeyDown}
+          enterKeyHint="done"
           placeholder="Catatan (opsional)"
           className="w-full rounded-xl bg-white px-4 py-3 text-sm shadow-sm outline-none dark:bg-neutral-800 dark:text-neutral-100"
         />
-
-        <div className="flex gap-3">
-          <input
-            type="date"
-            value={occurredOn}
-            onChange={(e) => setOccurredOn(e.target.value)}
-            className="flex-1 rounded-xl bg-white px-4 py-3 text-sm shadow-sm outline-none dark:bg-neutral-800 dark:text-neutral-100"
-          />
-          <select
-            value={owner}
-            onChange={(e) => setOwner(e.target.value as Owner)}
-            className="flex-1 rounded-xl bg-white px-4 py-3 text-sm shadow-sm outline-none dark:bg-neutral-800 dark:text-neutral-100"
-          >
-            <option value="suami">Ndod</option>
-            <option value="istri">Devi</option>
-          </select>
-        </div>
       </div>
 
       <button

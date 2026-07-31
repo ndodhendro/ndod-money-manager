@@ -34,6 +34,7 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_HOUSEHOLD_PIN: ${{ secrets.VITE_HOUSEHOLD_PIN }}
         run: npm run build
 
       - name: Upload artifact

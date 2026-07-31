@@ -35,7 +35,7 @@ MVP saat ini fokus ke **input transaksi yang cepat & tanpa friksi** + riwayat + 
 cp .env.example .env
 ```
 
-Isi `.env` dengan URL & anon key dari Supabase.
+Isi `.env` dengan URL & anon key dari Supabase, plus `VITE_HOUSEHOLD_PIN` (PIN rumah tangga, diminta sekali per device).
 
 ### 3. Install & jalankan
 
@@ -50,7 +50,7 @@ Buka `http://localhost:5173`. Untuk mencoba pengalaman "install ke home screen" 
 
 1. Push repo ini ke GitHub.
 2. Di **Settings > Pages**, set **Source** ke `GitHub Actions`.
-3. Di **Settings > Secrets and variables > Actions**, tambahkan secret `VITE_SUPABASE_URL` dan `VITE_SUPABASE_ANON_KEY`.
+3. Di **Settings > Secrets and variables > Actions**, tambahkan secret `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, dan `VITE_HOUSEHOLD_PIN`.
 4. Push ke branch `main` — workflow [`deploy.yml`](.github/workflows/deploy.yml) otomatis build & deploy.
 5. Buka URL GitHub Pages dari Chrome/Samsung Internet di HP, lalu **Add to Home Screen** / **Install App**.
 

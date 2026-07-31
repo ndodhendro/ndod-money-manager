@@ -2,15 +2,8 @@
 <html lang="id">
   <head>
     <meta charset="UTF-8" />
-    <link
-      rel="icon"
-      type="image/png"
-      href="https://tfhjucyewzidbcyfntvb.supabase.co/storage/v1/object/public/ndod-budget/logo/ndod-budget-logo-transparent.png"
-    />
-    <link
-      rel="apple-touch-icon"
-      href="https://tfhjucyewzidbcyfntvb.supabase.co/storage/v1/object/public/ndod-budget/logo/ndod-budget-logo-transparent.png"
-    />
+    <link rel="icon" type="image/png" href="./favicon-32.png" />
+    <link rel="apple-touch-icon" href="./pwa-192.png" />
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover"
@@ -33,48 +26,9 @@
         margin: 0;
         background: #0a0a0a;
       }
-      #app-splash {
-        position: fixed;
-        inset: 0;
-        z-index: 9999;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 0.75rem;
-        background: #0a0a0a;
-        color: #fafafa;
-        font-family: 'Segoe UI', system-ui, sans-serif;
-        opacity: 1;
-        transition: opacity 0.18s ease;
-        pointer-events: none;
-      }
-      #app-splash.is-hidden {
-        opacity: 0;
-      }
-      #app-splash img {
-        width: 144px;
-        height: auto;
-        aspect-ratio: 493 / 506;
-        object-fit: contain;
-      }
-      #app-splash .app-splash-title {
-        font-size: 1.125rem;
-        font-weight: 600;
-        letter-spacing: 0.01em;
-        line-height: 1.2;
-      }
     </style>
   </head>
   <body>
-    <!-- Di luar #root supaya tidak langsung hilang saat React mount. -->
-    <div id="app-splash" aria-hidden="true">
-      <img
-        src="https://tfhjucyewzidbcyfntvb.supabase.co/storage/v1/object/public/ndod-budget/logo/ndod-budget-logo-transparent.png"
-        alt=""
-      />
-      <div class="app-splash-title">Ndod Budget</div>
-    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

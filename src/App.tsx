@@ -7,20 +7,25 @@ import {
 } from 'react-router-dom'
 import { BottomNav } from './components/BottomNav'
 import { UpdateRequired } from './components/UpdateRequired'
+import { isDeviceUnlocked } from './lib/deviceUnlock'
 import { getStoredProfile } from './lib/profile'
 import { History } from './screens/History'
+import { PinUnlock } from './screens/PinUnlock'
 import { ProfilePicker } from './screens/ProfilePicker'
 import { QuickAdd } from './screens/QuickAdd'
 import { Settings } from './screens/Settings'
 import { Summary } from './screens/Summary'
 
 function App() {
+  const [unlocked, setUnlocked] = useState(() => isDeviceUnlocked())
   const [hasProfile, setHasProfile] = useState(() => Boolean(getStoredProfile()))
 
   return (
     <>
       <UpdateRequired />
-      {!hasProfile ? (
+      {!unlocked ? (
+        <PinUnlock onUnlocked={() => setUnlocked(true)} />
+      ) : !hasProfile ? (
         <ProfilePicker onPicked={() => setHasProfile(true)} />
       ) : (
         <HashRouter>

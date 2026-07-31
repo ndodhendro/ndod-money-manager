@@ -198,8 +198,8 @@ export function QuickAdd() {
             onChange={(e) => setOwner(e.target.value as Owner)}
             className="flex-1 rounded-xl bg-white px-4 py-3 text-sm shadow-sm outline-none dark:bg-neutral-800 dark:text-neutral-100"
           >
-            <option value="suami">Suami</option>
-            <option value="istri">Istri</option>
+            <option value="suami">Ndod</option>
+            <option value="istri">Devi</option>
           </select>
         </div>
       </div>

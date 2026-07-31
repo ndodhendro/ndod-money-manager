@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useCategories } from '../hooks/useCategories'
 import { clearStoredProfile, getStoredProfile } from '../lib/profile'
 import { supabase } from '../lib/supabase'
-import type { BudgetGroup, TransactionType } from '../lib/types'
+import { OWNER_LABELS, type BudgetGroup, type TransactionType } from '../lib/types'
 
 interface SettingsProps {
   onProfileReset: () => void
@@ -77,8 +77,8 @@ export function Settings({ onProfileReset }: SettingsProps) {
         <p className="text-sm font-medium text-neutral-700 dark:text-neutral-200">
           Profil HP ini
         </p>
-        <p className="mt-1 text-sm text-neutral-500 capitalize">
-          {profile ?? 'Belum dipilih'}
+        <p className="mt-1 text-sm text-neutral-500">
+          {profile ? OWNER_LABELS[profile] : 'Belum dipilih'}
         </p>
         <button
           type="button"

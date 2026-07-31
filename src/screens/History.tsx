@@ -7,7 +7,7 @@ import {
   formatDateLabel,
   formatRupiah,
 } from '../lib/format'
-import type { Owner } from '../lib/types'
+import { OWNER_LABELS, type Owner } from '../lib/types'
 
 export function History() {
   const navigate = useNavigate()
@@ -42,13 +42,13 @@ export function History() {
             key={f}
             type="button"
             onClick={() => setOwnerFilter(f)}
-            className={`rounded-full px-3 py-1.5 text-xs font-medium capitalize ${
+            className={`rounded-full px-3 py-1.5 text-xs font-medium ${
               ownerFilter === f
                 ? 'bg-emerald-500 text-white'
                 : 'bg-neutral-100 text-neutral-500 dark:bg-neutral-800'
             }`}
           >
-            {f}
+            {f === 'semua' ? 'Semua' : OWNER_LABELS[f]}
           </button>
         ))}
       </div>
@@ -102,7 +102,7 @@ export function History() {
                         {tx.category?.name ?? 'Tanpa kategori'}
                       </p>
                       <p className="truncate text-xs text-neutral-400">
-                        {tx.description || '—'} · {tx.owner}
+                        {tx.description || '—'} · {OWNER_LABELS[tx.owner]}
                       </p>
                     </div>
                     <p

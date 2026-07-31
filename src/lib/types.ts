@@ -1,5 +1,12 @@
 export type Owner = 'suami' | 'istri'
 
+// 'suami'/'istri' tetap dipakai sebagai identifier teknis (cocok dengan enum
+// owner_type di database), tapi ditampilkan ke user dengan nama panggilan.
+export const OWNER_LABELS: Record<Owner, string> = {
+  suami: 'Ndod',
+  istri: 'Devi',
+}
+
 export type TransactionType = 'income' | 'expense'
 
 export type BudgetGroup = 'needs' | 'wants'

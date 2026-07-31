@@ -6,8 +6,8 @@ interface ProfilePickerProps {
 }
 
 const PROFILES: { owner: Owner; label: string; icon: string }[] = [
-  { owner: 'suami', label: 'Suami', icon: '🧑' },
-  { owner: 'istri', label: 'Istri', icon: '👩' },
+  { owner: 'suami', label: 'Ndod', icon: '🧑' },
+  { owner: 'istri', label: 'Devi', icon: '👩' },
 ]
 
 export function ProfilePicker({ onPicked }: ProfilePickerProps) {

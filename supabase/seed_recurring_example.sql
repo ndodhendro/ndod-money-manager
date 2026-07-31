@@ -5,7 +5,7 @@
 
 insert into transactions (type, category_id, amount, description, owner, occurred_on, is_recurring)
 values
-  ('income', (select id from categories where name = 'Gaji Pokok'), 17000000, 'Gaji bulanan kantor - Suami', 'suami', date_trunc('month', current_date)::date, true),
+  ('income', (select id from categories where name = 'Gaji Pokok'), 17000000, 'Gaji bulanan kantor - Ndod', 'suami', date_trunc('month', current_date)::date, true),
 
   ('expense', (select id from categories where name = 'Kebutuhan Pokok'), 4500000, 'Kebutuhan pokok rumah tangga', 'suami', date_trunc('month', current_date)::date, true),
   ('expense', (select id from categories where name = 'Tempat Tinggal'), 3000000, 'KPR Northbend C1', 'suami', date_trunc('month', current_date)::date, true),

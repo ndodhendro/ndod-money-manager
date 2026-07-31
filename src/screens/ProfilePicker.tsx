@@ -25,7 +25,7 @@ export function ProfilePicker({ onPicked }: ProfilePickerProps) {
         <img
           src={APP_LOGO_URL}
           alt="Ndod Budget"
-          className="mx-auto h-28 w-28 object-contain"
+          className="mx-auto h-[144px] w-[144px] object-contain"
         />
         <h1 className="mt-3 text-xl font-semibold text-neutral-900 dark:text-neutral-50">
           Ndod Budget

@@ -11,7 +11,7 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
-      registerType: 'autoUpdate',
+      registerType: 'prompt',
       includeAssets: ['favicon-32.png', 'pwa-192.png', 'pwa-512.png', 'maskable-512.png'],
       manifest: {
         name: 'Ndod Budget',
@@ -54,8 +54,9 @@ export default defineConfig({
         // network-only sesuai keputusan online-only, supaya data selalu terbaru.
         globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
       },
+      // Jangan aktifkan SW di localhost — sering bikin HP stuck di bundle lama.
       devOptions: {
-        enabled: true,
+        enabled: false,
       },
     }),
   ],

@@ -6,6 +6,7 @@ import {
   useLocation,
 } from 'react-router-dom'
 import { BottomNav } from './components/BottomNav'
+import { UpdateRequired } from './components/UpdateRequired'
 import { getStoredProfile } from './lib/profile'
 import { History } from './screens/History'
 import { ProfilePicker } from './screens/ProfilePicker'
@@ -16,14 +17,17 @@ import { Summary } from './screens/Summary'
 function App() {
   const [hasProfile, setHasProfile] = useState(() => Boolean(getStoredProfile()))
 
-  if (!hasProfile) {
-    return <ProfilePicker onPicked={() => setHasProfile(true)} />
-  }
-
   return (
-    <HashRouter>
-      <AppShell onProfileReset={() => setHasProfile(false)} />
-    </HashRouter>
+    <>
+      <UpdateRequired />
+      {!hasProfile ? (
+        <ProfilePicker onPicked={() => setHasProfile(true)} />
+      ) : (
+        <HashRouter>
+          <AppShell onProfileReset={() => setHasProfile(false)} />
+        </HashRouter>
+      )}
+    </>
   )
 }
 

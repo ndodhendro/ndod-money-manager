@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { CategoryManagePanel } from '../components/CategoryManagePanel'
 import { PageTitle } from '../components/PageTitle'
+import { APP_VERSION } from '../lib/branding'
 import { clearStoredProfile, getStoredProfile } from '../lib/profile'
 import { OWNER_LABELS, type TransactionType } from '../lib/types'
 
@@ -50,9 +51,10 @@ export function Settings({ onProfileReset }: SettingsProps) {
         />
       </div>
 
-      <p className="mt-10 pb-2 text-center text-xs text-neutral-400 dark:text-neutral-500">
-        Made by Ndod {'<3'}
-      </p>
+      <div className="mt-10 pb-2 text-center text-xs text-neutral-400 dark:text-neutral-500">
+        <p>Made by Ndod ❤️</p>
+        <p className="mt-1">v{APP_VERSION}</p>
+      </div>
     </div>
   )
 }

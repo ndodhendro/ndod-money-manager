@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { CategoryManagePanel } from '../components/CategoryManagePanel'
-import { useCategories } from '../hooks/useCategories'
 import { clearStoredProfile, getStoredProfile } from '../lib/profile'
 import { OWNER_LABELS, type TransactionType } from '../lib/types'
 
@@ -10,7 +9,6 @@ interface SettingsProps {
 
 export function Settings({ onProfileReset }: SettingsProps) {
   const profile = getStoredProfile()
-  const { tree, parents, reload } = useCategories()
   const [manageType, setManageType] = useState<TransactionType>('expense')
 
   function handleChangeProfile() {
@@ -49,11 +47,13 @@ export function Settings({ onProfileReset }: SettingsProps) {
           type={manageType}
           allowTypeChange
           onTypeChange={setManageType}
-          parents={parents}
-          tree={tree}
-          onChanged={reload}
+          onChanged={() => {}}
         />
       </div>
+
+      <p className="mt-10 pb-2 text-center text-xs text-neutral-400 dark:text-neutral-500">
+        Made by Ndod {'<3'}
+      </p>
     </div>
   )
 }

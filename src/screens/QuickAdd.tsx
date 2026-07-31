@@ -9,6 +9,7 @@ import {
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { CategoryPicker } from '../components/CategoryPicker'
 import { useCategories } from '../hooks/useCategories'
+import { ActionEmoji } from '../lib/actionEmoji'
 import { bumpCategoryUsage, getStoredProfile } from '../lib/profile'
 import { formatNumber, todayIso } from '../lib/format'
 import {
@@ -69,7 +70,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     }
   }, [isActive, isEditing])
 
-  const { treeByUsage, parents, byId, loading: loadingCategories, reload } =
+  const { treeByUsage, byId, loading: loadingCategories, reload } =
     useCategories(type)
 
   useEffect(() => {
@@ -254,7 +255,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
       } else {
         await createTransaction(input)
         bumpCategoryUsage(categoryId!)
-        setToast('Tersimpan ✓')
+        setToast(`Tersimpan ${ActionEmoji.save}`)
         resetForm()
       }
     } catch (err) {
@@ -350,12 +351,11 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
       </label>
 
       <div className="mt-4">
-        {loadingCategories ? (
+        {loadingCategories && treeByUsage.length === 0 ? (
           <p className="text-sm text-neutral-400">Memuat kategori…</p>
         ) : (
           <CategoryPicker
             tree={treeByUsage}
-            parents={parents}
             selectedId={categoryId}
             byId={byId}
             open={categoryOpen}

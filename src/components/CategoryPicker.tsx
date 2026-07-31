@@ -1,18 +1,17 @@
 import { useEffect, useState } from 'react'
 import type { CategoryTreeNode } from '../hooks/useCategories'
+import { ActionEmoji } from '../lib/actionEmoji'
 import type { Category, TransactionType } from '../lib/types'
 import { formatCategoryLabel } from '../lib/types'
 import { CategoryManagePanel } from './CategoryManagePanel'
 
 interface CategoryPickerProps {
   tree: CategoryTreeNode[]
-  parents: Category[]
   selectedId: string | null
   byId: Map<string, Category>
   open: boolean
   onOpenChange: (open: boolean) => void
   onSelect: (categoryId: string) => void
-  /** Dipakai untuk kelola kategori runtime (sama seperti Pengaturan). */
   transactionType: TransactionType
   onCategoriesChanged: () => void
   highlighted?: boolean
@@ -20,7 +19,6 @@ interface CategoryPickerProps {
 
 export function CategoryPicker({
   tree,
-  parents,
   selectedId,
   byId,
   open,
@@ -43,8 +41,11 @@ export function CategoryPicker({
   useEffect(() => {
     if (!open) {
       setManaging(false)
-      return
     }
+  }, [open])
+
+  useEffect(() => {
+    if (!open || managing) return
     if (selected?.parent_id) {
       setActiveParentId(selected.parent_id)
     } else if (selected && !selected.parent_id) {
@@ -52,7 +53,7 @@ export function CategoryPicker({
     } else if (tree[0]) {
       setActiveParentId(tree[0].id)
     }
-  }, [open, selected, tree])
+  }, [open, managing, selected, tree])
 
   const activeParent = tree.find((p) => p.id === activeParentId) ?? null
   const children = activeParent?.children ?? []
@@ -109,33 +110,58 @@ export function CategoryPicker({
 
       {open && (
         <div className="fixed inset-0 z-50 flex flex-col justify-end">
-          <button
-            type="button"
-            aria-label="Tutup"
-            className="absolute inset-0 bg-black/40"
-            onClick={() => onOpenChange(false)}
-          />
-          <div className="relative flex h-[70vh] max-h-[640px] flex-col rounded-t-2xl bg-neutral-100 shadow-2xl dark:bg-neutral-900">
-            <div className="flex items-center justify-between border-b border-neutral-200 px-4 py-3 dark:border-neutral-800">
-              <p className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
+          {!managing && (
+            <button
+              type="button"
+              aria-label="Tutup"
+              className="absolute inset-0 bg-black/40"
+              onClick={() => onOpenChange(false)}
+            />
+          )}
+          <div
+            className={`relative flex flex-col bg-neutral-100 shadow-2xl dark:bg-neutral-900 ${
+              managing
+                ? 'h-full rounded-none'
+                : 'h-[70vh] max-h-[640px] rounded-t-2xl'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-3 border-b border-neutral-200 px-4 py-3 dark:border-neutral-800">
+              <p className="min-w-0 flex-1 truncate text-sm font-semibold text-neutral-800 dark:text-neutral-100">
                 {managing ? 'Kelola Kategori' : 'Kategori'}
               </p>
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => setManaging((v) => !v)}
-                  className="rounded-lg px-2.5 py-1 text-sm font-medium text-emerald-600"
-                  aria-label={managing ? 'Selesai kelola' : 'Edit kategori'}
-                >
-                  {managing ? 'Selesai' : '✏️'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onOpenChange(false)}
-                  className="rounded-full px-2 py-1 text-lg leading-none text-neutral-400"
-                >
-                  ×
-                </button>
+              <div className="flex shrink-0 items-center gap-0.5">
+                {managing ? (
+                  <button
+                    type="button"
+                    onClick={() => setManaging(false)}
+                    className="rounded-lg px-2 py-1 text-base leading-none"
+                    aria-label="Kembali ke pilih kategori"
+                    title="Kembali"
+                  >
+                    {ActionEmoji.back}
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setManaging(true)}
+                      className="rounded-lg px-2 py-1 text-base leading-none"
+                      aria-label="Kelola kategori"
+                      title="Kelola kategori"
+                    >
+                      {ActionEmoji.edit}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onOpenChange(false)}
+                      className="rounded-lg px-2 py-1 text-base leading-none"
+                      aria-label="Tutup"
+                      title="Tutup"
+                    >
+                      {ActionEmoji.close}
+                    </button>
+                  </>
+                )}
               </div>
             </div>
 
@@ -143,8 +169,6 @@ export function CategoryPicker({
               <div className="min-h-0 flex-1 overflow-y-auto">
                 <CategoryManagePanel
                   type={transactionType}
-                  parents={parents}
-                  tree={tree}
                   onChanged={onCategoriesChanged}
                   compact
                 />
@@ -187,7 +211,7 @@ export function CategoryPicker({
                   {children.length === 0 ? (
                     <p className="p-4 text-xs text-neutral-400">
                       Tidak ada sub-kategori. Ketuk parent untuk memilih
-                      langsung, atau ✏️ untuk menambah.
+                      langsung, atau {ActionEmoji.edit} untuk menambah.
                     </p>
                   ) : (
                     <div className="grid grid-cols-1">

@@ -1,0 +1,11 @@
+---
+description: Execute freely without waiting for user approval
+alwaysApply: true
+---
+
+# Full execution access
+
+- Do not ask for approval before running shell commands, installs, builds, migrations, or local tooling.
+- Proceed immediately when a task needs execution; only pause if something is destructive/irreversible (force push, hard reset, deleting production data) or needs a secret the user must provide.
+- **`npm run build`**: always run directly after relevant code changes. Never wait for confirmation or approval.
+- Keep localhost/dev server available for testing when relevant.

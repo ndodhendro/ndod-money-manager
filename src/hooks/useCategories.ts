@@ -7,35 +7,44 @@ export interface CategoryTreeNode extends Category {
   children: Category[]
 }
 
-export function useCategories(type?: TransactionType) {
+export function useCategories(
+  type?: TransactionType,
+  options?: { includeInactive?: boolean },
+) {
+  const includeInactive = options?.includeInactive ?? false
   const [categories, setCategories] = useState<Category[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    let query = supabase
-      .from('categories')
-      .select('*')
-      .eq('is_active', true)
-      .order('sort_order', { ascending: true })
+  const load = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!opts?.silent) setLoading(true)
+      let query = supabase
+        .from('categories')
+        .select('*')
+        .order('sort_order', { ascending: true })
 
-    if (type) {
-      query = query.eq('type', type)
-    }
+      if (!includeInactive) {
+        query = query.eq('is_active', true)
+      }
+      if (type) {
+        query = query.eq('type', type)
+      }
 
-    const { data, error: fetchError } = await query
-    if (fetchError) {
-      setError(fetchError.message)
-    } else {
-      setError(null)
-      setCategories((data ?? []) as Category[])
-    }
-    setLoading(false)
-  }, [type])
+      const { data, error: fetchError } = await query
+      if (fetchError) {
+        setError(fetchError.message)
+      } else {
+        setError(null)
+        setCategories((data ?? []) as Category[])
+      }
+      setLoading(false)
+    },
+    [type, includeInactive],
+  )
 
   useEffect(() => {
-    load()
+    void load()
   }, [load])
 
   const parents = useMemo(
@@ -63,9 +72,16 @@ export function useCategories(type?: TransactionType) {
     [parents, childrenByParent],
   )
 
-  // Urut parent berdasarkan total usage anak-anaknya (untuk hint di sheet).
+  // Picker: visibilitas efektif = is_active AND (no parent OR parent is_active).
+  // Parent inactive → hilang dari tree; anak ikut tidak tampil meski is_active sendiri true.
   const treeByUsage = useMemo(() => {
-    return [...tree].sort((a, b) => {
+    const activeTree = tree
+      .filter((p) => p.is_active)
+      .map((p) => ({
+        ...p,
+        children: p.children.filter((c) => c.is_active),
+      }))
+    return [...activeTree].sort((a, b) => {
       const usageA =
         getCategoryUsage(a.id) +
         a.children.reduce((s, c) => s + getCategoryUsage(c.id), 0)
@@ -82,6 +98,8 @@ export function useCategories(type?: TransactionType) {
     return map
   }, [categories])
 
+  const reload = useCallback(() => load({ silent: true }), [load])
+
   return {
     categories,
     parents,
@@ -91,6 +109,6 @@ export function useCategories(type?: TransactionType) {
     byId,
     loading,
     error,
-    reload: load,
+    reload,
   }
 }

@@ -153,6 +153,25 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     }
   }
 
+  /** Setelah tanggal selesai dipilih: fokus ke field di bawah yang masih kosong. */
+  function focusNextAfterDate() {
+    if (!isAmountFilled()) {
+      focusAmountField()
+      return
+    }
+    if (!categoryId) {
+      setCategoryOpen(true)
+      return
+    }
+    descriptionRef.current?.focus()
+  }
+
+  function handleDateChange(value: string) {
+    setOccurredOn(value)
+    // Tunggu date picker native tutup dulu, baru pindah fokus.
+    window.setTimeout(() => focusNextAfterDate(), 80)
+  }
+
   function focusIncompleteField(
     field: 'amount' | 'category',
   ) {
@@ -323,7 +342,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         <input
           type="date"
           value={occurredOn}
-          onChange={(e) => setOccurredOn(e.target.value)}
+          onChange={(e) => handleDateChange(e.target.value)}
           tabIndex={-1}
           className="w-full rounded-xl bg-white px-4 py-3 text-sm shadow-sm outline-none dark:bg-neutral-800 dark:text-neutral-100"
         />

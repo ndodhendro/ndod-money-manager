@@ -16,6 +16,7 @@ import { bumpCategoryUsage, getStoredProfile } from '../lib/profile'
 import { formatNumber, todayIso } from '../lib/format'
 import {
   claimNumericKeyboard,
+  dismissNumericKeyboard,
   openNumericKeyboard,
   registerAmountInput,
 } from '../lib/keyboardFocus'
@@ -66,6 +67,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
       registerAmountInput(amountRef.current)
     } else {
       registerAmountInput(null)
+      dismissNumericKeyboard()
     }
     return () => {
       if (!isEditing) registerAmountInput(null)

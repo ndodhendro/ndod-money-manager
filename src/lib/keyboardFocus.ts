@@ -122,6 +122,20 @@ export function openNumericKeyboard(): void {
   openGhostKeyboard()
 }
 
+/** Tutup numpad (ghost + input nominal). Dipakai saat pindah ke menu non-Tambah. */
+export function dismissNumericKeyboard(): void {
+  holdGhostFocus = false
+  clearGhost()
+  if (amountInput) amountInput.blur()
+  const active = document.activeElement
+  if (
+    active instanceof HTMLInputElement &&
+    (active.inputMode === 'numeric' || active.inputMode === 'decimal')
+  ) {
+    active.blur()
+  }
+}
+
 /**
  * Pindahkan fokus ghost → input nominal setelah layar Tambah terlihat.
  */

@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { PageTitle } from '../components/PageTitle'
 import { useTransactions } from '../hooks/useTransactions'
 import { currentMonthLabel, currentMonthRange, formatRupiah } from '../lib/format'
 import { categoryIcon } from '../lib/types'
@@ -56,9 +57,7 @@ export function Summary() {
 
   return (
     <div className="mx-auto max-w-md px-4 pt-5 pb-24">
-      <h1 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50">
-        Ringkasan
-      </h1>
+      <PageTitle>Ringkasan</PageTitle>
       <p className="text-sm text-neutral-500">{currentMonthLabel()}</p>
 
       {loading && (

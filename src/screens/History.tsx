@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { PageTitle } from '../components/PageTitle'
 import { useTransactions } from '../hooks/useTransactions'
 import {
   currentMonthLabel,
@@ -31,9 +32,7 @@ export function History() {
 
   return (
     <div className="mx-auto max-w-md px-4 pt-5 pb-24">
-      <h1 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50">
-        Riwayat
-      </h1>
+      <PageTitle>Riwayat</PageTitle>
       <p className="text-sm text-neutral-500">{currentMonthLabel()}</p>
 
       <div className="mt-4 flex gap-2">

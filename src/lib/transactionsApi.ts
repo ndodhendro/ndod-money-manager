@@ -55,3 +55,31 @@ export async function deleteTransaction(id: string): Promise<void> {
   const { error } = await supabase.from('transactions').delete().eq('id', id)
   if (error) throw error
 }
+
+/** Catatan unik (terbaru dulu) untuk kategori/sub-kategori tertentu. */
+export async function fetchNoteSuggestions(
+  categoryId: string,
+): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('transactions')
+    .select('description')
+    .eq('category_id', categoryId)
+    .not('description', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(100)
+
+  if (error) throw error
+
+  const seen = new Set<string>()
+  const suggestions: string[] = []
+  for (const row of data ?? []) {
+    const note = (row.description ?? '').trim()
+    if (!note) continue
+    const key = note.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    suggestions.push(note)
+    if (suggestions.length >= 15) break
+  }
+  return suggestions
+}

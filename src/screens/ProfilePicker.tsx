@@ -1,4 +1,5 @@
 import { openNumericKeyboard } from '../lib/keyboardFocus'
+import { APP_LOGO_URL } from '../lib/branding'
 import { setStoredProfile } from '../lib/profile'
 import type { Owner } from '../lib/types'
 
@@ -21,7 +22,11 @@ export function ProfilePicker({ onPicked }: ProfilePickerProps) {
   return (
     <div className="flex min-h-dvh flex-col items-center justify-center gap-8 bg-neutral-50 px-6 dark:bg-neutral-950">
       <div className="text-center">
-        <div className="text-4xl">💸</div>
+        <img
+          src={APP_LOGO_URL}
+          alt="Ndod Budget"
+          className="mx-auto h-28 w-28 object-contain"
+        />
         <h1 className="mt-3 text-xl font-semibold text-neutral-900 dark:text-neutral-50">
           Ndod Budget
         </h1>

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { CategoryManagePanel } from '../components/CategoryManagePanel'
+import { PageTitle } from '../components/PageTitle'
 import { clearStoredProfile, getStoredProfile } from '../lib/profile'
 import { OWNER_LABELS, type TransactionType } from '../lib/types'
 
@@ -19,9 +20,7 @@ export function Settings({ onProfileReset }: SettingsProps) {
 
   return (
     <div className="mx-auto max-w-md px-4 pt-5 pb-24">
-      <h1 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50">
-        Pengaturan
-      </h1>
+      <PageTitle>Pengaturan</PageTitle>
 
       <div className="mt-5 rounded-xl bg-white p-4 shadow-sm dark:bg-neutral-800">
         <p className="text-sm font-medium text-neutral-700 dark:text-neutral-200">

@@ -8,6 +8,8 @@ import {
 } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { CategoryPicker } from '../components/CategoryPicker'
+import { NotesInput } from '../components/NotesInput'
+import { PageTitle } from '../components/PageTitle'
 import { useCategories } from '../hooks/useCategories'
 import { ActionEmoji } from '../lib/actionEmoji'
 import { bumpCategoryUsage, getStoredProfile } from '../lib/profile'
@@ -287,9 +289,9 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   return (
     <div className="mx-auto max-w-md px-4 pt-5 pb-28">
       <div className="flex items-start justify-between gap-3">
-        <h1 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50">
+        <PageTitle>
           {isEditing ? 'Edit Transaksi' : 'Catat Transaksi'}
-        </h1>
+        </PageTitle>
         <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
           {OWNER_LABELS[isEditing ? owner : profileOwner]}
         </span>
@@ -369,16 +371,14 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
       </div>
 
       <div className="mt-5">
-        <input
-          ref={descriptionRef}
-          type="text"
+        <NotesInput
+          inputRef={descriptionRef}
           value={description}
-          onChange={(e) => setDescription(e.target.value)}
+          onChange={setDescription}
+          categoryId={categoryId}
           onFocus={handleDescriptionFocus}
           onKeyDown={handleDescriptionKeyDown}
-          enterKeyHint="done"
           placeholder="Catatan (opsional)"
-          className="w-full rounded-xl bg-white px-4 py-3 text-sm shadow-sm outline-none dark:bg-neutral-800 dark:text-neutral-100"
         />
       </div>
 

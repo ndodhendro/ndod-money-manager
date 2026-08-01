@@ -231,13 +231,18 @@ export function CategoryPicker({
                             key={child.id}
                             type="button"
                             onClick={() => handlePickLeaf(child)}
-                            className={`border-b border-neutral-100 px-4 py-3.5 text-left text-sm dark:border-neutral-900 ${
+                            className={`flex w-full items-center gap-2.5 border-b border-neutral-100 px-4 py-3.5 text-left text-sm dark:border-neutral-900 ${
                               picked
                                 ? 'bg-emerald-50 font-semibold text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
                                 : 'text-neutral-700 dark:text-neutral-200'
                             }`}
                           >
-                            {child.name}
+                            <span className="text-base" aria-hidden>
+                              {child.icon}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate">
+                              {child.name}
+                            </span>
                           </button>
                         )
                       })}

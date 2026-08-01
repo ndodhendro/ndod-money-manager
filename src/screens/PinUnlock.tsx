@@ -5,6 +5,11 @@ import {
   markDeviceUnlocked,
   verifyHouseholdPin,
 } from '../lib/deviceUnlock'
+import {
+  dismissNumericKeyboard,
+  openNumericKeyboard,
+} from '../lib/keyboardFocus'
+import { getStoredProfile } from '../lib/profile'
 
 interface PinUnlockProps {
   onUnlocked: () => void
@@ -15,6 +20,17 @@ export function PinUnlock({ onUnlocked }: PinUnlockProps) {
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const configured = Boolean(getHouseholdPin())
+
+  function handoffAfterPinOk() {
+    // Profil belum ada → tutup numpad PIN, biar ProfilePicker bersih.
+    // Profil sudah ada → buka numpad nominal (masih dalam user gesture).
+    if (getStoredProfile()) {
+      openNumericKeyboard()
+    } else {
+      dismissNumericKeyboard()
+      inputRef.current?.blur()
+    }
+  }
 
   function submit() {
     if (!configured) {
@@ -27,6 +43,7 @@ export function PinUnlock({ onUnlocked }: PinUnlockProps) {
       inputRef.current?.focus()
       return
     }
+    handoffAfterPinOk()
     markDeviceUnlocked()
     onUnlocked()
   }
@@ -85,6 +102,12 @@ export function PinUnlock({ onUnlocked }: PinUnlockProps) {
         <button
           type="submit"
           disabled={pin.length < 4}
+          onPointerDown={() => {
+            // Amankan window gesture sebelum form submit / re-render.
+            if (pin.length >= 4 && configured && verifyHouseholdPin(pin)) {
+              handoffAfterPinOk()
+            }
+          }}
           className="mt-5 w-full rounded-xl bg-emerald-600 py-3.5 text-sm font-semibold text-white active:bg-emerald-500 disabled:opacity-40"
         >
           Lanjut

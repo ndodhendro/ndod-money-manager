@@ -5,6 +5,14 @@ export const OWNER_LABELS: Record<Owner, string> = {
   istri: 'Devi',
 }
 
+/** Warna chip profil — konsisten di seluruh app. */
+export const OWNER_BADGE_CLASS: Record<Owner, string> = {
+  suami:
+    'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300',
+  istri:
+    'bg-pink-100 text-pink-700 dark:bg-pink-950 dark:text-pink-300',
+}
+
 export type TransactionType = 'income' | 'expense'
 
 export type BudgetGroup = 'needs' | 'wants'
@@ -56,13 +64,57 @@ export function formatCategoryLabel(
   category: CategoryWithParent | null | undefined,
 ): string {
   if (!category) return 'Tanpa kategori'
-  if (category.parent) {
-    return `${category.parent.icon} ${category.parent.name}/${category.name}`
+  const parent = normalizeParent(category.parent)
+  if (parent) {
+    return `${parent.icon} ${parent.name}/${category.name}`
   }
   return `${category.icon} ${category.name}`
 }
 
 export function categoryIcon(category: CategoryWithParent | null | undefined): string {
   if (!category) return '💸'
-  return category.parent?.icon ?? category.icon
+  const parent = normalizeParent(category.parent)
+  return parent?.icon ?? category.icon
+}
+
+function normalizeParent(
+  parent: Category | Category[] | null | undefined,
+): Category | null {
+  if (!parent) return null
+  if (Array.isArray(parent)) return parent[0] ?? null
+  return parent
+}
+
+/** Pecah kategori induk vs sub untuk tampilan list/riwayat. */
+export function categoryDisplayParts(
+  category: CategoryWithParent | null | undefined,
+): {
+  parentIcon: string
+  parentName: string
+  childIcon: string | null
+  childName: string | null
+} {
+  if (!category) {
+    return {
+      parentIcon: '📂',
+      parentName: 'Tanpa kategori',
+      childIcon: null,
+      childName: null,
+    }
+  }
+  const parent = normalizeParent(category.parent)
+  if (category.parent_id) {
+    return {
+      parentIcon: parent?.icon ?? '📂',
+      parentName: parent?.name ?? 'Kategori',
+      childIcon: category.icon,
+      childName: category.name,
+    }
+  }
+  return {
+    parentIcon: category.icon,
+    parentName: category.name,
+    childIcon: null,
+    childName: null,
+  }
 }

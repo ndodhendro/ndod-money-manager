@@ -1,5 +1,10 @@
 import { supabase } from './supabase'
-import type { NewTransactionInput, TransactionWithCategory } from './types'
+import type {
+  Category,
+  CategoryWithParent,
+  NewTransactionInput,
+  TransactionWithCategory,
+} from './types'
 
 export async function fetchTransactions(range: {
   start: string
@@ -7,14 +12,54 @@ export async function fetchTransactions(range: {
 }): Promise<TransactionWithCategory[]> {
   const { data, error } = await supabase
     .from('transactions')
-    .select('*, category:categories(*, parent:categories!parent_id(*))')
+    .select('*, category:categories(*)')
     .gte('occurred_on', range.start)
     .lte('occurred_on', range.end)
     .order('occurred_on', { ascending: false })
     .order('created_at', { ascending: false })
 
   if (error) throw error
-  return (data ?? []) as unknown as TransactionWithCategory[]
+
+  const rows = data ?? []
+  const parentIds = [
+    ...new Set(
+      rows
+        .map((row) => {
+          const category = row.category as Category | null | undefined
+          return category?.parent_id ?? null
+        })
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ]
+
+  const parentsById = new Map<string, Category>()
+  if (parentIds.length > 0) {
+    const { data: parents, error: parentError } = await supabase
+      .from('categories')
+      .select('*')
+      .in('id', parentIds)
+    if (parentError) throw parentError
+    for (const parent of parents ?? []) {
+      parentsById.set(parent.id, parent as Category)
+    }
+  }
+
+  return rows.map((row) => {
+    const category = row.category as Category | null
+    const withParent: CategoryWithParent | null = category
+      ? {
+          ...category,
+          parent: category.parent_id
+            ? (parentsById.get(category.parent_id) ?? null)
+            : null,
+        }
+      : null
+
+    return {
+      ...(row as Omit<TransactionWithCategory, 'category'>),
+      category: withParent,
+    }
+  })
 }
 
 export async function createTransaction(

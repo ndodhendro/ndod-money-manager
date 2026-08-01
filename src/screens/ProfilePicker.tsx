@@ -1,7 +1,7 @@
 import { openNumericKeyboard } from '../lib/keyboardFocus'
 import { APP_LOGO_URL } from '../lib/branding'
 import { setStoredProfile } from '../lib/profile'
-import type { Owner } from '../lib/types'
+import { OWNER_BADGE_CLASS, type Owner } from '../lib/types'
 
 interface ProfilePickerProps {
   onPicked: (owner: Owner) => void
@@ -42,10 +42,16 @@ export function ProfilePicker({ onPicked }: ProfilePickerProps) {
             type="button"
             onPointerDown={() => openNumericKeyboard()}
             onClick={() => choose(profile.owner)}
-            className="flex flex-col items-center gap-2 rounded-2xl bg-white px-4 py-8 shadow-sm active:scale-95 dark:bg-neutral-900"
+            className={`flex flex-col items-center gap-2 rounded-2xl bg-white px-4 py-8 shadow-sm ring-2 ring-inset active:scale-95 dark:bg-neutral-900 ${
+              profile.owner === 'suami'
+                ? 'ring-blue-200 dark:ring-blue-900'
+                : 'ring-pink-200 dark:ring-pink-900'
+            }`}
           >
             <span className="text-4xl">{profile.icon}</span>
-            <span className="font-medium text-neutral-800 dark:text-neutral-100">
+            <span
+              className={`rounded-full px-2.5 py-1 text-sm font-medium ${OWNER_BADGE_CLASS[profile.owner]}`}
+            >
               {profile.label}
             </span>
           </button>

@@ -28,20 +28,35 @@ export function formatDateLabel(isoDate: string): string {
     .toISOString()
     .slice(0, 10)
 
-  if (isoDate === today) return 'Hari ini'
-  if (isoDate === yesterdayIso) return 'Kemarin'
-
-  return new Intl.DateTimeFormat('id-ID', {
+  const withDay = new Intl.DateTimeFormat('id-ID', {
     weekday: 'long',
     day: 'numeric',
     month: 'long',
   }).format(date)
+  const capitalized = withDay.charAt(0).toUpperCase() + withDay.slice(1)
+
+  if (isoDate === today) return `Hari ini · ${capitalized}`
+  if (isoDate === yesterdayIso) return `Kemarin · ${capitalized}`
+  return capitalized
 }
 
 export function currentMonthRange(): { start: string; end: string } {
   const now = new Date()
-  const start = new Date(now.getFullYear(), now.getMonth(), 1)
-  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+  return monthRange(now.getFullYear(), now.getMonth())
+}
+
+export function currentMonthLabel(): string {
+  const now = new Date()
+  return formatMonthLabel(now.getFullYear(), now.getMonth())
+}
+
+/** monthIndex: 0 = Januari */
+export function monthRange(
+  year: number,
+  monthIndex: number,
+): { start: string; end: string } {
+  const start = new Date(year, monthIndex, 1)
+  const end = new Date(year, monthIndex + 1, 0)
   const toIso = (d: Date) =>
     new Date(d.getTime() - d.getTimezoneOffset() * 60_000)
       .toISOString()
@@ -49,9 +64,9 @@ export function currentMonthRange(): { start: string; end: string } {
   return { start: toIso(start), end: toIso(end) }
 }
 
-export function currentMonthLabel(): string {
+export function formatMonthLabel(year: number, monthIndex: number): string {
   return new Intl.DateTimeFormat('id-ID', {
     month: 'long',
     year: 'numeric',
-  }).format(new Date())
+  }).format(new Date(year, monthIndex, 1))
 }

@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { CategoryManagePanel } from '../components/CategoryManagePanel'
+import { OwnerBadge } from '../components/OwnerBadge'
 import { PageTitle } from '../components/PageTitle'
 import { APP_VERSION } from '../lib/branding'
 import { clearStoredProfile, getStoredProfile } from '../lib/profile'
-import { OWNER_LABELS, type TransactionType } from '../lib/types'
+import type { TransactionType } from '../lib/types'
 
 interface SettingsProps {
   onProfileReset: () => void
@@ -28,7 +29,7 @@ export function Settings({ onProfileReset }: SettingsProps) {
           Profil HP ini
         </p>
         <p className="mt-1 text-sm text-neutral-500">
-          {profile ? OWNER_LABELS[profile] : 'Belum dipilih'}
+          {profile ? <OwnerBadge owner={profile} size="md" /> : 'Belum dipilih'}
         </p>
         <button
           type="button"

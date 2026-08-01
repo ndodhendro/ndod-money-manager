@@ -7,6 +7,11 @@ import { VitePWA } from 'vite-plugin-pwa'
 // repo sub-path (e.g. https://user.github.io/repo-name/) without extra config.
 export default defineConfig({
   base: './',
+  server: {
+    // Bind IPv4 all-interfaces so phones on the same Wi-Fi can open the LAN URL.
+    host: '0.0.0.0',
+    port: 5173,
+  },
   plugins: [
     react(),
     tailwindcss(),

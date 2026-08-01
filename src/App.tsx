@@ -6,7 +6,9 @@ import {
   useLocation,
 } from 'react-router-dom'
 import { BottomNav } from './components/BottomNav'
+import { AppToast } from './components/AppToast'
 import { UpdateRequired } from './components/UpdateRequired'
+import { useBackButtonTrap } from './hooks/useBackButton'
 import { isDeviceUnlocked } from './lib/deviceUnlock'
 import { getStoredProfile } from './lib/profile'
 import { History } from './screens/History'
@@ -38,6 +40,7 @@ function App() {
 
 function AppShell({ onProfileReset }: { onProfileReset: () => void }) {
   const location = useLocation()
+  useBackButtonTrap()
   // Quick Add (buat baru) tetap di-mount; hanya "aktif" saat di route /.
   const createAddActive =
     location.pathname === '/' || location.pathname === ''
@@ -66,6 +69,7 @@ function AppShell({ onProfileReset }: { onProfileReset: () => void }) {
         />
       </Routes>
       <BottomNav />
+      <AppToast />
     </div>
   )
 }

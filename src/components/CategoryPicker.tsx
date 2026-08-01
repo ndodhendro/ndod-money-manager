@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
+import { useOverlayBack } from '../hooks/useBackButton'
 import type { CategoryTreeNode } from '../hooks/useCategories'
 import { ActionEmoji } from '../lib/actionEmoji'
 import type { Category, TransactionType } from '../lib/types'
-import { formatCategoryLabel } from '../lib/types'
 import { CategoryManagePanel } from './CategoryManagePanel'
 
 interface CategoryPickerProps {
@@ -29,11 +29,13 @@ export function CategoryPicker({
   highlighted = false,
 }: CategoryPickerProps) {
   const selected = selectedId ? byId.get(selectedId) : null
-  const selectedParent = selected?.parent_id
-    ? byId.get(selected.parent_id)
-    : selected && !selected.parent_id
-      ? selected
-      : null
+  const isChild = Boolean(selected?.parent_id)
+  const parentCategory = selected
+    ? isChild
+      ? (selected.parent_id ? byId.get(selected.parent_id) : null)
+      : selected
+    : null
+  const childCategory = isChild ? selected : null
 
   const [activeParentId, setActiveParentId] = useState<string | null>(null)
   const [managing, setManaging] = useState(false)
@@ -71,13 +73,14 @@ export function CategoryPicker({
     }
   }
 
-  const label = selected
-    ? formatCategoryLabel(
-        selected.parent_id
-          ? { ...selected, parent: selectedParent ?? null }
-          : selected,
-      )
-    : null
+  useOverlayBack(open, () => {
+    if (managing) {
+      setManaging(false)
+      return true
+    }
+    onOpenChange(false)
+    return true
+  })
 
   return (
     <>
@@ -90,22 +93,29 @@ export function CategoryPicker({
             : ''
         }`}
       >
-        <span className="text-xl">
-          {selected ? (selectedParent?.icon ?? selected.icon) : '📂'}
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="text-xs text-neutral-400">Kategori</p>
-          <p
-            className={`truncate text-sm font-medium ${
-              label
-                ? 'text-neutral-900 dark:text-neutral-50'
-                : 'text-neutral-400'
-            }`}
-          >
-            {label ?? 'Pilih kategori'}
-          </p>
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <span className="text-xl" aria-hidden>
+            {parentCategory?.icon ?? '📂'}
+          </span>
+          <div className="min-w-0 flex-1">
+            <p
+              className={`truncate text-sm font-medium ${
+                parentCategory
+                  ? 'text-neutral-900 dark:text-white'
+                  : 'text-neutral-400'
+              }`}
+            >
+              {parentCategory?.name ?? 'Pilih kategori'}
+            </p>
+            {childCategory && (
+              <p className="mt-0.5 flex min-w-0 items-center gap-1.5 truncate text-xs text-neutral-400">
+                <span aria-hidden>{childCategory.icon}</span>
+                <span className="truncate">{childCategory.name}</span>
+              </p>
+            )}
+          </div>
         </div>
-        <span className="text-neutral-300">›</span>
+        <span className="shrink-0 text-neutral-300">›</span>
       </button>
 
       {open && (
@@ -210,8 +220,7 @@ export function CategoryPicker({
                 <div className="flex-1 overflow-y-auto bg-white dark:bg-neutral-950">
                   {children.length === 0 ? (
                     <p className="p-4 text-xs text-neutral-400">
-                      Tidak ada sub-kategori. Ketuk parent untuk memilih
-                      langsung, atau {ActionEmoji.edit} untuk menambah.
+                      
                     </p>
                   ) : (
                     <div className="grid grid-cols-1">

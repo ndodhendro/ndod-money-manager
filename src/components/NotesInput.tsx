@@ -6,6 +6,7 @@ import {
   type KeyboardEvent,
   type Ref,
 } from 'react'
+import { useOverlayBack } from '../hooks/useBackButton'
 import { fetchNoteSuggestions } from '../lib/transactionsApi'
 
 interface NotesInputProps {
@@ -66,6 +67,12 @@ export function NotesInput({
   })
 
   const showList = open && filtered.length > 0
+
+  useOverlayBack(showList, () => {
+    setOpen(false)
+    setActiveIndex(-1)
+    return true
+  })
 
   function pick(note: string) {
     onChange(note)

@@ -8,6 +8,7 @@ import {
 } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { CategoryPicker } from '../components/CategoryPicker'
+import { DatePickerField } from '../components/DatePickerField'
 import { NotesInput } from '../components/NotesInput'
 import { PageTitle } from '../components/PageTitle'
 import { useCategories } from '../hooks/useCategories'
@@ -17,6 +18,7 @@ import { formatNumber, todayIso } from '../lib/format'
 import {
   claimNumericKeyboard,
   dismissNumericKeyboard,
+  focusAmountOnTambahReady,
   openNumericKeyboard,
   registerAmountInput,
 } from '../lib/keyboardFocus'
@@ -26,7 +28,8 @@ import {
   deleteTransaction,
   updateTransaction,
 } from '../lib/transactionsApi'
-import { OWNER_LABELS, type Owner, type TransactionType } from '../lib/types'
+import type { Owner, TransactionType } from '../lib/types'
+import { OwnerBadge } from '../components/OwnerBadge'
 
 interface QuickAddProps {
   /** False saat layar Tambah di-park (opacity-0). Jangan register/claim input tersembunyi. */
@@ -56,9 +59,15 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   const amountRef = useRef<HTMLInputElement | null>(null)
   const descriptionRef = useRef<HTMLInputElement>(null)
 
-  const amountCallbackRef = useCallback((el: HTMLInputElement | null) => {
-    amountRef.current = el
-  }, [])
+  const amountCallbackRef = useCallback(
+    (el: HTMLInputElement | null) => {
+      amountRef.current = el
+      // Register segera di callback ref supaya requestAmountFocus / claim
+      // tidak ketinggalan satu frame (penting saat launch & tap Tambah).
+      if (!isEditing && isActive) registerAmountInput(el)
+    },
+    [isEditing, isActive],
+  )
 
   // Hanya register input saat layar benar-benar terlihat.
   useEffect(() => {
@@ -103,10 +112,10 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     }
   }, [id, isEditing])
 
-  // Claim ghost → nominal HANYA setelah layar Tambah aktif & terlihat.
+  // Claim ghost → nominal (atau fokus langsung) setelah layar Tambah terlihat.
   useLayoutEffect(() => {
     if (isEditing || !isActive || loadingExisting) return
-    claimNumericKeyboard(amountRef.current)
+    focusAmountOnTambahReady(amountRef.current)
   }, [isEditing, isActive, loadingExisting])
 
   // Reset kategori kalau ganti income/expense dan pilihan lama tidak valid.
@@ -153,7 +162,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     }
   }
 
-  /** Setelah tanggal selesai dipilih: fokus ke field di bawah yang masih kosong. */
+  /** Setelah tanggal selesai (Cancel/Set): fokus ke field di bawah yang masih kosong. */
   function focusNextAfterDate() {
     if (!isAmountFilled()) {
       focusAmountField()
@@ -164,12 +173,6 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
       return
     }
     descriptionRef.current?.focus()
-  }
-
-  function handleDateChange(value: string) {
-    setOccurredOn(value)
-    // Tunggu date picker native tutup dulu, baru pindah fokus.
-    window.setTimeout(() => focusNextAfterDate(), 80)
   }
 
   function focusIncompleteField(
@@ -261,6 +264,10 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     if (!advanceOrFixAbove('save')) return
 
     const numericAmount = Number(amountDigits)
+    const creating = !isEditing
+    // Amankan gesture (klik Simpan / Enter) sebelum await.
+    if (creating) openNumericKeyboard()
+
     setSaving(true)
     try {
       const input = {
@@ -274,12 +281,14 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
       }
       if (isEditing && id) {
         await updateTransaction(id, input)
-        navigate('/riwayat')
+        navigate('/riwayat', { replace: true })
       } else {
         await createTransaction(input)
         bumpCategoryUsage(categoryId!)
         setToast(`Tersimpan ${ActionEmoji.save}`)
         resetForm()
+        // Siap input transaksi berikutnya: fokus nominal + numpad.
+        window.setTimeout(() => focusAmountField(), 50)
       }
     } catch (err) {
       setToast(err instanceof Error ? err.message : 'Gagal menyimpan')
@@ -294,7 +303,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     setSaving(true)
     try {
       await deleteTransaction(id)
-      navigate('/riwayat')
+      navigate('/riwayat', { replace: true })
     } catch (err) {
       setToast(err instanceof Error ? err.message : 'Gagal menghapus')
       setSaving(false)
@@ -313,9 +322,10 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         <PageTitle>
           {isEditing ? 'Edit Transaksi' : 'Catat Transaksi'}
         </PageTitle>
-        <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-          {OWNER_LABELS[isEditing ? owner : profileOwner]}
-        </span>
+        <OwnerBadge
+          owner={isEditing ? owner : profileOwner}
+          size="md"
+        />
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2 rounded-xl bg-neutral-100 p-1 dark:bg-neutral-800">
@@ -339,12 +349,10 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         <span className="mb-1.5 block text-xs text-neutral-400">
           Tanggal
         </span>
-        <input
-          type="date"
+        <DatePickerField
           value={occurredOn}
-          onChange={(e) => handleDateChange(e.target.value)}
-          tabIndex={-1}
-          className="w-full rounded-xl bg-white px-4 py-3 text-sm shadow-sm outline-none dark:bg-neutral-800 dark:text-neutral-100"
+          onChange={setOccurredOn}
+          onFinished={focusNextAfterDate}
         />
       </label>
 
@@ -405,7 +413,14 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
 
       <button
         type="button"
-        onClick={handleSave}
+        onPointerDown={() => {
+          // Amankan user gesture supaya numpad tetap bisa muncul
+          // setelah await simpan (untuk transaksi berikutnya).
+          if (!isEditing && isAmountFilled() && categoryId) {
+            openNumericKeyboard()
+          }
+        }}
+        onClick={() => void handleSave()}
         disabled={saving}
         className="mt-5 w-full rounded-xl bg-emerald-500 py-3.5 text-base font-semibold text-white shadow-md active:bg-emerald-600 disabled:opacity-60"
       >
@@ -424,8 +439,14 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
       )}
 
       {toast && (
-        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 rounded-full bg-neutral-900 px-4 py-2 text-sm text-white shadow-lg dark:bg-neutral-100 dark:text-neutral-900">
-          {toast}
+        <div
+          role="status"
+          aria-live="polite"
+          className="pointer-events-none fixed inset-x-0 top-[max(0.75rem,env(safe-area-inset-top))] z-[90] flex justify-center px-4"
+        >
+          <div className="rounded-full bg-neutral-900 px-4 py-2 text-sm text-white shadow-lg dark:bg-neutral-100 dark:text-neutral-900">
+            {toast}
+          </div>
         </div>
       )}
     </div>

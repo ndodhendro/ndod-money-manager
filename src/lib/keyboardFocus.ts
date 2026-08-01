@@ -150,4 +150,29 @@ export function claimNumericKeyboard(target: HTMLInputElement | null): boolean {
   return true
 }
 
+/**
+ * Setelah splash / mount layar Tambah: claim ghost bila ada, else fokus
+ * langsung ke nominal (best-effort untuk cold start PWA).
+ */
+export function focusAmountOnTambahReady(
+  target: HTMLInputElement | null,
+): void {
+  if (!target || !isElementVisible(target)) return
+  if (claimNumericKeyboard(target)) return
+  focusAmount(target)
+}
+
+/**
+ * Dipanggil sedini mungkin saat cold start (masih dekat window aktivasi
+ * launch PWA) supaya numpad siap sebelum React mount selesai.
+ */
+export function prepareLaunchNumericKeyboard(): void {
+  if (hasPendingNumericKeyboard()) return
+  if (amountInput && isElementVisible(amountInput)) {
+    focusAmount(amountInput)
+    return
+  }
+  openGhostKeyboard()
+}
+
 export const FOCUS_AMOUNT_EVENT = 'mm:focus-amount'

@@ -22,7 +22,7 @@ export default defineConfig({
         name: 'Ndod Budget',
         short_name: 'Ndod Budget',
         description:
-          'Pencatatan pemasukan & pengeluaran rumah tangga, kolaboratif untuk suami dan istri.',
+          'Household income & expense tracking, collaborative for couples.',
         theme_color: '#0a0a0a',
         background_color: '#0a0a0a',
         display: 'standalone',
@@ -41,15 +41,15 @@ export default defineConfig({
         ],
         shortcuts: [
           {
-            name: 'Tambah Pengeluaran',
-            short_name: 'Pengeluaran',
-            url: './#/',
+            name: 'Add Expense',
+            short_name: 'Expense',
+            url: './#/tambah',
             icons: [{ src: 'pwa-192.png', sizes: '192x192' }],
           },
           {
-            name: 'Tambah Pemasukan',
-            short_name: 'Pemasukan',
-            url: './#/?type=income',
+            name: 'Add Income',
+            short_name: 'Income',
+            url: './#/tambah?type=income',
             icons: [{ src: 'pwa-192.png', sizes: '192x192' }],
           },
         ],

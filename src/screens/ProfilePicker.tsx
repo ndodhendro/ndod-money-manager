@@ -1,4 +1,3 @@
-import { openNumericKeyboard } from '../lib/keyboardFocus'
 import { APP_LOGO_URL } from '../lib/branding'
 import { setStoredProfile } from '../lib/profile'
 import { OWNER_BADGE_CLASS, type Owner } from '../lib/types'
@@ -14,7 +13,6 @@ const PROFILES: { owner: Owner; label: string; icon: string }[] = [
 
 export function ProfilePicker({ onPicked }: ProfilePickerProps) {
   function choose(owner: Owner) {
-    // Keyboard sudah dibuka di onPointerDown — jangan buka ulang (bisa kedip).
     setStoredProfile(owner)
     onPicked(owner)
   }
@@ -31,7 +29,7 @@ export function ProfilePicker({ onPicked }: ProfilePickerProps) {
           Ndod Budget
         </h1>
         <p className="mt-1 text-sm text-neutral-500">
-          HP ini dipakai oleh siapa?
+          Who uses this phone?
         </p>
       </div>
 
@@ -40,7 +38,6 @@ export function ProfilePicker({ onPicked }: ProfilePickerProps) {
           <button
             key={profile.owner}
             type="button"
-            onPointerDown={() => openNumericKeyboard()}
             onClick={() => choose(profile.owner)}
             className={`flex flex-col items-center gap-2 rounded-2xl bg-white px-4 py-8 shadow-sm ring-2 ring-inset active:scale-95 dark:bg-neutral-900 ${
               profile.owner === 'suami'
@@ -59,8 +56,8 @@ export function ProfilePicker({ onPicked }: ProfilePickerProps) {
       </div>
 
       <p className="max-w-xs text-center text-xs text-neutral-400">
-        Pilihan ini disimpan di HP ini saja, tidak akan ditanya lagi. Bisa
-        diganti nanti lewat menu Pengaturan.
+        This choice is saved on this phone only and won't be asked again. You
+        can change it later in Settings.
       </p>
     </div>
   )

@@ -98,6 +98,9 @@ export function CategoryPicker({
             {parentCategory?.icon ?? '📂'}
           </span>
           <div className="min-w-0 flex-1">
+            <p className="truncate text-[11px] font-medium text-neutral-400">
+              Category
+            </p>
             <p
               className={`truncate text-sm font-medium ${
                 parentCategory
@@ -105,7 +108,7 @@ export function CategoryPicker({
                   : 'text-neutral-400'
               }`}
             >
-              {parentCategory?.name ?? 'Pilih kategori'}
+              {parentCategory?.name ?? 'Select category'}
             </p>
             {childCategory && (
               <p className="mt-0.5 flex min-w-0 items-center gap-1.5 truncate text-xs text-neutral-400">
@@ -123,7 +126,7 @@ export function CategoryPicker({
           {!managing && (
             <button
               type="button"
-              aria-label="Tutup"
+              aria-label="Close"
               className="absolute inset-0 bg-black/40"
               onClick={() => onOpenChange(false)}
             />
@@ -137,7 +140,7 @@ export function CategoryPicker({
           >
             <div className="flex items-center justify-between gap-3 border-b border-neutral-200 px-4 py-3 dark:border-neutral-800">
               <p className="min-w-0 flex-1 truncate text-sm font-semibold text-neutral-800 dark:text-neutral-100">
-                {managing ? 'Kelola Kategori' : 'Kategori'}
+                {managing ? 'Manage categories' : 'Category'}
               </p>
               <div className="flex shrink-0 items-center gap-0.5">
                 {managing ? (
@@ -145,8 +148,8 @@ export function CategoryPicker({
                     type="button"
                     onClick={() => setManaging(false)}
                     className="rounded-lg px-2 py-1 text-base leading-none"
-                    aria-label="Kembali ke pilih kategori"
-                    title="Kembali"
+                    aria-label="Back to category picker"
+                    title="Back"
                   >
                     {ActionEmoji.back}
                   </button>
@@ -156,8 +159,8 @@ export function CategoryPicker({
                       type="button"
                       onClick={() => setManaging(true)}
                       className="rounded-lg px-2 py-1 text-base leading-none"
-                      aria-label="Kelola kategori"
-                      title="Kelola kategori"
+                      aria-label="Manage categories"
+                      title="Manage categories"
                     >
                       {ActionEmoji.edit}
                     </button>
@@ -165,8 +168,8 @@ export function CategoryPicker({
                       type="button"
                       onClick={() => onOpenChange(false)}
                       className="rounded-lg px-2 py-1 text-base leading-none"
-                      aria-label="Tutup"
-                      title="Tutup"
+                      aria-label="Close"
+                      title="Close"
                     >
                       {ActionEmoji.close}
                     </button>
@@ -219,9 +222,7 @@ export function CategoryPicker({
 
                 <div className="flex-1 overflow-y-auto bg-white dark:bg-neutral-950">
                   {children.length === 0 ? (
-                    <p className="p-4 text-xs text-neutral-400">
-                      
-                    </p>
+                    <p className="p-4 text-xs text-neutral-400" />
                   ) : (
                     <div className="grid grid-cols-1">
                       {children.map((child) => {

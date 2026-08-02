@@ -9,4 +9,5 @@ export const ActionEmoji = {
   hide: '👁️',
   drag: '☰',
   add: '➕',
+  delete: '🗑️',
 } as const

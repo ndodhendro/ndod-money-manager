@@ -5,11 +5,7 @@ import {
   markDeviceUnlocked,
   verifyHouseholdPin,
 } from '../lib/deviceUnlock'
-import {
-  dismissNumericKeyboard,
-  openNumericKeyboard,
-} from '../lib/keyboardFocus'
-import { getStoredProfile } from '../lib/profile'
+import { dismissNumericKeyboard } from '../lib/keyboardFocus'
 
 interface PinUnlockProps {
   onUnlocked: () => void
@@ -22,23 +18,18 @@ export function PinUnlock({ onUnlocked }: PinUnlockProps) {
   const configured = Boolean(getHouseholdPin())
 
   function handoffAfterPinOk() {
-    // Profil belum ada → tutup numpad PIN, biar ProfilePicker bersih.
-    // Profil sudah ada → buka numpad nominal (masih dalam user gesture).
-    if (getStoredProfile()) {
-      openNumericKeyboard()
-    } else {
-      dismissNumericKeyboard()
-      inputRef.current?.blur()
-    }
+    // Default land di Riwayat — tutup numpad PIN.
+    dismissNumericKeyboard()
+    inputRef.current?.blur()
   }
 
   function submit() {
     if (!configured) {
-      setError('PIN belum dikonfigurasi di server.')
+      setError('PIN is not configured on the server.')
       return
     }
     if (!verifyHouseholdPin(pin)) {
-      setError('PIN salah')
+      setError('Wrong PIN')
       setPin('')
       inputRef.current?.focus()
       return
@@ -75,7 +66,7 @@ export function PinUnlock({ onUnlocked }: PinUnlockProps) {
           Ndod Budget
         </h1>
         <p className="mt-2 text-sm text-neutral-400">
-          Masukkan PIN rumah tangga sekali di HP ini.
+          Enter the household PIN once on this phone.
         </p>
 
         <input
@@ -110,11 +101,11 @@ export function PinUnlock({ onUnlocked }: PinUnlockProps) {
           }}
           className="mt-5 w-full rounded-xl bg-emerald-600 py-3.5 text-sm font-semibold text-white active:bg-emerald-500 disabled:opacity-40"
         >
-          Lanjut
+          Continue
         </button>
 
         <p className="mt-4 text-xs text-neutral-500">
-          Setelah benar, HP ini tidak akan diminta PIN lagi.
+          Once verified, this phone won't ask for the PIN again.
         </p>
       </form>
     </div>

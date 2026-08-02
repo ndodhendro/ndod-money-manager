@@ -1,0 +1,45 @@
+---
+description: Product & UX steering for Ndod Money Manager PWA
+alwaysApply: true
+---
+
+# Product & UX — Ndod Money Manager
+
+## Product
+
+- This app is a **PWA for recording in/out cashflow**. Every real-world transaction should be logged immediately.
+- Design for **low friction, long-term daily use**: never make capture feel like work.
+
+## Capture-first (A)
+
+- **Quick Add is the primary flow.** History, Summary, and Settings must not compete with or slow down input.
+- Prefer shortcuts and defaults that get money logged over extra screens or setup gates mid-capture.
+
+## Minimal taps (B)
+
+- Target **≤3–4 interactions** from open → saved transaction for the common path.
+- Avoid extra modals/confirmations for routine save/success; reserve confirms for destructive or rare actions.
+
+## UI layout
+
+- Keep UI **simple, minimal, and modern**.
+- Place primary pressable controls in **comfortable reach** (mobile-first, thumb zone). Prefer bottom nav / lower CTA for frequent actions.
+- Put rare or destructive actions away from easy miss-tap zones (E).
+
+## Smart defaults (D)
+
+- Default to **today’s date**, sensible type (in/out), and **last-used category** when it helps.
+- Minimize required fields; notes and extras stay optional.
+
+## Feedback & speed (C, F)
+
+- Prefer **fast load and fast input over animation**.
+- Success feedback: light toast or brief state — not blocking dialogs. Errors: clear, recoverable, not overly blocking.
+- Use **short motion only** (~150–250ms) for screen transitions, button feedback, and list entry so actions don’t feel instant/confusing.
+- No decorative motion (parallax, confetti, long fades, heavy springs).
+
+## When changing UI
+
+- Preserve the existing visual language unless explicitly redesigning.
+- If a change adds steps, screens, or heavy motion to capture, reject or redesign it toward fewer taps and faster feedback.
+- Icons and behavior for the **same function/purpose** must stay identical across screens — see `ui-consistency.mdc`.

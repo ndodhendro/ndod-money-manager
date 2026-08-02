@@ -13,9 +13,42 @@ export const OWNER_BADGE_CLASS: Record<Owner, string> = {
     'bg-pink-100 text-pink-700 dark:bg-pink-950 dark:text-pink-300',
 }
 
+export type Circle = 'hd_family' | 'extended_family' | 'friends'
+
+export const CIRCLES: Circle[] = ['hd_family', 'extended_family', 'friends']
+
+export const CIRCLE_LABELS: Record<Circle, string> = {
+  hd_family: 'HD Family',
+  extended_family: 'Extended Family',
+  friends: 'Friends',
+}
+
+/** Warna chip circle — soft, konsisten di seluruh app. */
+export const CIRCLE_BADGE_CLASS: Record<Circle, string> = {
+  hd_family:
+    'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
+  extended_family:
+    'bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300',
+  friends:
+    'bg-pink-100 text-pink-700 dark:bg-pink-950 dark:text-pink-300',
+}
+
+export function isCircle(value: unknown): value is Circle {
+  return (
+    value === 'hd_family' ||
+    value === 'extended_family' ||
+    value === 'friends'
+  )
+}
+
 export type TransactionType = 'income' | 'expense'
 
-export type BudgetGroup = 'needs' | 'wants'
+export type BudgetGroup = 'needs' | 'wants' | 'savings'
+
+/** Canonical names for PYF savings categories (must match seed). */
+export const SAVINGS_PARENT_NAME = 'Savings'
+export const EMERGENCY_FUND_NAME = 'Emergency Fund'
+export const INVESTMENT_NAME = 'Investment'
 
 export interface Category {
   id: string
@@ -39,6 +72,7 @@ export interface Transaction {
   amount: number
   description: string | null
   owner: Owner
+  circle: Circle
   occurred_on: string
   is_recurring: boolean
   created_at: string
@@ -55,6 +89,7 @@ export interface NewTransactionInput {
   amount: number
   description: string
   owner: Owner
+  circle: Circle
   occurred_on: string
   is_recurring: boolean
 }
@@ -63,7 +98,7 @@ export interface NewTransactionInput {
 export function formatCategoryLabel(
   category: CategoryWithParent | null | undefined,
 ): string {
-  if (!category) return 'Tanpa kategori'
+  if (!category) return 'Uncategorized'
   const parent = normalizeParent(category.parent)
   if (parent) {
     return `${parent.icon} ${parent.name}/${category.name}`
@@ -97,7 +132,7 @@ export function categoryDisplayParts(
   if (!category) {
     return {
       parentIcon: '📂',
-      parentName: 'Tanpa kategori',
+      parentName: 'Uncategorized',
       childIcon: null,
       childName: null,
     }
@@ -106,7 +141,7 @@ export function categoryDisplayParts(
   if (category.parent_id) {
     return {
       parentIcon: parent?.icon ?? '📂',
-      parentName: parent?.name ?? 'Kategori',
+      parentName: parent?.name ?? 'Category',
       childIcon: category.icon,
       childName: category.name,
     }

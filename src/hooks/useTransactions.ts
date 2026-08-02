@@ -17,7 +17,7 @@ export function useTransactions(range: { start: string; end: string }) {
       setTransactions(data)
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Gagal memuat transaksi')
+      setError(err instanceof Error ? err.message : 'Failed to load transactions')
     } finally {
       setLoading(false)
     }

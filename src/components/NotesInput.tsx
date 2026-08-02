@@ -26,7 +26,7 @@ export function NotesInput({
   inputRef,
   onFocus,
   onKeyDown,
-  placeholder = 'Catatan (opsional)',
+  placeholder = 'Note (optional)',
 }: NotesInputProps) {
   const listId = useId()
   const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null)

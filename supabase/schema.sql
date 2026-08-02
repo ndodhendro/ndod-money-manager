@@ -8,11 +8,15 @@ do $$ begin
 exception when duplicate_object then null; end $$;
 
 do $$ begin
-  create type budget_group as enum ('needs', 'wants');
+  create type budget_group as enum ('needs', 'wants', 'savings');
 exception when duplicate_object then null; end $$;
 
 do $$ begin
   create type owner_type as enum ('suami', 'istri');
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  create type circle_type as enum ('hd_family', 'extended_family', 'friends');
 exception when duplicate_object then null; end $$;
 
 -- ============================================================
@@ -47,6 +51,7 @@ create table if not exists transactions (
   amount numeric(14, 2) not null check (amount > 0),
   description text,
   owner owner_type not null,
+  circle circle_type not null default 'hd_family',
   occurred_on date not null default current_date,
   is_recurring boolean not null default false,
   created_at timestamptz not null default now(),
@@ -55,6 +60,7 @@ create table if not exists transactions (
 
 create index if not exists transactions_occurred_on_idx on transactions (occurred_on desc);
 create index if not exists transactions_category_id_idx on transactions (category_id);
+create index if not exists transactions_circle_idx on transactions (circle);
 
 create or replace function set_updated_at()
 returns trigger as $$
@@ -74,8 +80,9 @@ for each row execute function set_updated_at();
 -- ============================================================
 create table if not exists pyf_settings (
   id uuid primary key default gen_random_uuid(),
-  emergency_fund_pct numeric(5, 2) not null default 20,
+  emergency_fund_pct numeric(5, 2) not null default 10,
   investment_pct numeric(5, 2) not null default 15,
+  planned_needs_amount numeric(14, 2) not null default 0,
   emergency_fund_target_multiplier numeric(4, 1) not null default 6,
   effective_from date not null default current_date,
   created_at timestamptz not null default now()

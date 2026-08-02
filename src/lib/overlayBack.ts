@@ -17,7 +17,15 @@ export function registerBackHandler(handler: BackHandler): () => void {
   }
 }
 
-function dismissSoftKeyboard(): boolean {
+/** Hanya overlay terdaftar (sheet/picker), tanpa keyboard. */
+export function consumeOverlayHandlers(): boolean {
+  for (let i = handlers.length - 1; i >= 0; i--) {
+    if (handlers[i]!()) return true
+  }
+  return false
+}
+
+export function dismissSoftKeyboard(): boolean {
   const active = document.activeElement
   if (
     active instanceof HTMLElement &&
@@ -40,8 +48,6 @@ function dismissSoftKeyboard(): boolean {
 
 /** Dipanggil saat user tekan Back. True = ada yang ditutup. */
 export function consumeBack(): boolean {
-  for (let i = handlers.length - 1; i >= 0; i--) {
-    if (handlers[i]!()) return true
-  }
+  if (consumeOverlayHandlers()) return true
   return dismissSoftKeyboard()
 }

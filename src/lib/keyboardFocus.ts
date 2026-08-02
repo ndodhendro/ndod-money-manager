@@ -8,11 +8,16 @@
  *
  * Jangan pernah focus() ke input yang opacity-0 / tersembunyi —
  * di Chrome/Samsung itu bikin numpad muncul lalu langsung hilang.
+ *
+ * Saat claim: jangan focus ulang jika nominal sudah aktif (Strict Mode
+ * double-invoke layoutEffect = sumber kedip open→close→open).
  */
 
 let amountInput: HTMLInputElement | null = null
 let ghost: HTMLInputElement | null = null
 let holdGhostFocus = false
+/** Ghost node yang sudah di-claim tapi belum di-remove (tunggu 1 frame). */
+let ghostPendingRemoval: HTMLInputElement | null = null
 
 export function registerAmountInput(el: HTMLInputElement | null): void {
   amountInput = el
@@ -40,12 +45,17 @@ export function hasPendingNumericKeyboard(): boolean {
   return ghost != null && document.body.contains(ghost)
 }
 
+function removeGhostNode(node: HTMLInputElement | null): void {
+  if (!node) return
+  if (document.body.contains(node)) node.remove()
+}
+
 function clearGhost(): void {
   holdGhostFocus = false
-  if (ghost) {
-    ghost.remove()
-    ghost = null
-  }
+  removeGhostNode(ghost)
+  ghost = null
+  removeGhostNode(ghostPendingRemoval)
+  ghostPendingRemoval = null
 }
 
 function openGhostKeyboard(): void {
@@ -101,7 +111,8 @@ function focusAmount(el: HTMLInputElement): void {
 }
 
 /**
- * Dipanggil dari pointerdown menu Tambah (masih dalam user gesture).
+ * Dipanggil dari pointerdown FAB Tambah (masih dalam user gesture).
+ * Caller sebaiknya e.preventDefault() agar tombol tidak mencuri fokus dari ghost.
  */
 export function requestAmountFocus(): void {
   if (amountInput && isElementVisible(amountInput)) {
@@ -145,20 +156,48 @@ export function claimNumericKeyboard(target: HTMLInputElement | null): boolean {
   if (!isElementVisible(target)) return false
 
   holdGhostFocus = false
+
+  // Sudah di nominal (mis. invoke kedua Strict Mode) — hanya bersihkan ghost.
+  if (document.activeElement === target) {
+    const toRemove = ghost
+    ghost = null
+    ghostPendingRemoval = toRemove
+    requestAnimationFrame(() => {
+      if (ghostPendingRemoval === toRemove) {
+        removeGhostNode(toRemove)
+        ghostPendingRemoval = null
+      }
+    })
+    return true
+  }
+
   focusAmount(target)
-  clearGhost()
+
+  // Tunda remove ghost 1 frame supaya IME tidak “kehilangan” fokus di antara
+  // blur ghost dan settle fokus nominal (sumber kedip di Chrome Android).
+  const toRemove = ghost
+  ghost = null
+  ghostPendingRemoval = toRemove
+  requestAnimationFrame(() => {
+    if (ghostPendingRemoval === toRemove) {
+      removeGhostNode(toRemove)
+      ghostPendingRemoval = null
+    }
+  })
   return true
 }
 
 /**
- * Setelah splash / mount layar Tambah: claim ghost bila ada, else fokus
- * langsung ke nominal (best-effort untuk cold start PWA).
+ * Setelah splash / mount layar Tambah: claim ghost bila ada.
+ * Jangan focus ulang jika nominal sudah aktif — itu yang bikin kedip.
  */
 export function focusAmountOnTambahReady(
   target: HTMLInputElement | null,
 ): void {
   if (!target || !isElementVisible(target)) return
   if (claimNumericKeyboard(target)) return
+  if (document.activeElement === target) return
+  // Cold start / tanpa ghost: best-effort (mungkin tanpa gesture).
   focusAmount(target)
 }
 

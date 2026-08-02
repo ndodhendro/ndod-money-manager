@@ -1,0 +1,39 @@
+---
+description: Deterministic icons and feature behavior across screens when purpose matches
+alwaysApply: true
+---
+
+# UI consistency — icons & shared features
+
+## Rule
+
+When a control or feature has the **same function and purpose** across menus/screens, its **icon and behavior must be identical** (deterministic). Do not invent a parallel variant per page.
+
+Same purpose → same glyph, same interaction model, same confirm/feedback pattern, same shared component when one exists.
+
+Different purpose → different icon/behavior is allowed (and preferred).
+
+## Icons
+
+- Action glyphs come from `src/lib/actionEmoji.ts` (`ActionEmoji`). Do not hardcode alternate emojis for edit/save/cancel/close/back/show/hide/drag/add/delete.
+- Nav and domain icons (History, Summary, Settings, etc.) stay single-sourced where defined (e.g. `BottomNav` tab map); reuse that source if the same destination appears elsewhere.
+- Do not swap icons for the same action for “variety” or screen-specific styling.
+
+## Behavior
+
+- Reuse shared components for the same job: e.g. `ConfirmDialog` for destructive confirms, `SwipeDeleteRow` for swipe-to-delete, `CategoryPicker` / `CirclePicker` for pickers, toasts for non-blocking success.
+- Same action → same steps: if delete confirms in one list, it confirms the same way in every equivalent list; if save shows a light toast in Quick Add, equivalent saves elsewhere do not use a blocking dialog unless purpose differs.
+- Gestures, disabled states, and error recovery for a shared feature stay aligned across screens.
+
+## When introducing or changing UI
+
+1. Search for an existing control that already does this job; extend or reuse it.
+2. If none exists and the action will appear in more than one place, extract a shared component or constant before duplicating.
+3. If two screens look similar but the intent differs, use a distinct icon/label/flow so users are not misled.
+
+## Examples
+
+- ✅ Delete in History and category manage both use `ActionEmoji.delete` + the same confirm pattern.
+- ✅ Edit affordance everywhere uses `ActionEmoji.edit`, not a mix of ✏️ / 🖊️ / “Edit” text-only.
+- ❌ History uses swipe-delete with confirm while Settings list deletes instantly with a different trash glyph for the same “remove this row” intent.
+- ❌ One screen’s “close overlay” is ❌ and another’s identical close is ✕ or “X” text with different dismiss semantics.

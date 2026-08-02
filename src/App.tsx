@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import {
   HashRouter,
+  Navigate,
   Route,
   Routes,
   useLocation,
 } from 'react-router-dom'
-import { BottomNav } from './components/BottomNav'
 import { AppToast } from './components/AppToast'
+import { BottomNav } from './components/BottomNav'
 import { UpdateRequired } from './components/UpdateRequired'
 import { useBackButtonTrap } from './hooks/useBackButton'
 import { isDeviceUnlocked } from './lib/deviceUnlock'
@@ -41,9 +42,9 @@ function App() {
 function AppShell({ onProfileReset }: { onProfileReset: () => void }) {
   const location = useLocation()
   useBackButtonTrap()
-  // Quick Add (buat baru) tetap di-mount; hanya "aktif" saat di route /.
-  const createAddActive =
-    location.pathname === '/' || location.pathname === ''
+
+  // Quick Add (buat baru) tetap di-mount; aktif hanya di /tambah.
+  const createAddActive = location.pathname === '/tambah'
 
   return (
     <div className="min-h-dvh bg-neutral-50 dark:bg-neutral-950">
@@ -59,7 +60,8 @@ function AppShell({ onProfileReset }: { onProfileReset: () => void }) {
       </div>
 
       <Routes>
-        <Route path="/" element={null} />
+        <Route path="/" element={<Navigate to="/riwayat" replace />} />
+        <Route path="/tambah" element={null} />
         <Route path="/transaksi/:id" element={<QuickAdd isActive />} />
         <Route path="/riwayat" element={<History />} />
         <Route path="/ringkasan" element={<Summary />} />

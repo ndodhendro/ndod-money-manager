@@ -64,17 +64,23 @@ export async function fetchTransactions(range: {
 
 export async function createTransaction(
   input: NewTransactionInput,
-): Promise<void> {
-  const { error } = await supabase.from('transactions').insert({
-    type: input.type,
-    category_id: input.category_id,
-    amount: input.amount,
-    description: input.description || null,
-    owner: input.owner,
-    occurred_on: input.occurred_on,
-    is_recurring: input.is_recurring,
-  })
+): Promise<string> {
+  const { data, error } = await supabase
+    .from('transactions')
+    .insert({
+      type: input.type,
+      category_id: input.category_id,
+      amount: input.amount,
+      description: input.description || null,
+      owner: input.owner,
+      circle: input.circle,
+      occurred_on: input.occurred_on,
+      is_recurring: input.is_recurring,
+    })
+    .select('id')
+    .single()
   if (error) throw error
+  return data.id as string
 }
 
 export async function updateTransaction(
@@ -89,6 +95,7 @@ export async function updateTransaction(
       amount: input.amount,
       description: input.description || null,
       owner: input.owner,
+      circle: input.circle,
       occurred_on: input.occurred_on,
       is_recurring: input.is_recurring,
     })

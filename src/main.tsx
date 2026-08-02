@@ -9,11 +9,10 @@ import { initPwaUpdate } from './lib/pwaUpdate'
 
 initPwaUpdate()
 
-// Cold start PWA: tangkap window aktivasi launch sedini mungkin supaya
-// numpad siap sebelum splash selesai & QuickAdd mount.
+// Cold start PWA: numpad hanya kalau land langsung di layar Tambah (shortcut).
 const launchPath = window.location.hash.replace(/^#/, '') || '/'
 const landsOnTambah =
-  launchPath === '/' || launchPath === '' || launchPath.startsWith('/?')
+  launchPath === '/tambah' || launchPath.startsWith('/tambah?')
 if (isDeviceUnlocked() && getStoredProfile() && landsOnTambah) {
   prepareLaunchNumericKeyboard()
 }

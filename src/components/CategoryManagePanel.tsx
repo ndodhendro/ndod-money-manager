@@ -80,9 +80,11 @@ export function CategoryManagePanel({
   )
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(PointerSensor, {
+      activationConstraint: { delay: 400, tolerance: 8 },
+    }),
     useSensor(TouchSensor, {
-      activationConstraint: { delay: 200, tolerance: 8 },
+      activationConstraint: { delay: 400, tolerance: 8 },
     }),
   )
 
@@ -107,7 +109,7 @@ export function CategoryManagePanel({
 
   async function handleAdd() {
     if (!name.trim()) {
-      setMessage('Nama kategori wajib diisi')
+      setMessage('Category name is required')
       return
     }
     setSaving(true)
@@ -126,10 +128,10 @@ export function CategoryManagePanel({
       setName('')
       setIcon('🏷️')
       setParentId('')
-      setMessage('Kategori ditambahkan')
+      setMessage('Category added')
       await refresh()
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : 'Gagal menambah')
+      setMessage(err instanceof Error ? err.message : 'Failed to add')
     } finally {
       setSaving(false)
     }
@@ -145,7 +147,7 @@ export function CategoryManagePanel({
       await refresh()
     } catch (err) {
       setMessage(
-        err instanceof Error ? err.message : 'Gagal mengubah visibilitas',
+        err instanceof Error ? err.message : 'Failed to change visibility',
       )
     }
   }
@@ -165,10 +167,10 @@ export function CategoryManagePanel({
         icon: editIcon || '🏷️',
       })
       setEditingId(null)
-      setMessage('Kategori diperbarui')
+      setMessage('Category updated')
       await refresh()
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : 'Gagal mengubah')
+      setMessage(err instanceof Error ? err.message : 'Failed to update')
     } finally {
       setSaving(false)
     }
@@ -189,7 +191,7 @@ export function CategoryManagePanel({
       onChanged()
     } catch (err) {
       setOrderedTree(tree)
-      setMessage(err instanceof Error ? err.message : 'Gagal mengubah urutan')
+      setMessage(err instanceof Error ? err.message : 'Failed to reorder')
     }
   }
 
@@ -215,7 +217,7 @@ export function CategoryManagePanel({
       onChanged()
     } catch (err) {
       setOrderedTree(tree)
-      setMessage(err instanceof Error ? err.message : 'Gagal mengubah urutan')
+      setMessage(err instanceof Error ? err.message : 'Failed to reorder')
     }
   }
 
@@ -227,7 +229,7 @@ export function CategoryManagePanel({
         }`}
       >
         <p className="text-sm font-medium text-neutral-700 dark:text-neutral-200">
-          Tambah Kategori / Sub-kategori
+          Add category / subcategory
         </p>
         <div className="flex gap-2">
           <input
@@ -239,7 +241,7 @@ export function CategoryManagePanel({
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Nama"
+            placeholder="Name"
             className="flex-1 rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
           />
         </div>
@@ -254,12 +256,12 @@ export function CategoryManagePanel({
               }}
               className="flex-1 rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
             >
-              <option value="expense">Pengeluaran</option>
-              <option value="income">Pemasukan</option>
+              <option value="expense">Expense</option>
+              <option value="income">Income</option>
             </select>
           ) : (
             <div className="flex-1 rounded-lg bg-neutral-100 px-3 py-2 text-sm text-neutral-500 dark:bg-neutral-700">
-              {type === 'expense' ? 'Pengeluaran' : 'Pemasukan'}
+              {type === 'expense' ? 'Expense' : 'Income'}
             </div>
           )}
           {type === 'expense' && !parentId && (
@@ -270,6 +272,7 @@ export function CategoryManagePanel({
             >
               <option value="needs">Needs</option>
               <option value="wants">Wants</option>
+              <option value="savings">Savings</option>
             </select>
           )}
         </div>
@@ -278,10 +281,10 @@ export function CategoryManagePanel({
           onChange={(e) => setParentId(e.target.value)}
           className="w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
         >
-          <option value="">— Parent baru (kategori utama) —</option>
+          <option value="">— New parent (main category) —</option>
           {parentOptions.map((p) => (
             <option key={p.id} value={p.id}>
-              Sub dari: {p.icon} {p.name}
+              Sub of: {p.icon} {p.name}
             </option>
           ))}
         </select>
@@ -291,11 +294,11 @@ export function CategoryManagePanel({
           disabled={saving}
           className="w-full rounded-lg bg-emerald-500 py-2 text-sm font-semibold text-white disabled:opacity-60"
         >
-          {saving ? 'Menyimpan…' : 'Tambah'}
+          {saving ? 'Saving…' : 'Add'}
         </button>
         {message && <p className="text-xs text-neutral-500">{message}</p>}
         <p className="text-[11px] text-neutral-400">
-          Tahan & seret {ActionEmoji.drag} untuk mengubah urutan.
+          Hold & drag {ActionEmoji.drag} to reorder.
         </p>
       </div>
 
@@ -377,9 +380,11 @@ function SortableParentRow({
   } = useSortable({ id: cat.id })
 
   const childSensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(PointerSensor, {
+      activationConstraint: { delay: 400, tolerance: 8 },
+    }),
     useSensor(TouchSensor, {
-      activationConstraint: { delay: 200, tolerance: 8 },
+      activationConstraint: { delay: 400, tolerance: 8 },
     }),
   )
 
@@ -417,8 +422,8 @@ function SortableParentRow({
           <button
             type="button"
             className="touch-none rounded-lg px-1 py-1 text-base leading-none text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-700"
-            aria-label="Seret untuk ubah urutan"
-            title="Seret"
+            aria-label="Drag to reorder"
+            title="Drag"
             {...attributes}
             {...listeners}
           >
@@ -466,7 +471,7 @@ function SortableParentRow({
             onClick={() => onStartEdit(cat)}
           />
           <EmojiButton
-            label={cat.is_active ? 'Sembunyikan' : 'Tampilkan'}
+            label={cat.is_active ? 'Hide' : 'Show'}
             emoji={ActionEmoji.show}
             struck={!cat.is_active}
             onClick={() => onToggleVisibility(cat.id, cat.is_active, null)}
@@ -557,8 +562,8 @@ function SortableChildRow({
         <button
           type="button"
           className="touch-none shrink-0 rounded-lg px-1 py-1 text-base leading-none text-neutral-400"
-          aria-label="Seret untuk ubah urutan"
-          title="Seret"
+          aria-label="Drag to reorder"
+          title="Drag"
           {...attributes}
           {...listeners}
         >
@@ -575,7 +580,7 @@ function SortableChildRow({
           onClick={() => onStartEdit(child)}
         />
         <EmojiButton
-          label={child.is_active ? 'Sembunyikan' : 'Tampilkan'}
+          label={child.is_active ? 'Hide' : 'Show'}
           emoji={ActionEmoji.show}
           struck={!child.is_active}
           onClick={() =>
@@ -676,8 +681,8 @@ function EditRow({
         type="button"
         onClick={onSave}
         disabled={saving}
-        title="Simpan"
-        aria-label="Simpan"
+        title="Save"
+        aria-label="Save"
         className="rounded-lg px-1.5 py-1 text-base leading-none disabled:opacity-60"
       >
         {ActionEmoji.save}
@@ -685,8 +690,8 @@ function EditRow({
       <button
         type="button"
         onClick={onCancel}
-        title="Batal"
-        aria-label="Batal"
+        title="Cancel"
+        aria-label="Cancel"
         className="rounded-lg px-1.5 py-1 text-base leading-none"
       >
         {ActionEmoji.cancel}

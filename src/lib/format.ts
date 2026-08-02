@@ -6,6 +6,16 @@ export function formatRupiah(amount: number): string {
   }).format(amount)
 }
 
+/** TradingView candle green (#26a69a) — income / positive. */
+export const AMOUNT_IN_CLASS = 'text-tv-green'
+
+/** TradingView candle red (#ef5350) — expense / negative. */
+export const AMOUNT_OUT_CLASS = 'text-tv-red'
+
+export function amountToneClass(positive: boolean): string {
+  return positive ? AMOUNT_IN_CLASS : AMOUNT_OUT_CLASS
+}
+
 export function formatNumber(amount: number): string {
   return new Intl.NumberFormat('id-ID').format(amount)
 }
@@ -28,15 +38,15 @@ export function formatDateLabel(isoDate: string): string {
     .toISOString()
     .slice(0, 10)
 
-  const withDay = new Intl.DateTimeFormat('id-ID', {
+  const withDay = new Intl.DateTimeFormat('en-US', {
     weekday: 'long',
     day: 'numeric',
     month: 'long',
   }).format(date)
   const capitalized = withDay.charAt(0).toUpperCase() + withDay.slice(1)
 
-  if (isoDate === today) return `Hari ini · ${capitalized}`
-  if (isoDate === yesterdayIso) return `Kemarin · ${capitalized}`
+  if (isoDate === today) return `Today · ${capitalized}`
+  if (isoDate === yesterdayIso) return `Yesterday · ${capitalized}`
   return capitalized
 }
 
@@ -65,7 +75,7 @@ export function monthRange(
 }
 
 export function formatMonthLabel(year: number, monthIndex: number): string {
-  return new Intl.DateTimeFormat('id-ID', {
+  return new Intl.DateTimeFormat('en-US', {
     month: 'long',
     year: 'numeric',
   }).format(new Date(year, monthIndex, 1))

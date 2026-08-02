@@ -8,13 +8,17 @@ import {
 } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { CategoryPicker } from '../components/CategoryPicker'
+import { CirclePicker } from '../components/CirclePicker'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import { DatePickerField } from '../components/DatePickerField'
 import { NotesInput } from '../components/NotesInput'
+import { OwnerBadge } from '../components/OwnerBadge'
 import { PageTitle } from '../components/PageTitle'
 import { useCategories } from '../hooks/useCategories'
 import { ActionEmoji } from '../lib/actionEmoji'
-import { bumpCategoryUsage, getStoredProfile } from '../lib/profile'
+import { bumpCategoryUsage, getStoredProfile, setStoredCircle } from '../lib/profile'
 import { formatNumber, todayIso } from '../lib/format'
+import { showAppToast } from '../lib/appToast'
 import {
   claimNumericKeyboard,
   dismissNumericKeyboard,
@@ -28,8 +32,12 @@ import {
   deleteTransaction,
   updateTransaction,
 } from '../lib/transactionsApi'
-import type { Owner, TransactionType } from '../lib/types'
-import { OwnerBadge } from '../components/OwnerBadge'
+import {
+  isCircle,
+  type Circle,
+  type Owner,
+  type TransactionType,
+} from '../lib/types'
 
 interface QuickAddProps {
   /** False saat layar Tambah di-park (opacity-0). Jangan register/claim input tersembunyi. */
@@ -43,21 +51,23 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   const navigate = useNavigate()
   const profileOwner: Owner = getStoredProfile() ?? 'suami'
 
-  const [type, setType] = useState<TransactionType>(
-    searchParams.get('type') === 'income' ? 'income' : 'expense',
-  )
+  // Default always Expense (most common capture). Income only via ?type=income.
+  const [type, setType] = useState<TransactionType>('expense')
   const [amountDigits, setAmountDigits] = useState('')
   const [categoryId, setCategoryId] = useState<string | null>(null)
   const [description, setDescription] = useState('')
   const [occurredOn, setOccurredOn] = useState(todayIso())
   const [owner, setOwner] = useState<Owner>(profileOwner)
+  const [circle, setCircle] = useState<Circle | null>(null)
   const [saving, setSaving] = useState(false)
   const [loadingExisting, setLoadingExisting] = useState(isEditing)
-  const [toast, setToast] = useState<string | null>(null)
+  const [circleOpen, setCircleOpen] = useState(false)
   const [categoryOpen, setCategoryOpen] = useState(false)
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
 
   const amountRef = useRef<HTMLInputElement | null>(null)
   const descriptionRef = useRef<HTMLInputElement>(null)
+  const wasActiveRef = useRef(false)
 
   const amountCallbackRef = useCallback(
     (el: HTMLInputElement | null) => {
@@ -70,17 +80,18 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   )
 
   // Hanya register input saat layar benar-benar terlihat.
+  // Jangan dismiss di cleanup saat isActive true→true (Strict Mode) —
+  // itu menutup numpad yang baru di-claim lalu dibuka lagi = kedip.
   useEffect(() => {
     if (isEditing) return
     if (isActive) {
       registerAmountInput(amountRef.current)
-    } else {
-      registerAmountInput(null)
-      dismissNumericKeyboard()
+      return () => {
+        registerAmountInput(null)
+      }
     }
-    return () => {
-      if (!isEditing) registerAmountInput(null)
-    }
+    registerAmountInput(null)
+    dismissNumericKeyboard()
   }, [isActive, isEditing])
 
   const { treeByUsage, byId, loading: loadingCategories, reload } =
@@ -103,6 +114,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         setDescription(data.description ?? '')
         setOccurredOn(data.occurred_on)
         setOwner(data.owner)
+        if (isCircle(data.circle)) setCircle(data.circle)
       }
       setLoadingExisting(false)
     }
@@ -112,7 +124,33 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     }
   }, [id, isEditing])
 
-  // Claim ghost → nominal (atau fokus langsung) setelah layar Tambah terlihat.
+  function resetForm() {
+    // In-app Quick Add (+) → Expense. PWA "Add Income" shortcut keeps ?type=income.
+    setType(searchParams.get('type') === 'income' ? 'income' : 'expense')
+    setAmountDigits('')
+    setCategoryId(null)
+    setDescription('')
+    setOccurredOn(todayIso())
+    setOwner(getStoredProfile() ?? 'suami')
+    setCircle(null)
+    setCircleOpen(false)
+    setCategoryOpen(false)
+    setSaving(false)
+  }
+
+  // Setiap masuk Log transaction (create): reset ke default, termasuk type → Expense.
+  useEffect(() => {
+    if (isEditing) {
+      wasActiveRef.current = isActive
+      return
+    }
+    if (isActive && !wasActiveRef.current) {
+      resetForm()
+    }
+    wasActiveRef.current = isActive
+  }, [isActive, isEditing, searchParams])
+
+  // Claim ghost → nominal setelah layar Tambah terlihat (sekali per aktivasi).
   useLayoutEffect(() => {
     if (isEditing || !isActive || loadingExisting) return
     focusAmountOnTambahReady(amountRef.current)
@@ -124,20 +162,10 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     if (!byId.has(categoryId)) setCategoryId(null)
   }, [type, loadingCategories, byId, categoryId])
 
-  useEffect(() => {
-    if (!toast) return
-    const t = setTimeout(() => setToast(null), 1600)
-    return () => clearTimeout(t)
-  }, [toast])
-
-  function resetForm() {
-    setAmountDigits('')
-    setCategoryId(null)
-    setDescription('')
-    setOccurredOn(todayIso())
-    setOwner(profileOwner)
-    setCategoryOpen(false)
-  }
+  const goBackToHistory = useCallback(() => {
+    dismissNumericKeyboard()
+    navigate('/riwayat', { replace: true })
+  }, [navigate])
 
   function isAmountFilled() {
     return Number(amountDigits) > 0
@@ -145,16 +173,34 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
 
   /** Field wajib di atas posisi saat ini yang belum diisi. Nominal 0 = belum diisi. */
   function findIncompleteAbove(
-    from: 'category' | 'description' | 'save',
-  ): 'amount' | 'category' | null {
+    from: 'circle' | 'category' | 'description' | 'save',
+  ): 'amount' | 'circle' | 'category' | null {
     if (!isAmountFilled()) return 'amount'
-    if (from !== 'category' && !categoryId) return 'category'
+    if (from !== 'circle' && !circle) return 'circle'
+    if (from !== 'category' && from !== 'circle' && !categoryId) return 'category'
+    return null
+  }
+
+  /** Field wajib berikutnya yang masih kosong (di bawah `from`). Null = semua wajib sudah terisi. */
+  function findNextEmpty(
+    from: 'amount' | 'circle' | 'category',
+  ): 'circle' | 'category' | null {
+    if (from === 'amount') {
+      if (!circle) return 'circle'
+      if (!categoryId) return 'category'
+      return null
+    }
+    if (from === 'circle') {
+      if (!categoryId) return 'category'
+      return null
+    }
     return null
   }
 
   function focusAmountField(message?: string) {
+    setCircleOpen(false)
     setCategoryOpen(false)
-    if (message) setToast(message)
+    if (message) showAppToast(message)
     // Dipanggil dari tap/gesture → boleh buka numpad.
     openNumericKeyboard()
     if (!claimNumericKeyboard(amountRef.current)) {
@@ -162,45 +208,75 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     }
   }
 
-  /** Setelah tanggal selesai (Cancel/Set): fokus ke field di bawah yang masih kosong. */
+  function focusCircleField(message?: string) {
+    setCategoryOpen(false)
+    if (message) showAppToast(message)
+    setCircleOpen(true)
+  }
+
+  function focusCategoryField(message?: string) {
+    setCircleOpen(false)
+    if (message) showAppToast(message)
+    setCategoryOpen(true)
+  }
+
+  function focusNextEmptyField(from: 'amount' | 'circle' | 'category') {
+    const next = findNextEmpty(from)
+    if (next === 'circle') {
+      focusCircleField()
+      return
+    }
+    if (next === 'category') {
+      focusCategoryField()
+      return
+    }
+    // Semua field wajib sudah terisi — tidak auto-focus.
+  }
+
+  /** Setelah tanggal selesai (Reset/Cancel/Set): fokus ke field wajib yang masih kosong (bukan notes). */
   function focusNextAfterDate() {
     if (!isAmountFilled()) {
       focusAmountField()
       return
     }
-    if (!categoryId) {
-      setCategoryOpen(true)
-      return
-    }
-    descriptionRef.current?.focus()
+    focusNextEmptyField('amount')
   }
 
-  function focusIncompleteField(
-    field: 'amount' | 'category',
-  ) {
+  function focusIncompleteField(field: 'amount' | 'circle' | 'category') {
     if (field === 'amount') {
-      focusAmountField('Isi nominal dulu ya')
+      focusAmountField('Enter the amount first')
       return
     }
-    setToast('Pilih kategori dulu ya')
-    setCategoryOpen(true)
+    if (field === 'circle') {
+      focusCircleField('Pick a circle first')
+      return
+    }
+    focusCategoryField('Pick a category first')
   }
 
   /** Coba maju ke langkah berikutnya; kalau ada field di atas yang kosong, fokus ke situ. */
   function advanceOrFixAbove(
-    from: 'amount' | 'category' | 'description' | 'save',
+    from: 'amount' | 'circle' | 'category' | 'description' | 'save',
   ): boolean {
     if (from === 'amount') {
       if (!isAmountFilled()) {
-        focusAmountField('Isi nominal dulu ya')
+        focusAmountField('Enter the amount first')
         return false
       }
-      // Kalau kategori sudah terisi (user isi kategori dulu), lanjut ke catatan.
-      if (categoryId) {
-        setTimeout(() => descriptionRef.current?.focus(), 50)
-        return true
+      focusNextEmptyField('amount')
+      return true
+    }
+
+    if (from === 'circle') {
+      if (!isAmountFilled()) {
+        focusAmountField('Enter the amount first')
+        return false
       }
-      setCategoryOpen(true)
+      if (!circle) {
+        focusCircleField('Pick a circle first')
+        return false
+      }
+      focusNextEmptyField('circle')
       return true
     }
 
@@ -218,12 +294,45 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     return true
   }
 
+  function handleCircleOpenChange(open: boolean) {
+    if (open) {
+      if (!isAmountFilled()) {
+        focusAmountField('Enter the amount first')
+        return
+      }
+      setCategoryOpen(false)
+    }
+    setCircleOpen(open)
+  }
+
   function handleCategoryOpenChange(open: boolean) {
     if (open) {
-      // Lompat ke kategori: cek dulu field di atas (nominal).
-      if (!advanceOrFixAbove('category')) return
+      if (!isAmountFilled()) {
+        focusAmountField('Enter the amount first')
+        return
+      }
+      if (!circle) {
+        focusCircleField('Pick a circle first')
+        return
+      }
+      setCircleOpen(false)
     }
     setCategoryOpen(open)
+  }
+
+  function handleCircleSelect(next: Circle) {
+    setCircle(next)
+    setCircleOpen(false)
+    if (!isAmountFilled()) {
+      focusAmountField('Enter the amount first')
+      return
+    }
+    // Pakai next langsung: state circle belum sempat ter-commit.
+    if (!categoryId) {
+      focusCategoryField()
+      return
+    }
+    // Amount + circle + category sudah lengkap — tidak auto-focus.
   }
 
   function handleAmountKeyDown(e: KeyboardEvent<HTMLInputElement>) {
@@ -237,12 +346,15 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   function handleCategorySelect(id: string) {
     setCategoryId(id)
     setCategoryOpen(false)
-    // Setelah pilih kategori, next ke catatan — tapi kalau nominal masih 0, balik ke atas.
     if (!isAmountFilled()) {
-      focusAmountField('Isi nominal dulu ya')
+      focusAmountField('Enter the amount first')
       return
     }
-    setTimeout(() => descriptionRef.current?.focus(), 50)
+    if (!circle) {
+      focusCircleField('Pick a circle first')
+      return
+    }
+    // Semua field wajib sudah terisi — tidak auto-focus ke notes.
   }
 
   function handleDescriptionFocus() {
@@ -262,56 +374,65 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
 
   async function handleSave() {
     if (!advanceOrFixAbove('save')) return
+    if (!circle || !categoryId) return
 
     const numericAmount = Number(amountDigits)
-    const creating = !isEditing
-    // Amankan gesture (klik Simpan / Enter) sebelum await.
-    if (creating) openNumericKeyboard()
 
     setSaving(true)
     try {
       const input = {
         type,
-        category_id: categoryId!,
+        category_id: categoryId,
         amount: numericAmount,
         description,
         owner: isEditing ? owner : profileOwner,
+        circle,
         occurred_on: occurredOn,
         is_recurring: false,
       }
       if (isEditing && id) {
         await updateTransaction(id, input)
-        navigate('/riwayat', { replace: true })
+        setStoredCircle(circle)
+        dismissNumericKeyboard()
+        navigate('/riwayat', {
+          replace: true,
+          state: { highlightTxId: id },
+        })
       } else {
-        await createTransaction(input)
-        bumpCategoryUsage(categoryId!)
-        setToast(`Tersimpan ${ActionEmoji.save}`)
+        const newId = await createTransaction(input)
+        bumpCategoryUsage(categoryId)
+        setStoredCircle(circle)
         resetForm()
-        // Siap input transaksi berikutnya: fokus nominal + numpad.
-        window.setTimeout(() => focusAmountField(), 50)
+        showAppToast(`Saved ${ActionEmoji.save}`)
+        dismissNumericKeyboard()
+        navigate('/riwayat', {
+          replace: true,
+          state: { highlightTxId: newId },
+        })
       }
     } catch (err) {
-      setToast(err instanceof Error ? err.message : 'Gagal menyimpan')
+      showAppToast(err instanceof Error ? err.message : 'Failed to save')
     } finally {
       setSaving(false)
     }
   }
 
-  async function handleDelete() {
+  async function confirmDelete() {
     if (!id) return
-    if (!confirm('Hapus transaksi ini?')) return
     setSaving(true)
     try {
       await deleteTransaction(id)
+      setConfirmDeleteOpen(false)
+      dismissNumericKeyboard()
       navigate('/riwayat', { replace: true })
     } catch (err) {
-      setToast(err instanceof Error ? err.message : 'Gagal menghapus')
+      showAppToast(err instanceof Error ? err.message : 'Failed to delete')
       setSaving(false)
     }
   }
 
   if (loadingExisting) {
-    return <div className="p-6 text-center text-neutral-400">Memuat…</div>
+    return <div className="p-6 text-center text-neutral-400">Loading…</div>
   }
 
   const displayAmount = amountDigits ? formatNumber(Number(amountDigits)) : ''
@@ -319,9 +440,20 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   return (
     <div className="mx-auto max-w-md px-4 pt-5 pb-28">
       <div className="flex items-start justify-between gap-3">
-        <PageTitle>
-          {isEditing ? 'Edit Transaksi' : 'Catat Transaksi'}
-        </PageTitle>
+        <div className="flex min-w-0 items-center gap-1">
+          <button
+            type="button"
+            onPointerDown={() => dismissNumericKeyboard()}
+            onClick={goBackToHistory}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xl text-neutral-600 active:bg-neutral-100 dark:text-neutral-300 dark:active:bg-neutral-800"
+            aria-label="Back to History"
+          >
+            ←
+          </button>
+          <PageTitle>
+            {isEditing ? 'Edit transaction' : 'Log transaction'}
+          </PageTitle>
+        </div>
         <OwnerBadge
           owner={isEditing ? owner : profileOwner}
           size="md"
@@ -340,14 +472,14 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
                 : 'text-neutral-500'
             }`}
           >
-            {t === 'expense' ? 'Pengeluaran' : 'Pemasukan'}
+            {t === 'expense' ? 'Expense' : 'Income'}
           </button>
         ))}
       </div>
 
       <label className="mt-4 block">
         <span className="mb-1.5 block text-xs text-neutral-400">
-          Tanggal
+          Date
         </span>
         <DatePickerField
           value={occurredOn}
@@ -358,7 +490,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
 
       <label className="mt-5 block">
         <span className="mb-1.5 block text-sm font-medium text-neutral-600 dark:text-neutral-300">
-          Nominal
+          Amount
         </span>
         <div className="flex items-center gap-2 rounded-xl bg-white px-4 py-3 shadow-sm dark:bg-neutral-800">
           <span className="text-sm font-medium text-neutral-400">Rp</span>
@@ -381,9 +513,16 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         </div>
       </label>
 
-      <div className="mt-4">
+      <div className="mt-4 space-y-3">
+        <CirclePicker
+          value={circle}
+          onChange={handleCircleSelect}
+          open={circleOpen}
+          onOpenChange={handleCircleOpenChange}
+          highlighted={circleOpen}
+        />
         {loadingCategories && treeByUsage.length === 0 ? (
-          <p className="text-sm text-neutral-400">Memuat kategori…</p>
+          <p className="text-sm text-neutral-400">Loading categories…</p>
         ) : (
           <CategoryPicker
             tree={treeByUsage}
@@ -407,48 +546,43 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
           categoryId={categoryId}
           onFocus={handleDescriptionFocus}
           onKeyDown={handleDescriptionKeyDown}
-          placeholder="Catatan (opsional)"
+          placeholder="Note (optional)"
         />
       </div>
 
       <button
         type="button"
-        onPointerDown={() => {
-          // Amankan user gesture supaya numpad tetap bisa muncul
-          // setelah await simpan (untuk transaksi berikutnya).
-          if (!isEditing && isAmountFilled() && categoryId) {
-            openNumericKeyboard()
-          }
-        }}
         onClick={() => void handleSave()}
         disabled={saving}
         className="mt-5 w-full rounded-xl bg-emerald-500 py-3.5 text-base font-semibold text-white shadow-md active:bg-emerald-600 disabled:opacity-60"
       >
-        {saving ? 'Menyimpan…' : 'Simpan'}
+        {saving ? 'Saving…' : 'Save'}
       </button>
 
       {isEditing && (
         <button
           type="button"
-          onClick={handleDelete}
+          onClick={() => setConfirmDeleteOpen(true)}
           disabled={saving}
           className="mt-3 w-full rounded-xl bg-red-50 py-3 text-sm font-medium text-red-600 disabled:opacity-60 dark:bg-red-950 dark:text-red-400"
         >
-          Hapus Transaksi
+          Delete
         </button>
       )}
 
-      {toast && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="pointer-events-none fixed inset-x-0 top-[max(0.75rem,env(safe-area-inset-top))] z-[90] flex justify-center px-4"
-        >
-          <div className="rounded-full bg-neutral-900 px-4 py-2 text-sm text-white shadow-lg dark:bg-neutral-100 dark:text-neutral-900">
-            {toast}
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        open={confirmDeleteOpen}
+        title="Delete transaction?"
+        message="This cannot be undone."
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        busy={saving}
+        onCancel={() => {
+          if (saving) return
+          setConfirmDeleteOpen(false)
+        }}
+        onConfirm={() => void confirmDelete()}
+      />
     </div>
   )
 }

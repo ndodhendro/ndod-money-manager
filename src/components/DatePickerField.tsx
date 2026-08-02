@@ -6,11 +6,11 @@ import { dismissNumericKeyboard } from '../lib/keyboardFocus'
 interface DatePickerFieldProps {
   value: string
   onChange: (isoDate: string) => void
-  /** Dipanggil setelah Cancel atau Set (sheet tutup). Reset tidak memanggil ini. */
+  /** Dipanggil setelah Reset, Cancel, atau Set (sheet tutup) supaya parent bisa fokus field kosong berikutnya. */
   onFinished?: () => void
 }
 
-const WEEKDAYS = ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min']
+const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
 function parseIso(iso: string): { y: number; m: number; d: number } {
   const [y, m, d] = iso.split('-').map(Number)
@@ -34,7 +34,7 @@ function mondayFirstIndex(y: number, m: number): number {
 }
 
 function monthTitle(y: number, m: number): string {
-  return new Intl.DateTimeFormat('id-ID', {
+  return new Intl.DateTimeFormat('en-US', {
     month: 'long',
     year: 'numeric',
   }).format(new Date(y, m, 1))
@@ -51,7 +51,7 @@ function endOfCurrentMonthIso(): string {
 }
 
 function shortDateWithWeekday(iso: string): string {
-  const formatted = new Intl.DateTimeFormat('id-ID', {
+  const formatted = new Intl.DateTimeFormat('en-US', {
     weekday: 'long',
     day: 'numeric',
     month: 'long',
@@ -68,11 +68,11 @@ function yesterdayIso(): string {
     .slice(0, 10)
 }
 
-/** Label datepicker: sertakan nama hari; "Hari ini"/"Kemarin" sebagai awalan. */
+/** Label datepicker: sertakan nama hari; "Today"/"Yesterday" sebagai awalan. */
 function datepickerLabel(isoDate: string): string {
   const withDay = shortDateWithWeekday(isoDate)
-  if (isoDate === todayIso()) return `Hari ini · ${withDay}`
-  if (isoDate === yesterdayIso()) return `Kemarin · ${withDay}`
+  if (isoDate === todayIso()) return `Today · ${withDay}`
+  if (isoDate === yesterdayIso()) return `Yesterday · ${withDay}`
   return withDay
 }
 
@@ -124,11 +124,8 @@ export function DatePickerField({
   }
 
   function handleReset() {
-    const today = todayIso()
-    setDraft(today)
-    const p = parseIso(today)
-    setView({ y: p.y, m: p.m })
-    // Stay di sheet — jangan onFinished.
+    // Apply today, close sheet, then advance focus (same as Cancel/Set).
+    closeAndFinish(todayIso())
   }
 
   function handleCancel() {
@@ -180,14 +177,14 @@ export function DatePickerField({
         <div className="fixed inset-0 z-50 flex flex-col justify-end">
           <button
             type="button"
-            aria-label="Tutup"
+            aria-label="Close"
             className="absolute inset-0 bg-black/40"
             onClick={handleCancel}
           />
           <div className="relative rounded-t-2xl bg-neutral-100 shadow-2xl dark:bg-neutral-900">
             <div className="flex items-center justify-between border-b border-neutral-200 px-4 py-3 dark:border-neutral-800">
               <p className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
-                Tanggal
+                Date
               </p>
               <p className="text-xs text-neutral-400">
                 {datepickerLabel(draft || todayIso())}
@@ -200,7 +197,7 @@ export function DatePickerField({
                   type="button"
                   onClick={() => shiftMonth(-1)}
                   className="rounded-lg px-3 py-1.5 text-sm text-neutral-600 dark:text-neutral-300"
-                  aria-label="Bulan sebelumnya"
+                  aria-label="Previous month"
                 >
                   ‹
                 </button>
@@ -212,7 +209,7 @@ export function DatePickerField({
                   onClick={() => shiftMonth(1)}
                   disabled={!canGoNextMonth}
                   className="rounded-lg px-3 py-1.5 text-sm text-neutral-600 enabled:active:bg-neutral-200/60 disabled:opacity-25 dark:text-neutral-300 dark:enabled:active:bg-neutral-800"
-                  aria-label="Bulan berikutnya"
+                  aria-label="Next month"
                 >
                   ›
                 </button>

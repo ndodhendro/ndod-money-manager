@@ -1,0 +1,19 @@
+---
+description: Product UI is English; AI replies match prompt language (default Indonesian)
+alwaysApply: true
+---
+
+# Language
+
+## Product (app UI)
+
+- All **user-facing** copy must be **English**: UI labels, buttons, placeholders, toasts, errors, empty states, settings, nav, category names, seed data shown to users, and PWA/meta text.
+- Do not add Indonesian (or other non-English) strings in product UI. If existing copy is non-English, prefer correcting it to English when touching that area.
+- Code comments and commit messages may follow repo norms; this rule targets what users see in the product.
+- Prefer clear, short English suited to a mobile cashflow app (e.g. "Save", "Income", "Expense", "History").
+
+## Assistant replies
+
+- Reply in the **same language** the user used in their latest prompt.
+- If the prompt language is mixed or unclear, **default to Indonesian**.
+- This applies only to chat responses — not to app UI strings, code identifiers, or commit messages.

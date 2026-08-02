@@ -1,6 +1,7 @@
-import type { Owner } from './types'
+import { isCircle, type Circle, type Owner } from './types'
 
 const PROFILE_KEY = 'mm_profile'
+const CIRCLE_KEY = 'mm_circle'
 
 export function getStoredProfile(): Owner | null {
   const value = localStorage.getItem(PROFILE_KEY)
@@ -13,6 +14,15 @@ export function setStoredProfile(owner: Owner): void {
 
 export function clearStoredProfile(): void {
   localStorage.removeItem(PROFILE_KEY)
+}
+
+export function getStoredCircle(): Circle {
+  const value = localStorage.getItem(CIRCLE_KEY)
+  return isCircle(value) ? value : 'hd_family'
+}
+
+export function setStoredCircle(circle: Circle): void {
+  localStorage.setItem(CIRCLE_KEY, circle)
 }
 
 const CATEGORY_USAGE_KEY = 'mm_category_usage'

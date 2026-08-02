@@ -28,21 +28,20 @@ export function UpdateRequired() {
           id="update-required-title"
           className="mt-4 text-lg font-semibold text-neutral-900 dark:text-neutral-50"
         >
-          Update wajib
+          Update required
         </h2>
         <p
           id="update-required-desc"
           className="mt-2 text-sm text-neutral-500 dark:text-neutral-400"
         >
-          Versi baru Ndod Budget sudah tersedia. Muat ulang untuk
-          melanjutkan.
+          A new version of Ndod Budget is available. Reload to continue.
         </p>
         <button
           type="button"
           onClick={applyPwaUpdate}
           className="mt-6 w-full rounded-xl bg-emerald-600 py-3 text-sm font-semibold text-white active:scale-[0.98]"
         >
-          Muat ulang
+          Reload
         </button>
       </div>
     </div>

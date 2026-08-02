@@ -1,24 +1,37 @@
 import { useEffect, useRef } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { hideAppToast, showAppToast } from '../lib/appToast'
-import { consumeBack, registerBackHandler } from '../lib/overlayBack'
+import {
+  consumeOverlayHandlers,
+  dismissSoftKeyboard,
+  registerBackHandler,
+} from '../lib/overlayBack'
+import { dismissNumericKeyboard } from '../lib/keyboardFocus'
 
 const EXIT_ARM_MS = 2000
 
+function isAddEditPath(pathname: string): boolean {
+  return pathname === '/tambah' || pathname.startsWith('/transaksi/')
+}
+
 /**
  * Tombol Back HP:
- * 1) Tutup overlay/keyboard
- * 2) Kalau tidak ada yang ditutup → toast "tekan sekali lagi"
- * 3) Back kedua dalam window → keluar aplikasi
+ * 1) Tutup overlay (circle/category/date/…)
+ * 2) Di add/edit → kembali ke History (sama seperti tombol ←), keyboard ikut ditutup
+ * 3) Di tab utama → tutup keyboard, lalu toast "tekan sekali lagi" / keluar
  *
  * Navigasi antar menu (BottomNav) tidak boleh di-rollback.
  */
 export function useBackButtonTrap(): void {
   const location = useLocation()
+  const navigate = useNavigate()
   const stickyHref = useRef(window.location.href)
+  const pathRef = useRef(location.pathname)
   const exitArmed = useRef(false)
   const exitTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const allowExit = useRef(false)
+
+  pathRef.current = location.pathname
 
   function clearExitArm() {
     exitArmed.current = false
@@ -46,11 +59,32 @@ export function useBackButtonTrap(): void {
     const onPopState = () => {
       if (allowExit.current) return
 
-      // Selalu kembalikan URL ke halaman aktif (jangan biarkan history
-      // router bergeser). Overlay/keyboard ditutup terpisah.
       const href = stickyHref.current
+      const path = pathRef.current
 
-      if (consumeBack()) {
+      // 1) Overlay sheet/picker dulu.
+      if (consumeOverlayHandlers()) {
+        clearExitArm()
+        hideAppToast()
+        pushTrap(href)
+        return
+      }
+
+      // 2) Add/edit: selalu kembali ke History (jangan tertahan di dismiss keyboard).
+      if (isAddEditPath(path)) {
+        clearExitArm()
+        hideAppToast()
+        dismissNumericKeyboard()
+        // Tunda navigate: beberapa browser/HashRouter bentrok jika
+        // navigate dipanggil sinkron di dalam handler popstate.
+        window.setTimeout(() => {
+          navigate('/riwayat', { replace: true })
+        }, 0)
+        return
+      }
+
+      // 3) Tab utama: tutup keyboard dulu.
+      if (dismissSoftKeyboard()) {
         clearExitArm()
         hideAppToast()
         pushTrap(href)
@@ -68,7 +102,7 @@ export function useBackButtonTrap(): void {
       }
 
       exitArmed.current = true
-      showAppToast('Tekan sekali lagi untuk keluar', EXIT_ARM_MS)
+      showAppToast('Press again to exit', EXIT_ARM_MS)
       exitTimer.current = setTimeout(() => {
         exitArmed.current = false
         exitTimer.current = null
@@ -81,7 +115,7 @@ export function useBackButtonTrap(): void {
       window.removeEventListener('popstate', onPopState, true)
       clearExitArm()
     }
-  }, [])
+  }, [navigate])
 }
 
 /**

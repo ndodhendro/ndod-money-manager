@@ -1,8 +1,5 @@
-import {
-  EMERGENCY_FUND_NAME,
-  INVESTMENT_NAME,
-  type TransactionWithCategory,
-} from './types'
+import { sumTransfersInto } from './bucketsApi'
+import type { Bucket, TransactionWithCategory } from './types'
 
 export interface MoneyPlanInput {
   income: number
@@ -51,7 +48,6 @@ function bucketStatus(
     if (ratio > 0) return 'under'
     return 'empty'
   }
-  // floor: savings & needs commitments — meeting target is good
   if (ratio >= 1) return 'on_track'
   if (ratio >= 0.8) return 'under'
   if (ratio > 0) return 'under'
@@ -109,30 +105,63 @@ export function buildMoneyPlan(input: MoneyPlanInput): MoneyPlan {
   }
 }
 
-function leafName(tx: TransactionWithCategory): string {
-  return tx.category?.name ?? ''
-}
-
 function budgetGroupOf(tx: TransactionWithCategory) {
   return tx.category?.budget_group ?? tx.category?.parent?.budget_group ?? null
 }
 
-/** Sum expense amounts for Emergency Fund / Investment categories. */
-export function sumSavingsActuals(transactions: TransactionWithCategory[]): {
+export function budgetGroupOfTx(tx: TransactionWithCategory) {
+  return budgetGroupOf(tx)
+}
+
+/** Monthly PYF funding from transfers into system buckets (+ legacy expense categories). */
+export function sumSavingsActuals(
+  transactions: TransactionWithCategory[],
+  emergencyBucketId: string | null,
+  investmentBucketId: string | null,
+): {
   emergency: number
   investment: number
 } {
   let emergency = 0
   let investment = 0
   for (const tx of transactions) {
+    if (tx.type === 'transfer') {
+      if (emergencyBucketId && tx.to_bucket_id === emergencyBucketId) {
+        emergency += tx.amount
+      }
+      if (investmentBucketId && tx.to_bucket_id === investmentBucketId) {
+        investment += tx.amount
+      }
+      continue
+    }
+    // Legacy: expense categorized as Emergency Fund / Investment
     if (tx.type !== 'expense') continue
-    const leaf = leafName(tx)
-    if (leaf === EMERGENCY_FUND_NAME) emergency += tx.amount
-    else if (leaf === INVESTMENT_NAME) investment += tx.amount
+    const leaf = tx.category?.name ?? ''
+    if (leaf === 'Emergency Fund') emergency += tx.amount
+    else if (leaf === 'Investment') investment += tx.amount
   }
   return { emergency, investment }
 }
 
-export function budgetGroupOfTx(tx: TransactionWithCategory) {
-  return budgetGroupOf(tx)
+export function emergencyFundTarget(
+  plannedNeeds: number,
+  multiplier: number,
+): number {
+  return Math.max(0, plannedNeeds) * Math.max(0, multiplier)
+}
+
+export function monthlyInflowsByBucket(
+  movements: Array<{
+    amount: number
+    to_bucket_id: string | null
+    occurred_on: string
+  }>,
+  buckets: Bucket[],
+  range: { start: string; end: string },
+): Map<string, number> {
+  const map = new Map<string, number>()
+  for (const b of buckets) {
+    map.set(b.id, sumTransfersInto(movements, b.id, range))
+  }
+  return map
 }

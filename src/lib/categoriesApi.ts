@@ -1,9 +1,9 @@
 import { supabase } from './supabase'
-import type { BudgetGroup, TransactionType } from './types'
+import type { BudgetGroup, CategoryType } from './types'
 
 export interface AddCategoryInput {
   name: string
-  type: TransactionType
+  type: CategoryType
   icon?: string
   budget_group?: BudgetGroup | null
   parent_id?: string | null

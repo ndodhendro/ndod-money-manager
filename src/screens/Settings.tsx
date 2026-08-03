@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { RecurringBillsPanel } from '../components/RecurringBillsPanel'
+import { BucketManagePanel } from '../components/BucketManagePanel'
 import { CategoryManagePanel } from '../components/CategoryManagePanel'
 import { OwnerBadge } from '../components/OwnerBadge'
 import { PageTitle } from '../components/PageTitle'
@@ -7,7 +9,7 @@ import { showAppToast } from '../lib/appToast'
 import { APP_VERSION } from '../lib/branding'
 import { formatNumber, formatRupiah } from '../lib/format'
 import { clearStoredProfile, getStoredProfile } from '../lib/profile'
-import type { TransactionType } from '../lib/types'
+import type { CategoryType } from '../lib/types'
 
 interface SettingsProps {
   onProfileReset: () => void
@@ -15,13 +17,14 @@ interface SettingsProps {
 
 export function Settings({ onProfileReset }: SettingsProps) {
   const profile = getStoredProfile()
-  const [manageType, setManageType] = useState<TransactionType>('expense')
+  const [manageType, setManageType] = useState<CategoryType>('expense')
   const { settings, loading: planLoading, error: planError, save } =
     usePyfSettings()
 
   const [emergencyPct, setEmergencyPct] = useState('10')
   const [investmentPct, setInvestmentPct] = useState('15')
   const [plannedNeedsDigits, setPlannedNeedsDigits] = useState('')
+  const [efMultiplier, setEfMultiplier] = useState('3')
   const [savingPlan, setSavingPlan] = useState(false)
 
   useEffect(() => {
@@ -33,6 +36,7 @@ export function Settings({ onProfileReset }: SettingsProps) {
         ? String(Math.round(settings.planned_needs_amount))
         : '',
     )
+    setEfMultiplier(String(settings.emergency_fund_target_multiplier || 3))
   }, [settings])
 
   function handleChangeProfile() {
@@ -47,6 +51,7 @@ export function Settings({ onProfileReset }: SettingsProps) {
     const plannedNeeds = plannedNeedsDigits
       ? Number(plannedNeedsDigits)
       : 0
+    const multiplier = Number(efMultiplier)
 
     if (Number.isNaN(emergency) || Number.isNaN(investment)) {
       showAppToast('Enter valid percentages')
@@ -60,6 +65,10 @@ export function Settings({ onProfileReset }: SettingsProps) {
       showAppToast('Emergency + investment cannot exceed 100%')
       return
     }
+    if (Number.isNaN(multiplier) || multiplier < 0) {
+      showAppToast('Enter a valid emergency multiplier')
+      return
+    }
 
     setSavingPlan(true)
     try {
@@ -67,6 +76,7 @@ export function Settings({ onProfileReset }: SettingsProps) {
         emergency_fund_pct: emergency,
         investment_pct: investment,
         planned_needs_amount: plannedNeeds,
+        emergency_fund_target_multiplier: multiplier,
       })
       showAppToast('Money plan saved')
     } catch (err) {
@@ -86,7 +96,7 @@ export function Settings({ onProfileReset }: SettingsProps) {
 
       <div className="mt-5 rounded-xl bg-white p-4 shadow-sm dark:bg-neutral-800">
         <p className="text-sm font-medium text-neutral-700 dark:text-neutral-200">
-          This phone's profile
+          This phone&apos;s profile
         </p>
         <p className="mt-1 text-sm text-neutral-500">
           {profile ? <OwnerBadge owner={profile} size="md" /> : 'Not selected'}
@@ -105,8 +115,8 @@ export function Settings({ onProfileReset }: SettingsProps) {
           Money Plan
         </p>
         <p className="mt-1 text-xs text-neutral-500">
-          Pay yourself first: set savings % of income and monthly needs. Wants
-          budget is the leftover. Shown on Summary.
+          Pay yourself first via Transfer into buckets. Wants budget is income
+          minus savings % and planned needs.
         </p>
 
         {planLoading && (
@@ -120,7 +130,7 @@ export function Settings({ onProfileReset }: SettingsProps) {
           <div className="mt-3 space-y-3">
             <label className="block">
               <span className="text-xs text-neutral-500">
-                Emergency fund (% of income)
+                Emergency fund (% of income each month)
               </span>
               <input
                 type="number"
@@ -135,7 +145,7 @@ export function Settings({ onProfileReset }: SettingsProps) {
             </label>
             <label className="block">
               <span className="text-xs text-neutral-500">
-                Investment (% of income)
+                Investment (% of income each month)
               </span>
               <input
                 type="number"
@@ -172,6 +182,25 @@ export function Settings({ onProfileReset }: SettingsProps) {
                 </span>
               )}
             </label>
+            <label className="block">
+              <span className="text-xs text-neutral-500">
+                Emergency fund target (× monthly needs)
+              </span>
+              <input
+                type="number"
+                inputMode="decimal"
+                min={0}
+                max={24}
+                step={0.5}
+                value={efMultiplier}
+                onChange={(e) => setEfMultiplier(e.target.value)}
+                className="mt-1 w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
+              />
+              <span className="mt-1 block text-[11px] text-neutral-400">
+                Common range: 3–6×. When the Emergency bucket reaches this,
+                consider lowering the monthly %.
+              </span>
+            </label>
             <button
               type="button"
               onClick={() => void handleSaveMoneyPlan()}
@@ -182,6 +211,28 @@ export function Settings({ onProfileReset }: SettingsProps) {
             </button>
           </div>
         )}
+      </div>
+
+      <div className="mt-6">
+        <p className="mb-2 text-sm font-medium text-neutral-600 dark:text-neutral-300">
+          Recurring bills
+        </p>
+        <p className="mb-2 text-xs text-neutral-500">
+          Templates for the Due this month checklist on Plan (mortgage, parents,
+          insurance, etc.).
+        </p>
+        <RecurringBillsPanel />
+      </div>
+
+      <div className="mt-6">
+        <p className="mb-2 text-sm font-medium text-neutral-600 dark:text-neutral-300">
+          Savings buckets
+        </p>
+        <p className="mb-2 text-xs text-neutral-500">
+          Emergency, Investment, and sinking funds. Move money with Transfer in
+          Quick Add. Set opening balance if you already have savings.
+        </p>
+        <BucketManagePanel />
       </div>
 
       <div className="mt-6">

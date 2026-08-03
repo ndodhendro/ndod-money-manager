@@ -3,9 +3,10 @@ import { dismissNumericKeyboard } from '../lib/keyboardFocus'
 
 const TABS = [
   { to: '/riwayat', label: 'History', icon: '🧾' },
-  { to: '/ringkasan', label: 'Summary', icon: '📊' },
+  { to: '/dashboard', label: 'Dashboard', icon: '📊' },
+  { to: '/rencana', label: 'Plan', icon: '🎯' },
   { to: '/pengaturan', label: 'Settings', icon: '⚙️' },
-]
+] as const
 
 function isTabActive(pathname: string, to: string): boolean {
   return pathname === to || pathname.startsWith(`${to}/`)
@@ -35,13 +36,13 @@ export function BottomNav() {
               onClick={() => {
                 if (!active) navigate(tab.to, { replace: true })
               }}
-              className={`flex flex-1 flex-col items-center gap-0.5 py-2.5 text-xs font-medium ${
+              className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium sm:text-xs ${
                 active
                   ? 'text-emerald-600 dark:text-emerald-400'
                   : 'text-neutral-400'
               }`}
             >
-              <span className="text-lg">{tab.icon}</span>
+              <span className="text-lg leading-none">{tab.icon}</span>
               {tab.label}
             </button>
           )

@@ -13,11 +13,12 @@ import { useBackButtonTrap } from './hooks/useBackButton'
 import { isDeviceUnlocked } from './lib/deviceUnlock'
 import { getStoredProfile } from './lib/profile'
 import { History } from './screens/History'
+import { MoneyPlanScreen } from './screens/MoneyPlan'
 import { PinUnlock } from './screens/PinUnlock'
 import { ProfilePicker } from './screens/ProfilePicker'
 import { QuickAdd } from './screens/QuickAdd'
 import { Settings } from './screens/Settings'
-import { Summary } from './screens/Summary'
+import { Dashboard } from './screens/Dashboard'
 
 function App() {
   const [unlocked, setUnlocked] = useState(() => isDeviceUnlocked())
@@ -64,7 +65,9 @@ function AppShell({ onProfileReset }: { onProfileReset: () => void }) {
         <Route path="/tambah" element={null} />
         <Route path="/transaksi/:id" element={<QuickAdd isActive />} />
         <Route path="/riwayat" element={<History />} />
-        <Route path="/ringkasan" element={<Summary />} />
+        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/rencana" element={<MoneyPlanScreen />} />
+        <Route path="/ringkasan" element={<Navigate to="/dashboard" replace />} />
         <Route
           path="/pengaturan"
           element={<Settings onProfileReset={onProfileReset} />}

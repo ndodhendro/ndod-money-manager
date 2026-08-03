@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import type { Category, TransactionType } from '../lib/types'
+import type { Category, CategoryType } from '../lib/types'
 import { getCategoryUsage } from '../lib/profile'
 
 export interface CategoryTreeNode extends Category {
@@ -8,7 +8,7 @@ export interface CategoryTreeNode extends Category {
 }
 
 export function useCategories(
-  type?: TransactionType,
+  type?: CategoryType,
   options?: { includeInactive?: boolean },
 ) {
   const includeInactive = options?.includeInactive ?? false

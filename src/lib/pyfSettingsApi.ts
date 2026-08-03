@@ -14,13 +14,13 @@ export type PyfSettingsUpdate = {
   emergency_fund_pct: number
   investment_pct: number
   planned_needs_amount: number
+  emergency_fund_target_multiplier: number
 }
 
-const DEFAULTS: Omit<PyfSettingsUpdate, 'planned_needs_amount'> & {
-  planned_needs_amount?: number
-} = {
+const DEFAULTS = {
   emergency_fund_pct: 10,
   investment_pct: 15,
+  emergency_fund_target_multiplier: 3,
 }
 
 const PLANNED_NEEDS_LS_KEY = 'ndod_planned_needs_amount'
@@ -112,11 +112,15 @@ export async function updatePyfSettings(
   if (patch.planned_needs_amount < 0) {
     throw new Error('Planned needs cannot be negative')
   }
+  if (patch.emergency_fund_target_multiplier < 0) {
+    throw new Error('Emergency multiplier cannot be negative')
+  }
 
   const fullPatch = {
     emergency_fund_pct: patch.emergency_fund_pct,
     investment_pct: patch.investment_pct,
     planned_needs_amount: patch.planned_needs_amount,
+    emergency_fund_target_multiplier: patch.emergency_fund_target_multiplier,
   }
 
   const { data, error } = await supabase
@@ -139,6 +143,8 @@ export async function updatePyfSettings(
       .update({
         emergency_fund_pct: patch.emergency_fund_pct,
         investment_pct: patch.investment_pct,
+        emergency_fund_target_multiplier:
+          patch.emergency_fund_target_multiplier,
       })
       .eq('id', id)
       .select('*')

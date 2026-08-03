@@ -41,19 +41,45 @@ export function isCircle(value: unknown): value is Circle {
   )
 }
 
-export type TransactionType = 'income' | 'expense'
+/** Categories only use income/expense. */
+export type CategoryType = 'income' | 'expense'
+
+export type TransactionType = 'income' | 'expense' | 'transfer'
 
 export type BudgetGroup = 'needs' | 'wants' | 'savings'
 
-/** Canonical names for PYF savings categories (must match seed). */
-export const SAVINGS_PARENT_NAME = 'Savings'
-export const EMERGENCY_FUND_NAME = 'Emergency Fund'
-export const INVESTMENT_NAME = 'Investment'
+export type BucketKind = 'emergency' | 'investment' | 'sinking'
+
+export const BUCKET_KIND_LABELS: Record<BucketKind, string> = {
+  emergency: 'Emergency',
+  investment: 'Investment',
+  sinking: 'Sinking fund',
+}
+
+/** Sentinel: null bucket id = household cashflow (checking). */
+export const CASHFLOW_LABEL = 'Cashflow'
+
+export interface Bucket {
+  id: string
+  name: string
+  kind: BucketKind
+  icon: string
+  target_amount: number | null
+  opening_balance: number
+  sort_order: number
+  is_active: boolean
+  is_system: boolean
+  created_at: string
+}
+
+export interface BucketWithBalance extends Bucket {
+  balance: number
+}
 
 export interface Category {
   id: string
   name: string
-  type: TransactionType
+  type: CategoryType
   budget_group: BudgetGroup | null
   icon: string
   sort_order: number
@@ -69,6 +95,8 @@ export interface Transaction {
   id: string
   type: TransactionType
   category_id: string | null
+  from_bucket_id: string | null
+  to_bucket_id: string | null
   amount: number
   description: string | null
   owner: Owner
@@ -81,17 +109,30 @@ export interface Transaction {
 
 export interface TransactionWithCategory extends Transaction {
   category: CategoryWithParent | null
+  from_bucket?: Bucket | null
+  to_bucket?: Bucket | null
 }
 
 export interface NewTransactionInput {
   type: TransactionType
-  category_id: string
+  category_id: string | null
+  from_bucket_id: string | null
+  to_bucket_id: string | null
   amount: number
   description: string
   owner: Owner
   circle: Circle
   occurred_on: string
   is_recurring: boolean
+}
+
+export function formatTransferLabel(
+  from: Bucket | null | undefined,
+  to: Bucket | null | undefined,
+): string {
+  const fromLabel = from ? `${from.icon} ${from.name}` : CASHFLOW_LABEL
+  const toLabel = to ? `${to.icon} ${to.name}` : CASHFLOW_LABEL
+  return `${fromLabel} → ${toLabel}`
 }
 
 /** Label tampilan: "🚗 Transportasi/Parkir" atau "🏠 Tempat Tinggal" */

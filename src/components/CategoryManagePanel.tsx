@@ -26,14 +26,14 @@ import {
   reorderCategories,
   setCategoryVisibility,
 } from '../lib/categoriesApi'
-import type { BudgetGroup, Category, TransactionType } from '../lib/types'
+import type { BudgetGroup, Category, CategoryType } from '../lib/types'
 
 interface CategoryManagePanelProps {
-  type: TransactionType
+  type: CategoryType
   allowTypeChange?: boolean
   onChanged: () => void
   compact?: boolean
-  onTypeChange?: (type: TransactionType) => void
+  onTypeChange?: (type: CategoryType) => void
 }
 
 export function CategoryManagePanel({
@@ -250,7 +250,7 @@ export function CategoryManagePanel({
             <select
               value={type}
               onChange={(e) => {
-                const next = e.target.value as TransactionType
+                const next = e.target.value as CategoryType
                 onTypeChange?.(next)
                 setParentId('')
               }}

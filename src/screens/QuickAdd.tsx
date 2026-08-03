@@ -7,6 +7,10 @@ import {
   type KeyboardEvent,
 } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import {
+  BucketPicker,
+  type BucketSelection,
+} from '../components/BucketPicker'
 import { CategoryPicker } from '../components/CategoryPicker'
 import { CirclePicker } from '../components/CirclePicker'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -14,6 +18,7 @@ import { DatePickerField } from '../components/DatePickerField'
 import { NotesInput } from '../components/NotesInput'
 import { OwnerBadge } from '../components/OwnerBadge'
 import { PageTitle } from '../components/PageTitle'
+import { useBuckets } from '../hooks/useBuckets'
 import { useCategories } from '../hooks/useCategories'
 import { ActionEmoji } from '../lib/actionEmoji'
 import { bumpCategoryUsage, getStoredProfile, setStoredCircle } from '../lib/profile'
@@ -34,6 +39,7 @@ import {
 } from '../lib/transactionsApi'
 import {
   isCircle,
+  type CategoryType,
   type Circle,
   type Owner,
   type TransactionType,
@@ -55,6 +61,12 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   const [type, setType] = useState<TransactionType>('expense')
   const [amountDigits, setAmountDigits] = useState('')
   const [categoryId, setCategoryId] = useState<string | null>(null)
+  const [fromBucket, setFromBucket] = useState<BucketSelection | undefined>(
+    undefined,
+  )
+  const [toBucket, setToBucket] = useState<BucketSelection | undefined>(
+    undefined,
+  )
   const [description, setDescription] = useState('')
   const [occurredOn, setOccurredOn] = useState(todayIso())
   const [owner, setOwner] = useState<Owner>(profileOwner)
@@ -63,6 +75,8 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   const [loadingExisting, setLoadingExisting] = useState(isEditing)
   const [circleOpen, setCircleOpen] = useState(false)
   const [categoryOpen, setCategoryOpen] = useState(false)
+  const [fromOpen, setFromOpen] = useState(false)
+  const [toOpen, setToOpen] = useState(false)
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
 
   const amountRef = useRef<HTMLInputElement | null>(null)
@@ -72,16 +86,11 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   const amountCallbackRef = useCallback(
     (el: HTMLInputElement | null) => {
       amountRef.current = el
-      // Register segera di callback ref supaya requestAmountFocus / claim
-      // tidak ketinggalan satu frame (penting saat launch & tap Tambah).
       if (!isEditing && isActive) registerAmountInput(el)
     },
     [isEditing, isActive],
   )
 
-  // Hanya register input saat layar benar-benar terlihat.
-  // Jangan dismiss di cleanup saat isActive true→true (Strict Mode) —
-  // itu menutup numpad yang baru di-claim lalu dibuka lagi = kedip.
   useEffect(() => {
     if (isEditing) return
     if (isActive) {
@@ -94,8 +103,12 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     dismissNumericKeyboard()
   }, [isActive, isEditing])
 
+  const categoryType: CategoryType | undefined =
+    type === 'transfer' ? undefined : type
   const { treeByUsage, byId, loading: loadingCategories, reload } =
-    useCategories(type)
+    useCategories(categoryType)
+  const { buckets, loading: loadingBuckets, reload: reloadBuckets } =
+    useBuckets()
 
   useEffect(() => {
     if (!isEditing || !id) return
@@ -108,9 +121,19 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         .single()
       if (cancelled) return
       if (!error && data) {
-        setType(data.type)
+        setType(data.type as TransactionType)
         setAmountDigits(String(Math.round(Number(data.amount))))
         setCategoryId(data.category_id)
+        setFromBucket(
+          data.type === 'transfer'
+            ? ((data.from_bucket_id as string | null) ?? null)
+            : undefined,
+        )
+        setToBucket(
+          data.type === 'transfer'
+            ? ((data.to_bucket_id as string | null) ?? null)
+            : undefined,
+        )
         setDescription(data.description ?? '')
         setOccurredOn(data.occurred_on)
         setOwner(data.owner)
@@ -125,20 +148,29 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   }, [id, isEditing])
 
   function resetForm() {
-    // In-app Quick Add (+) → Expense. PWA "Add Income" shortcut keeps ?type=income.
-    setType(searchParams.get('type') === 'income' ? 'income' : 'expense')
+    const param = searchParams.get('type')
+    setType(
+      param === 'income'
+        ? 'income'
+        : param === 'transfer'
+          ? 'transfer'
+          : 'expense',
+    )
     setAmountDigits('')
     setCategoryId(null)
+    setFromBucket(param === 'transfer' ? null : undefined)
+    setToBucket(undefined)
     setDescription('')
     setOccurredOn(todayIso())
     setOwner(getStoredProfile() ?? 'suami')
     setCircle(null)
     setCircleOpen(false)
     setCategoryOpen(false)
+    setFromOpen(false)
+    setToOpen(false)
     setSaving(false)
   }
 
-  // Setiap masuk Log transaction (create): reset ke default, termasuk type → Expense.
   useEffect(() => {
     if (isEditing) {
       wasActiveRef.current = isActive
@@ -150,17 +182,22 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     wasActiveRef.current = isActive
   }, [isActive, isEditing, searchParams])
 
-  // Claim ghost → nominal setelah layar Tambah terlihat (sekali per aktivasi).
   useLayoutEffect(() => {
     if (isEditing || !isActive || loadingExisting) return
     focusAmountOnTambahReady(amountRef.current)
   }, [isEditing, isActive, loadingExisting])
 
-  // Reset kategori kalau ganti income/expense dan pilihan lama tidak valid.
   useEffect(() => {
+    if (type === 'transfer') return
     if (loadingCategories || !categoryId) return
     if (!byId.has(categoryId)) setCategoryId(null)
   }, [type, loadingCategories, byId, categoryId])
+
+  useEffect(() => {
+    if (type !== 'transfer') return
+    // Default: from Cashflow → pick destination bucket (common funding path).
+    setFromBucket((prev) => (prev === undefined ? null : prev))
+  }, [type])
 
   const goBackToHistory = useCallback(() => {
     dismissNumericKeyboard()
@@ -171,20 +208,39 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     return Number(amountDigits) > 0
   }
 
-  /** Field wajib di atas posisi saat ini yang belum diisi. Nominal 0 = belum diisi. */
+  function isTransferReady() {
+    return fromBucket !== undefined && toBucket !== undefined
+  }
+
   function findIncompleteAbove(
-    from: 'circle' | 'category' | 'description' | 'save',
-  ): 'amount' | 'circle' | 'category' | null {
+    from: 'circle' | 'category' | 'description' | 'save' | 'from' | 'to',
+  ): 'amount' | 'circle' | 'category' | 'from' | 'to' | null {
     if (!isAmountFilled()) return 'amount'
+    if (type === 'transfer') {
+      if (from !== 'from' && fromBucket === undefined) return 'from'
+      if (from !== 'to' && from !== 'from' && toBucket === undefined) return 'to'
+      return null
+    }
     if (from !== 'circle' && !circle) return 'circle'
     if (from !== 'category' && from !== 'circle' && !categoryId) return 'category'
     return null
   }
 
-  /** Field wajib berikutnya yang masih kosong (di bawah `from`). Null = semua wajib sudah terisi. */
   function findNextEmpty(
-    from: 'amount' | 'circle' | 'category',
-  ): 'circle' | 'category' | null {
+    from: 'amount' | 'circle' | 'category' | 'from' | 'to',
+  ): 'circle' | 'category' | 'from' | 'to' | null {
+    if (type === 'transfer') {
+      if (from === 'amount') {
+        if (fromBucket === undefined) return 'from'
+        if (toBucket === undefined) return 'to'
+        return null
+      }
+      if (from === 'from') {
+        if (toBucket === undefined) return 'to'
+        return null
+      }
+      return null
+    }
     if (from === 'amount') {
       if (!circle) return 'circle'
       if (!categoryId) return 'category'
@@ -200,8 +256,9 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   function focusAmountField(message?: string) {
     setCircleOpen(false)
     setCategoryOpen(false)
+    setFromOpen(false)
+    setToOpen(false)
     if (message) showAppToast(message)
-    // Dipanggil dari tap/gesture → boleh buka numpad.
     openNumericKeyboard()
     if (!claimNumericKeyboard(amountRef.current)) {
       amountRef.current?.focus()
@@ -210,17 +267,39 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
 
   function focusCircleField(message?: string) {
     setCategoryOpen(false)
+    setFromOpen(false)
+    setToOpen(false)
     if (message) showAppToast(message)
     setCircleOpen(true)
   }
 
   function focusCategoryField(message?: string) {
     setCircleOpen(false)
+    setFromOpen(false)
+    setToOpen(false)
     if (message) showAppToast(message)
     setCategoryOpen(true)
   }
 
-  function focusNextEmptyField(from: 'amount' | 'circle' | 'category') {
+  function focusFromField(message?: string) {
+    setCircleOpen(false)
+    setCategoryOpen(false)
+    setToOpen(false)
+    if (message) showAppToast(message)
+    setFromOpen(true)
+  }
+
+  function focusToField(message?: string) {
+    setCircleOpen(false)
+    setCategoryOpen(false)
+    setFromOpen(false)
+    if (message) showAppToast(message)
+    setToOpen(true)
+  }
+
+  function focusNextEmptyField(
+    from: 'amount' | 'circle' | 'category' | 'from' | 'to',
+  ) {
     const next = findNextEmpty(from)
     if (next === 'circle') {
       focusCircleField()
@@ -230,10 +309,15 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
       focusCategoryField()
       return
     }
-    // Semua field wajib sudah terisi — tidak auto-focus.
+    if (next === 'from') {
+      focusFromField()
+      return
+    }
+    if (next === 'to') {
+      focusToField()
+    }
   }
 
-  /** Setelah tanggal selesai (Reset/Cancel/Set): fokus ke field wajib yang masih kosong (bukan notes). */
   function focusNextAfterDate() {
     if (!isAmountFilled()) {
       focusAmountField()
@@ -242,7 +326,9 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     focusNextEmptyField('amount')
   }
 
-  function focusIncompleteField(field: 'amount' | 'circle' | 'category') {
+  function focusIncompleteField(
+    field: 'amount' | 'circle' | 'category' | 'from' | 'to',
+  ) {
     if (field === 'amount') {
       focusAmountField('Enter the amount first')
       return
@@ -251,12 +337,19 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
       focusCircleField('Pick a circle first')
       return
     }
+    if (field === 'from') {
+      focusFromField('Pick a source first')
+      return
+    }
+    if (field === 'to') {
+      focusToField('Pick a destination first')
+      return
+    }
     focusCategoryField('Pick a category first')
   }
 
-  /** Coba maju ke langkah berikutnya; kalau ada field di atas yang kosong, fokus ke situ. */
   function advanceOrFixAbove(
-    from: 'amount' | 'circle' | 'category' | 'description' | 'save',
+    from: 'amount' | 'circle' | 'category' | 'description' | 'save' | 'from' | 'to',
   ): boolean {
     if (from === 'amount') {
       if (!isAmountFilled()) {
@@ -264,6 +357,44 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         return false
       }
       focusNextEmptyField('amount')
+      return true
+    }
+
+    if (type === 'transfer') {
+      if (from === 'from') {
+        if (!isAmountFilled()) {
+          focusAmountField('Enter the amount first')
+          return false
+        }
+        if (fromBucket === undefined) {
+          focusFromField('Pick a source first')
+          return false
+        }
+        focusNextEmptyField('from')
+        return true
+      }
+      if (from === 'to') {
+        if (!isAmountFilled()) {
+          focusAmountField('Enter the amount first')
+          return false
+        }
+        if (fromBucket === undefined) {
+          focusFromField('Pick a source first')
+          return false
+        }
+        if (toBucket === undefined) {
+          focusToField('Pick a destination first')
+          return false
+        }
+        return true
+      }
+      const incomplete = findIncompleteAbove(
+        from === 'description' ? 'description' : 'save',
+      )
+      if (incomplete) {
+        focusIncompleteField(incomplete)
+        return false
+      }
       return true
     }
 
@@ -320,6 +451,32 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     setCategoryOpen(open)
   }
 
+  function handleFromOpenChange(open: boolean) {
+    if (open) {
+      if (!isAmountFilled()) {
+        focusAmountField('Enter the amount first')
+        return
+      }
+      setToOpen(false)
+    }
+    setFromOpen(open)
+  }
+
+  function handleToOpenChange(open: boolean) {
+    if (open) {
+      if (!isAmountFilled()) {
+        focusAmountField('Enter the amount first')
+        return
+      }
+      if (fromBucket === undefined) {
+        focusFromField('Pick a source first')
+        return
+      }
+      setFromOpen(false)
+    }
+    setToOpen(open)
+  }
+
   function handleCircleSelect(next: Circle) {
     setCircle(next)
     setCircleOpen(false)
@@ -327,12 +484,36 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
       focusAmountField('Enter the amount first')
       return
     }
-    // Pakai next langsung: state circle belum sempat ter-commit.
     if (!categoryId) {
       focusCategoryField()
+    }
+  }
+
+  function handleFromSelect(next: BucketSelection) {
+    setFromBucket(next)
+    setFromOpen(false)
+    if (toBucket !== undefined && toBucket === next) {
+      setToBucket(undefined)
+    }
+    if (!isAmountFilled()) {
+      focusAmountField('Enter the amount first')
       return
     }
-    // Amount + circle + category sudah lengkap — tidak auto-focus.
+    if (toBucket === undefined || toBucket === next) {
+      focusToField()
+    }
+  }
+
+  function handleToSelect(next: BucketSelection) {
+    setToBucket(next)
+    setToOpen(false)
+    if (!isAmountFilled()) {
+      focusAmountField('Enter the amount first')
+      return
+    }
+    if (fromBucket === undefined) {
+      focusFromField('Pick a source first')
+    }
   }
 
   function handleAmountKeyDown(e: KeyboardEvent<HTMLInputElement>) {
@@ -352,9 +533,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     }
     if (!circle) {
       focusCircleField('Pick a circle first')
-      return
     }
-    // Semua field wajib sudah terisi — tidak auto-focus ke notes.
   }
 
   function handleDescriptionFocus() {
@@ -372,27 +551,74 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     }
   }
 
+  function handleTypeChange(next: TransactionType) {
+    setType(next)
+    setCategoryId(null)
+    setCircleOpen(false)
+    setCategoryOpen(false)
+    setFromOpen(false)
+    setToOpen(false)
+    if (next === 'transfer') {
+      setFromBucket(null)
+      setToBucket(undefined)
+      setCircle(null)
+    } else {
+      setFromBucket(undefined)
+      setToBucket(undefined)
+    }
+  }
+
   async function handleSave() {
     if (!advanceOrFixAbove('save')) return
-    if (!circle || !categoryId) return
 
     const numericAmount = Number(amountDigits)
 
+    if (type === 'transfer') {
+      if (!isTransferReady()) return
+      if (fromBucket === toBucket) {
+        showAppToast('Pick different from and to')
+        return
+      }
+      if (fromBucket == null && toBucket == null) {
+        showAppToast('Transfer needs at least one bucket')
+        return
+      }
+    } else if (!circle || !categoryId) {
+      return
+    }
+
     setSaving(true)
     try {
-      const input = {
-        type,
-        category_id: categoryId,
-        amount: numericAmount,
-        description,
-        owner: isEditing ? owner : profileOwner,
-        circle,
-        occurred_on: occurredOn,
-        is_recurring: false,
-      }
+      const input =
+        type === 'transfer'
+          ? {
+              type: 'transfer' as const,
+              category_id: null,
+              from_bucket_id: fromBucket ?? null,
+              to_bucket_id: toBucket ?? null,
+              amount: numericAmount,
+              description,
+              owner: isEditing ? owner : profileOwner,
+              circle: 'hd_family' as Circle,
+              occurred_on: occurredOn,
+              is_recurring: false,
+            }
+          : {
+              type,
+              category_id: categoryId!,
+              from_bucket_id: null,
+              to_bucket_id: null,
+              amount: numericAmount,
+              description,
+              owner: isEditing ? owner : profileOwner,
+              circle: circle!,
+              occurred_on: occurredOn,
+              is_recurring: false,
+            }
+
       if (isEditing && id) {
         await updateTransaction(id, input)
-        setStoredCircle(circle)
+        if (input.circle) setStoredCircle(input.circle)
         dismissNumericKeyboard()
         navigate('/riwayat', {
           replace: true,
@@ -400,8 +626,9 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         })
       } else {
         const newId = await createTransaction(input)
-        bumpCategoryUsage(categoryId)
-        setStoredCircle(circle)
+        if (input.category_id) bumpCategoryUsage(input.category_id)
+        if (input.type !== 'transfer') setStoredCircle(input.circle)
+        void reloadBuckets()
         resetForm()
         showAppToast(`Saved ${ActionEmoji.save}`)
         dismissNumericKeyboard()
@@ -436,6 +663,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   }
 
   const displayAmount = amountDigits ? formatNumber(Number(amountDigits)) : ''
+  const isTransfer = type === 'transfer'
 
   return (
     <div className="mx-auto max-w-md px-4 pt-5 pb-28">
@@ -460,19 +688,23 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         />
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-2 rounded-xl bg-neutral-100 p-1 dark:bg-neutral-800">
-        {(['expense', 'income'] as TransactionType[]).map((t) => (
+      <div className="mt-4 grid grid-cols-3 gap-1 rounded-xl bg-neutral-100 p-1 dark:bg-neutral-800">
+        {(['expense', 'income', 'transfer'] as TransactionType[]).map((t) => (
           <button
             key={t}
             type="button"
-            onClick={() => setType(t)}
+            onClick={() => handleTypeChange(t)}
             className={`rounded-lg py-2 text-sm font-semibold transition-colors ${
               type === t
                 ? 'bg-white text-neutral-900 shadow-sm dark:bg-neutral-900 dark:text-neutral-50'
                 : 'text-neutral-500'
             }`}
           >
-            {t === 'expense' ? 'Expense' : 'Income'}
+            {t === 'expense'
+              ? 'Expense'
+              : t === 'income'
+                ? 'Income'
+                : 'Transfer'}
           </button>
         ))}
       </div>
@@ -514,27 +746,58 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
       </label>
 
       <div className="mt-4 space-y-3">
-        <CirclePicker
-          value={circle}
-          onChange={handleCircleSelect}
-          open={circleOpen}
-          onOpenChange={handleCircleOpenChange}
-          highlighted={circleOpen}
-        />
-        {loadingCategories && treeByUsage.length === 0 ? (
-          <p className="text-sm text-neutral-400">Loading categories…</p>
+        {isTransfer ? (
+          loadingBuckets && buckets.length === 0 ? (
+            <p className="text-sm text-neutral-400">Loading buckets…</p>
+          ) : (
+            <>
+              <BucketPicker
+                label="From"
+                value={fromBucket}
+                buckets={buckets}
+                excludeId={toBucket ?? undefined}
+                open={fromOpen}
+                onOpenChange={handleFromOpenChange}
+                onChange={handleFromSelect}
+                highlighted={fromOpen}
+              />
+              <BucketPicker
+                label="To"
+                value={toBucket}
+                buckets={buckets}
+                excludeId={fromBucket ?? undefined}
+                open={toOpen}
+                onOpenChange={handleToOpenChange}
+                onChange={handleToSelect}
+                highlighted={toOpen}
+              />
+            </>
+          )
         ) : (
-          <CategoryPicker
-            tree={treeByUsage}
-            selectedId={categoryId}
-            byId={byId}
-            open={categoryOpen}
-            onOpenChange={handleCategoryOpenChange}
-            onSelect={handleCategorySelect}
-            transactionType={type}
-            onCategoriesChanged={reload}
-            highlighted={categoryOpen}
-          />
+          <>
+            <CirclePicker
+              value={circle}
+              onChange={handleCircleSelect}
+              open={circleOpen}
+              onOpenChange={handleCircleOpenChange}
+              highlighted={circleOpen}
+            />
+            {loadingCategories && treeByUsage.length === 0 ? (
+              <p className="text-sm text-neutral-400">Loading categories…</p>
+            ) : (
+              <CategoryPicker
+                tree={treeByUsage}
+                selectedId={categoryId}
+                byId={byId}
+                open={categoryOpen}
+                onOpenChange={handleCategoryOpenChange}
+                onSelect={handleCategorySelect}
+                transactionType={type}
+                onCategoriesChanged={reload}
+                highlighted={categoryOpen}
+              />
+            )}
+          </>
         )}
       </div>
 
@@ -543,7 +806,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
           inputRef={descriptionRef}
           value={description}
           onChange={setDescription}
-          categoryId={categoryId}
+          categoryId={isTransfer ? null : categoryId}
           onFocus={handleDescriptionFocus}
           onKeyDown={handleDescriptionKeyDown}
           placeholder="Note (optional)"

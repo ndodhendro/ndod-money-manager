@@ -23,6 +23,7 @@ import {
   CIRCLE_LABELS,
   CIRCLES,
   categoryDisplayParts,
+  formatTransferLabel,
   isCircle,
   type Circle,
 } from '../lib/types'
@@ -185,6 +186,11 @@ export function History() {
     const circle = isCircle(tx.circle) ? tx.circle : 'hd_family'
     if (circleFilter !== 'all' && circle !== circleFilter) return false
 
+    // Transfers have no category — hide when a category filter is active.
+    if (tx.type === 'transfer') {
+      return categoryFilter === 'all' && subcategoryFilter === 'all'
+    }
+
     if (subcategoryFilter !== 'all') {
       return tx.category_id === subcategoryFilter
     }
@@ -194,7 +200,6 @@ export function History() {
       if (!cat) return false
       if (cat.id === categoryFilter) return true
       if (cat.parent_id === categoryFilter) return true
-      // Parent may not be hydrated on leaf; resolve via byId.
       const parent = cat.parent_id ? byId.get(cat.parent_id) : null
       return parent?.id === categoryFilter
     }
@@ -361,11 +366,11 @@ export function History() {
       <div className="mt-4 space-y-5">
         {dates.map((date) => {
           const items = grouped[date]!
-          const dayTotal = items.reduce(
-            (sum, tx) =>
-              sum + (tx.type === 'expense' ? -tx.amount : tx.amount),
-            0,
-          )
+          const dayTotal = items.reduce((sum, tx) => {
+            if (tx.type === 'expense') return sum - tx.amount
+            if (tx.type === 'income') return sum + tx.amount
+            return sum
+          }, 0)
           return (
             <div key={date}>
               {/* Header grouping per hari */}
@@ -382,12 +387,23 @@ export function History() {
               </div>
               <div className="space-y-2">
                 {items.map((tx) => {
+                  const isTransfer = tx.type === 'transfer'
                   const {
                     parentIcon,
                     parentName,
                     childIcon,
                     childName,
-                  } = categoryDisplayParts(tx.category)
+                  } = isTransfer
+                    ? {
+                        parentIcon: '🔄',
+                        parentName: formatTransferLabel(
+                          tx.from_bucket,
+                          tx.to_bucket,
+                        ),
+                        childIcon: null as string | null,
+                        childName: null as string | null,
+                      }
+                    : categoryDisplayParts(tx.category)
                   const note = tx.description?.trim() || null
                   const isHighlighted = highlightId === tx.id
 
@@ -421,6 +437,11 @@ export function History() {
                             <span className="truncate">{childName}</span>
                           </p>
                         )}
+                        {isTransfer && (
+                          <p className="mt-0.5 text-xs text-neutral-400">
+                            Transfer
+                          </p>
+                        )}
                         {note && (
                           <p className="mt-1 truncate text-xs text-neutral-500 dark:text-neutral-400">
                             {note}
@@ -428,19 +449,27 @@ export function History() {
                         )}
                       </div>
                       <div className="flex shrink-0 flex-col items-end gap-1">
-                        <CircleBadge
-                          circle={
-                            isCircle(tx.circle) ? tx.circle : 'hd_family'
-                          }
-                        />
+                        {!isTransfer && (
+                          <CircleBadge
+                            circle={
+                              isCircle(tx.circle) ? tx.circle : 'hd_family'
+                            }
+                          />
+                        )}
                         <p
                           className={`text-sm font-semibold whitespace-nowrap ${
                             tx.type === 'expense'
                               ? AMOUNT_OUT_CLASS
-                              : AMOUNT_IN_CLASS
+                              : tx.type === 'income'
+                                ? AMOUNT_IN_CLASS
+                                : 'text-violet-600 dark:text-violet-300'
                           }`}
                         >
-                          {tx.type === 'expense' ? '-' : '+'}
+                          {tx.type === 'expense'
+                            ? '-'
+                            : tx.type === 'income'
+                              ? '+'
+                              : ''}
                           {formatRupiah(tx.amount)}
                         </p>
                       </div>

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useOverlayBack } from '../hooks/useBackButton'
 import type { CategoryTreeNode } from '../hooks/useCategories'
 import { ActionEmoji } from '../lib/actionEmoji'
-import type { Category, TransactionType } from '../lib/types'
+import type { Category, CategoryType } from '../lib/types'
 import { CategoryManagePanel } from './CategoryManagePanel'
 
 interface CategoryPickerProps {
@@ -12,7 +12,7 @@ interface CategoryPickerProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   onSelect: (categoryId: string) => void
-  transactionType: TransactionType
+  transactionType: CategoryType
   onCategoriesChanged: () => void
   highlighted?: boolean
 }

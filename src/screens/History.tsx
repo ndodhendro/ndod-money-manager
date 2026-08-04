@@ -6,6 +6,7 @@ import { CollapsibleDayGroup } from '../components/CollapsibleDayGroup'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { OwnerBadge } from '../components/OwnerBadge'
 import { PageTitle } from '../components/PageTitle'
+import { NavIcon } from '../lib/navTabs'
 import { SwipeDeleteRow } from '../components/SwipeDeleteRow'
 import { useCategories } from '../hooks/useCategories'
 import { useTransactions } from '../hooks/useTransactions'
@@ -246,7 +247,7 @@ export function History() {
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
-      <PageTitle>History</PageTitle>
+      <PageTitle icon={NavIcon.history}>History</PageTitle>
 
       <div className="mt-2 flex items-center justify-between gap-2">
         <button

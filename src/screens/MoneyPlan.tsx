@@ -11,6 +11,7 @@ import {
   formatRupiah,
 } from '../lib/format'
 import { monthCursorKey } from '../lib/monthCursor'
+import { NavIcon } from '../lib/navTabs'
 import { PLAN_SECTIONS } from '../lib/planSections'
 
 export function MoneyPlanScreen() {
@@ -57,7 +58,7 @@ export function MoneyPlanScreen() {
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
-      <PageTitle>Money Plan</PageTitle>
+      <PageTitle icon={NavIcon.plan}>Money Plan</PageTitle>
       <MonthPager
         monthLabel={monthLabel}
         canGoNext={canGoNext}

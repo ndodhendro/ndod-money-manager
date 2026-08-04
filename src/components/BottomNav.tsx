@@ -1,12 +1,6 @@
 import { useLocation, useNavigate } from 'react-router-dom'
 import { dismissNumericKeyboard } from '../lib/keyboardFocus'
-
-const TABS = [
-  { to: '/riwayat', label: 'History', icon: '🧾' },
-  { to: '/dashboard', label: 'Dashboard', icon: '📊' },
-  { to: '/rencana', label: 'Plan', icon: '🎯' },
-  { to: '/pengaturan', label: 'Settings', icon: '⚙️' },
-] as const
+import { NAV_TABS } from '../lib/navTabs'
 
 function isTabActive(pathname: string, to: string): boolean {
   return pathname === to || pathname.startsWith(`${to}/`)
@@ -26,7 +20,7 @@ export function BottomNav() {
   return (
     <nav className="fixed inset-x-0 bottom-0 z-10 border-t border-neutral-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur dark:border-neutral-800 dark:bg-neutral-900/95">
       <div className="mx-auto flex max-w-md">
-        {TABS.map((tab) => {
+        {NAV_TABS.map((tab) => {
           const active = isTabActive(location.pathname, tab.to)
           return (
             <button

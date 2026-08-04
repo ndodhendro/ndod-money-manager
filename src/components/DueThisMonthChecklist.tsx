@@ -33,6 +33,8 @@ interface DueThisMonthChecklistProps {
   cursor: MonthCursor
   bills: RecurringBill[]
   logByBillId: Map<string, RecurringBillLog>
+  /** Bills already checked in the calendar current month (for "X months left"). */
+  currentMonthDoneByBillId?: Set<string>
   loading: boolean
   available: boolean
   onChanged: () => void
@@ -97,6 +99,7 @@ export function DueThisMonthChecklist({
   cursor,
   bills,
   logByBillId,
+  currentMonthDoneByBillId,
   loading,
   available,
   onChanged,
@@ -205,6 +208,7 @@ export function DueThisMonthChecklist({
 
         const occurredOn = recurringOccurredOn(cursor, bill.due_day)
         const owner = bill.owner ?? getStoredProfile() ?? 'suami'
+        const circle = bill.type === 'income' ? 'hd_family' : bill.circle
         const txId = await createTransaction(
           bill.type === 'transfer'
             ? {
@@ -215,7 +219,7 @@ export function DueThisMonthChecklist({
                 amount: bill.amount,
                 description: bill.name,
                 owner,
-                circle: 'hd_family',
+                circle,
                 occurred_on: occurredOn,
                 is_recurring: true,
               }
@@ -227,7 +231,7 @@ export function DueThisMonthChecklist({
                 amount: bill.amount,
                 description: bill.name,
                 owner,
-                circle: bill.circle,
+                circle,
                 occurred_on: occurredOn,
                 is_recurring: true,
               },
@@ -342,6 +346,10 @@ export function DueThisMonthChecklist({
                         bill={bill}
                         display={display}
                         done={done}
+                        monthCursor={cursor}
+                        currentMonthDone={
+                          currentMonthDoneByBillId?.has(bill.id) ?? done
+                        }
                       />
                     </div>
                   </button>

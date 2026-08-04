@@ -13,6 +13,7 @@ import {
   currentMonthCursor,
   monthCursorKey,
 } from '../../lib/monthCursor'
+import { PlanIcon } from '../../lib/planSections'
 
 export function PlanRecurring() {
   const location = useLocation()
@@ -32,6 +33,7 @@ export function PlanRecurring() {
   const {
     bills,
     logByBillId,
+    currentMonthDoneByBillId,
     loading: billsLoading,
     available: billsAvailable,
     reload: reloadBills,
@@ -46,7 +48,11 @@ export function PlanRecurring() {
 
   return (
     <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
-      <PlanSubPage title="Recurring Checklist" description="">
+      <PlanSubPage
+        title="Recurring Checklist"
+        icon={PlanIcon.recurring}
+        description=""
+      >
         <MonthPager
           monthLabel={monthLabel}
           canGoNext={canGoNext}
@@ -58,6 +64,7 @@ export function PlanRecurring() {
             cursor={cursor}
             bills={bills}
             logByBillId={logByBillId}
+            currentMonthDoneByBillId={currentMonthDoneByBillId}
             loading={billsLoading}
             available={billsAvailable}
             embedded

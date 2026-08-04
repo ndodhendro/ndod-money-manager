@@ -18,6 +18,8 @@ interface CirclePickerProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   highlighted?: boolean
+  /** When true, show value but block changing (e.g. income → HD Family). */
+  locked?: boolean
 }
 
 export function CirclePicker({
@@ -26,8 +28,9 @@ export function CirclePicker({
   open,
   onOpenChange,
   highlighted = false,
+  locked = false,
 }: CirclePickerProps) {
-  useOverlayBack(open, () => {
+  useOverlayBack(open && !locked, () => {
     onOpenChange(false)
     return true
   })
@@ -41,9 +44,15 @@ export function CirclePicker({
     <>
       <button
         type="button"
-        onClick={() => onOpenChange(true)}
+        disabled={locked}
+        onClick={() => {
+          if (locked) return
+          onOpenChange(true)
+        }}
         className={`flex w-full items-center gap-3 rounded-xl bg-white px-4 py-3.5 text-left shadow-sm dark:bg-neutral-800 ${
-          highlighted
+          locked ? 'cursor-default opacity-90' : ''
+        } ${
+          highlighted && !locked
             ? 'ring-2 ring-emerald-400 ring-offset-2 dark:ring-offset-neutral-950'
             : ''
         }`}
@@ -65,10 +74,12 @@ export function CirclePicker({
             {value ? CIRCLE_LABELS[value] : 'Select circle'}
           </p>
         </div>
-        <span className="shrink-0 text-neutral-300">›</span>
+        {!locked && (
+          <span className="shrink-0 text-neutral-300">›</span>
+        )}
       </button>
 
-      {open && (
+      {open && !locked && (
         <div className="fixed inset-0 z-50 flex flex-col justify-end">
           <button
             type="button"

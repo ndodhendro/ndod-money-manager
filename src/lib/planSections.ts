@@ -10,24 +10,25 @@ export const PLAN_SECTIONS = [
     to: '/rencana/pay-yourself-first',
     icon: '💸',
     title: 'Pay Yourself First',
-    subtitle: 'Savings & spending targets',
+    subtitle: 'Monthly funding progress',
   },
   {
     to: '/rencana/emergency',
-    icon: '🛟',
-    title: 'Emergency Fund Goal',
-    subtitle: 'Safety buffer progress',
-  },
-  {
-    to: '/rencana/buckets',
-    icon: '🪣',
-    title: 'Bucket Balances',
-    subtitle: 'Emergency, investment & sinking',
+    icon: '🎯',
+    title: 'Savings Goals',
+    subtitle: 'Overall progress vs targets',
   },
   {
     to: '/rencana/needs-wants',
     icon: '⚖️',
     title: 'Needs vs Wants',
-    subtitle: 'Spending split this month',
+    subtitle: 'Spending targets this month',
   },
 ] as const
+
+export const PlanIcon = {
+  recurring: PLAN_SECTIONS[0].icon,
+  payYourselfFirst: PLAN_SECTIONS[1].icon,
+  emergency: PLAN_SECTIONS[2].icon,
+  needsWants: PLAN_SECTIONS[3].icon,
+} as const

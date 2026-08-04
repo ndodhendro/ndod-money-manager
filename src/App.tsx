@@ -15,7 +15,6 @@ import { isDeviceUnlocked } from './lib/deviceUnlock'
 import { getStoredProfile } from './lib/profile'
 import { History } from './screens/History'
 import { MoneyPlanScreen } from './screens/MoneyPlan'
-import { PlanBuckets } from './screens/plan/PlanBuckets'
 import { PlanEmergency } from './screens/plan/PlanEmergency'
 import { PlanNeedsWants } from './screens/plan/PlanNeedsWants'
 import { PlanPayYourselfFirst } from './screens/plan/PlanPayYourselfFirst'
@@ -83,7 +82,10 @@ function AppShell({ onProfileReset }: { onProfileReset: () => void }) {
           element={<PlanPayYourselfFirst />}
         />
         <Route path="/rencana/emergency" element={<PlanEmergency />} />
-        <Route path="/rencana/buckets" element={<PlanBuckets />} />
+        <Route
+          path="/rencana/buckets"
+          element={<Navigate to="/rencana/pay-yourself-first" replace />}
+        />
         <Route path="/rencana/needs-wants" element={<PlanNeedsWants />} />
         <Route path="/ringkasan" element={<Navigate to="/dashboard" replace />} />
         <Route
@@ -95,7 +97,10 @@ function AppShell({ onProfileReset }: { onProfileReset: () => void }) {
           path="/pengaturan/recurring/:billId?"
           element={<SettingsRecurring />}
         />
-        <Route path="/pengaturan/buckets" element={<SettingsBuckets />} />
+        <Route
+          path="/pengaturan/buckets/:bucketId?"
+          element={<SettingsBuckets />}
+        />
         <Route path="/pengaturan/categories" element={<SettingsCategories />} />
         <Route
           path="/pengaturan/categories/new"

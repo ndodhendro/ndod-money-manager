@@ -54,7 +54,8 @@ function bucketStatus(
   return 'empty'
 }
 
-function makeBucket(
+/** Build a progress row for Plan budget / bucket displays. */
+export function makeMoneyPlanBucket(
   label: string,
   target: number,
   actual: number,
@@ -82,23 +83,33 @@ export function buildMoneyPlan(input: MoneyPlanInput): MoneyPlan {
     income - emergencyTarget - investmentTarget - plannedNeeds,
   )
 
-  const wants = makeBucket('Wants', wantsBudget, input.wantsActual, 'ceiling')
+  const wants = makeMoneyPlanBucket(
+    'Wants',
+    wantsBudget,
+    input.wantsActual,
+    'ceiling',
+  )
 
   return {
     income,
-    emergency: makeBucket(
+    emergency: makeMoneyPlanBucket(
       'Emergency fund',
       emergencyTarget,
       input.emergencyActual,
       'floor',
     ),
-    investment: makeBucket(
+    investment: makeMoneyPlanBucket(
       'Investment',
       investmentTarget,
       input.investmentActual,
       'floor',
     ),
-    needs: makeBucket('Needs', plannedNeeds, input.needsActual, 'floor'),
+    needs: makeMoneyPlanBucket(
+      'Needs',
+      plannedNeeds,
+      input.needsActual,
+      'floor',
+    ),
     wants,
     wantsBudget,
     wantsWarning: wantsBudget > 0 && input.wantsActual / wantsBudget >= 0.8,
@@ -111,6 +122,41 @@ function budgetGroupOf(tx: TransactionWithCategory) {
 
 export function budgetGroupOfTx(tx: TransactionWithCategory) {
   return budgetGroupOf(tx)
+}
+
+/**
+ * Average monthly needs over the given months.
+ * Only months with needs > 0 count (fallback when history is shorter than the window).
+ */
+export function averageMonthlyNeeds(
+  transactions: TransactionWithCategory[],
+  months: Array<{ year: number; month: number }>,
+): { average: number; monthsUsed: number } | null {
+  if (months.length === 0) return null
+
+  const totals = new Map<string, number>()
+  for (const m of months) {
+    const key = `${m.year}-${String(m.month + 1).padStart(2, '0')}`
+    totals.set(key, 0)
+  }
+
+  for (const tx of transactions) {
+    if (tx.type !== 'expense') continue
+    if (budgetGroupOf(tx) !== 'needs') continue
+    const key = tx.occurred_on.slice(0, 7)
+    if (!totals.has(key)) continue
+    totals.set(key, (totals.get(key) ?? 0) + tx.amount)
+  }
+
+  let sum = 0
+  let monthsUsed = 0
+  for (const amount of totals.values()) {
+    if (amount <= 0) continue
+    sum += amount
+    monthsUsed += 1
+  }
+  if (monthsUsed === 0) return null
+  return { average: sum / monthsUsed, monthsUsed }
 }
 
 /** Monthly PYF funding from transfers into system buckets (+ legacy expense categories). */

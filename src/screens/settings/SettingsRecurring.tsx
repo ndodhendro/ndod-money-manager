@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { RecurringBillsPanel } from '../../components/RecurringBillsPanel'
 import { SettingsSubPage } from '../../components/SettingsSubPage'
 import { dismissNumericKeyboard } from '../../lib/keyboardFocus'
+import { SettingsIcon } from '../../lib/settingsSections'
 
 export function SettingsRecurring() {
   const navigate = useNavigate()
@@ -61,7 +62,11 @@ export function SettingsRecurring() {
   )
 
   return (
-    <SettingsSubPage title={title} onBack={inForm ? goList : undefined}>
+    <SettingsSubPage
+      title={title}
+      icon={SettingsIcon.recurring}
+      onBack={inForm ? goList : undefined}
+    >
       <RecurringBillsPanel
         onViewChange={handleViewChange}
         backToListRef={backToListRef}

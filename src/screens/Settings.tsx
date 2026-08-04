@@ -4,38 +4,13 @@ import { OwnerBadge } from '../components/OwnerBadge'
 import { PageTitle } from '../components/PageTitle'
 import { SettingsNavRow } from '../components/SettingsNavRow'
 import { APP_VERSION } from '../lib/branding'
+import { NavIcon } from '../lib/navTabs'
 import { clearStoredProfile, getStoredProfile } from '../lib/profile'
+import { SETTINGS_SECTIONS } from '../lib/settingsSections'
 
 interface SettingsProps {
   onProfileReset: () => void
 }
-
-const SETTINGS_SECTIONS = [
-  {
-    to: '/pengaturan/money-plan',
-    icon: '🎯',
-    title: 'Money Plan',
-    subtitle: '',
-  },
-  {
-    to: '/pengaturan/recurring',
-    icon: '📆',
-    title: 'Recurring',
-    subtitle: '',
-  },
-  {
-    to: '/pengaturan/buckets',
-    icon: '🪣',
-    title: 'Savings Buckets',
-    subtitle: '',
-  },
-  {
-    to: '/pengaturan/categories',
-    icon: '🏷️',
-    title: 'Categories',
-    subtitle: '',
-  },
-] as const
 
 export function Settings({ onProfileReset }: SettingsProps) {
   const profile = getStoredProfile()
@@ -49,7 +24,7 @@ export function Settings({ onProfileReset }: SettingsProps) {
 
   return (
     <div className="mx-auto max-w-md px-4 pt-5 pb-24">
-      <PageTitle>Settings</PageTitle>
+      <PageTitle icon={NavIcon.settings}>Settings</PageTitle>
 
       <div className="mt-5 rounded-xl bg-white p-4 shadow-sm dark:bg-neutral-800">
         <p className="text-sm font-medium text-neutral-700 dark:text-neutral-200">

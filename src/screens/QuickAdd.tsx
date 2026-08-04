@@ -21,7 +21,12 @@ import { PageTitle } from '../components/PageTitle'
 import { useBuckets } from '../hooks/useBuckets'
 import { useCategories } from '../hooks/useCategories'
 import { ActionEmoji } from '../lib/actionEmoji'
-import { bumpCategoryUsage, getStoredProfile, setStoredCircle } from '../lib/profile'
+import {
+  bumpCategoryUsage,
+  getStoredCircle,
+  getStoredProfile,
+  setStoredCircle,
+} from '../lib/profile'
 import { formatNumber, todayIso } from '../lib/format'
 import { showAppToast } from '../lib/appToast'
 import {
@@ -137,7 +142,11 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         setDescription(data.description ?? '')
         setOccurredOn(data.occurred_on)
         setOwner(data.owner)
-        if (isCircle(data.circle)) setCircle(data.circle)
+        if ((data.type as TransactionType) === 'income') {
+          setCircle('hd_family')
+        } else if (isCircle(data.circle)) {
+          setCircle(data.circle)
+        }
       }
       setLoadingExisting(false)
     }
@@ -149,13 +158,13 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
 
   function resetForm() {
     const param = searchParams.get('type')
-    setType(
+    const nextType: TransactionType =
       param === 'income'
         ? 'income'
         : param === 'transfer'
           ? 'transfer'
-          : 'expense',
-    )
+          : 'expense'
+    setType(nextType)
     setAmountDigits('')
     setCategoryId(null)
     setFromBucket(param === 'transfer' ? null : undefined)
@@ -163,7 +172,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     setDescription('')
     setOccurredOn(todayIso())
     setOwner(getStoredProfile() ?? 'suami')
-    setCircle(null)
+    setCircle(nextType === 'income' ? 'hd_family' : null)
     setCircleOpen(false)
     setCategoryOpen(false)
     setFromOpen(false)
@@ -217,8 +226,22 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   ): 'amount' | 'circle' | 'category' | 'from' | 'to' | null {
     if (!isAmountFilled()) return 'amount'
     if (type === 'transfer') {
-      if (from !== 'from' && fromBucket === undefined) return 'from'
-      if (from !== 'to' && from !== 'from' && toBucket === undefined) return 'to'
+      if (from !== 'circle' && !circle) return 'circle'
+      if (from !== 'from' && from !== 'circle' && fromBucket === undefined) {
+        return 'from'
+      }
+      if (
+        from !== 'to' &&
+        from !== 'from' &&
+        from !== 'circle' &&
+        toBucket === undefined
+      ) {
+        return 'to'
+      }
+      return null
+    }
+    if (type === 'income') {
+      if (from !== 'category' && !categoryId) return 'category'
       return null
     }
     if (from !== 'circle' && !circle) return 'circle'
@@ -231,6 +254,12 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   ): 'circle' | 'category' | 'from' | 'to' | null {
     if (type === 'transfer') {
       if (from === 'amount') {
+        if (!circle) return 'circle'
+        if (fromBucket === undefined) return 'from'
+        if (toBucket === undefined) return 'to'
+        return null
+      }
+      if (from === 'circle') {
         if (fromBucket === undefined) return 'from'
         if (toBucket === undefined) return 'to'
         return null
@@ -239,6 +268,10 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         if (toBucket === undefined) return 'to'
         return null
       }
+      return null
+    }
+    if (type === 'income') {
+      if (from === 'amount' && !categoryId) return 'category'
       return null
     }
     if (from === 'amount') {
@@ -361,9 +394,25 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     }
 
     if (type === 'transfer') {
+      if (from === 'circle') {
+        if (!isAmountFilled()) {
+          focusAmountField('Enter the amount first')
+          return false
+        }
+        if (!circle) {
+          focusCircleField('Pick a circle first')
+          return false
+        }
+        focusNextEmptyField('circle')
+        return true
+      }
       if (from === 'from') {
         if (!isAmountFilled()) {
           focusAmountField('Enter the amount first')
+          return false
+        }
+        if (!circle) {
+          focusCircleField('Pick a circle first')
           return false
         }
         if (fromBucket === undefined) {
@@ -376,6 +425,10 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
       if (from === 'to') {
         if (!isAmountFilled()) {
           focusAmountField('Enter the amount first')
+          return false
+        }
+        if (!circle) {
+          focusCircleField('Pick a circle first')
           return false
         }
         if (fromBucket === undefined) {
@@ -399,6 +452,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     }
 
     if (from === 'circle') {
+      if (type === 'income') return true
       if (!isAmountFilled()) {
         focusAmountField('Enter the amount first')
         return false
@@ -426,12 +480,18 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   }
 
   function handleCircleOpenChange(open: boolean) {
+    if (type === 'income') return
     if (open) {
       if (!isAmountFilled()) {
         focusAmountField('Enter the amount first')
         return
       }
-      setCategoryOpen(false)
+      if (type === 'transfer') {
+        setFromOpen(false)
+        setToOpen(false)
+      } else {
+        setCategoryOpen(false)
+      }
     }
     setCircleOpen(open)
   }
@@ -442,7 +502,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         focusAmountField('Enter the amount first')
         return
       }
-      if (!circle) {
+      if (type !== 'income' && !circle) {
         focusCircleField('Pick a circle first')
         return
       }
@@ -457,6 +517,11 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         focusAmountField('Enter the amount first')
         return
       }
+      if (!circle) {
+        focusCircleField('Pick a circle first')
+        return
+      }
+      setCircleOpen(false)
       setToOpen(false)
     }
     setFromOpen(open)
@@ -468,10 +533,15 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         focusAmountField('Enter the amount first')
         return
       }
+      if (!circle) {
+        focusCircleField('Pick a circle first')
+        return
+      }
       if (fromBucket === undefined) {
         focusFromField('Pick a source first')
         return
       }
+      setCircleOpen(false)
       setFromOpen(false)
     }
     setToOpen(open)
@@ -482,6 +552,14 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     setCircleOpen(false)
     if (!isAmountFilled()) {
       focusAmountField('Enter the amount first')
+      return
+    }
+    if (type === 'transfer') {
+      if (fromBucket === undefined) {
+        focusFromField()
+      } else if (toBucket === undefined) {
+        focusToField()
+      }
       return
     }
     if (!categoryId) {
@@ -499,6 +577,10 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
       focusAmountField('Enter the amount first')
       return
     }
+    if (!circle) {
+      focusCircleField('Pick a circle first')
+      return
+    }
     if (toBucket === undefined || toBucket === next) {
       focusToField()
     }
@@ -509,6 +591,10 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     setToOpen(false)
     if (!isAmountFilled()) {
       focusAmountField('Enter the amount first')
+      return
+    }
+    if (!circle) {
+      focusCircleField('Pick a circle first')
       return
     }
     if (fromBucket === undefined) {
@@ -531,7 +617,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
       focusAmountField('Enter the amount first')
       return
     }
-    if (!circle) {
+    if (type !== 'income' && !circle) {
       focusCircleField('Pick a circle first')
     }
   }
@@ -561,10 +647,15 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     if (next === 'transfer') {
       setFromBucket(null)
       setToBucket(undefined)
-      setCircle(null)
+      setCircle(getStoredCircle())
+    } else if (next === 'income') {
+      setFromBucket(undefined)
+      setToBucket(undefined)
+      setCircle('hd_family')
     } else {
       setFromBucket(undefined)
       setToBucket(undefined)
+      setCircle(getStoredCircle())
     }
   }
 
@@ -583,12 +674,17 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         showAppToast('Transfer needs at least one bucket')
         return
       }
+      if (!circle) return
+    } else if (type === 'income') {
+      if (!categoryId) return
     } else if (!circle || !categoryId) {
       return
     }
 
     setSaving(true)
     try {
+      const resolvedCircle: Circle =
+        type === 'income' ? 'hd_family' : circle!
       const input =
         type === 'transfer'
           ? {
@@ -599,7 +695,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
               amount: numericAmount,
               description,
               owner: isEditing ? owner : profileOwner,
-              circle: 'hd_family' as Circle,
+              circle: resolvedCircle,
               occurred_on: occurredOn,
               is_recurring: false,
             }
@@ -611,14 +707,14 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
               amount: numericAmount,
               description,
               owner: isEditing ? owner : profileOwner,
-              circle: circle!,
+              circle: resolvedCircle,
               occurred_on: occurredOn,
               is_recurring: false,
             }
 
       if (isEditing && id) {
         await updateTransaction(id, input)
-        if (input.circle) setStoredCircle(input.circle)
+        if (input.type !== 'income') setStoredCircle(input.circle)
         dismissNumericKeyboard()
         navigate('/riwayat', {
           replace: true,
@@ -627,7 +723,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
       } else {
         const newId = await createTransaction(input)
         if (input.category_id) bumpCategoryUsage(input.category_id)
-        if (input.type !== 'transfer') setStoredCircle(input.circle)
+        if (input.type !== 'income') setStoredCircle(input.circle)
         void reloadBuckets()
         resetForm()
         showAppToast(`Saved ${ActionEmoji.save}`)
@@ -664,6 +760,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
 
   const displayAmount = amountDigits ? formatNumber(Number(amountDigits)) : ''
   const isTransfer = type === 'transfer'
+  const isIncome = type === 'income'
 
   return (
     <div className="mx-auto max-w-md px-4 pt-5 pb-28">
@@ -678,7 +775,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
           >
             ←
           </button>
-          <PageTitle>
+          <PageTitle icon={isEditing ? ActionEmoji.edit : ActionEmoji.add}>
             {isEditing ? 'Edit Transaction' : 'Add Transaction'}
           </PageTitle>
         </div>
@@ -751,6 +848,13 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
             <p className="text-sm text-neutral-400">Loading buckets…</p>
           ) : (
             <>
+              <CirclePicker
+                value={circle}
+                onChange={handleCircleSelect}
+                open={circleOpen}
+                onOpenChange={handleCircleOpenChange}
+                highlighted={circleOpen}
+              />
               <BucketPicker
                 label="From"
                 value={fromBucket}
@@ -776,11 +880,12 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         ) : (
           <>
             <CirclePicker
-              value={circle}
+              value={isIncome ? 'hd_family' : circle}
               onChange={handleCircleSelect}
               open={circleOpen}
               onOpenChange={handleCircleOpenChange}
               highlighted={circleOpen}
+              locked={isIncome}
             />
             {loadingCategories && treeByUsage.length === 0 ? (
               <p className="text-sm text-neutral-400">Loading categories…</p>

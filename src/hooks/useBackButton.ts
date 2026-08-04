@@ -35,12 +35,21 @@ export function isCategoriesFormPath(pathname: string): boolean {
   return pathname === '/pengaturan/categories/new'
 }
 
+/** Add/edit bucket form routes (not the list itself). */
+export function isBucketsFormPath(pathname: string): boolean {
+  if (pathname === '/pengaturan/buckets/new') return true
+  if (!pathname.startsWith('/pengaturan/buckets/')) return false
+  const rest = pathname.slice('/pengaturan/buckets/'.length)
+  return rest.length > 0 && !rest.includes('/')
+}
+
 /**
  * Tombol Back HP:
  * 1) Tutup overlay (circle/category/date/…)
  * 2) Di add/edit → kembali ke History
  * 2b) Di add/edit recurring → list Recurring
  * 2c) Di add category → list Categories
+ * 2d) Di add/edit bucket → list Savings Buckets
  * 3) Di sub-halaman Settings → index Settings
  * 3b) Di sub-halaman Plan → index Plan
  * 4) Di tab utama → toast "tekan sekali lagi" / keluar
@@ -146,6 +155,17 @@ export function useBackButtonTrap(): void {
         dismissNumericKeyboard()
         window.setTimeout(() => {
           navigate('/pengaturan/categories', { replace: true })
+        }, 0)
+        return
+      }
+
+      // 2d) Add/edit bucket → list Savings Buckets.
+      if (isBucketsFormPath(path)) {
+        clearExitArm()
+        hideAppToast()
+        dismissNumericKeyboard()
+        window.setTimeout(() => {
+          navigate('/pengaturan/buckets', { replace: true })
         }, 0)
         return
       }

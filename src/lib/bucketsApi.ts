@@ -73,30 +73,84 @@ export type NewBucketInput = {
   name: string
   kind: BucketKind
   icon: string
-  target_amount: number | null
+  target_amount: number
   opening_balance: number
 }
 
-export async function createBucket(input: NewBucketInput): Promise<Bucket> {
-  if (input.kind === 'emergency' || input.kind === 'investment') {
-    throw new Error('System buckets already exist')
-  }
+async function nextBucketSortOrder(): Promise<number> {
   const { data: maxRow } = await supabase
     .from('buckets')
     .select('sort_order')
     .order('sort_order', { ascending: false })
     .limit(1)
     .maybeSingle()
-  const sortOrder = Number(maxRow?.sort_order ?? 0) + 1
+  return Number(maxRow?.sort_order ?? 0) + 1
+}
+
+/** Inactive sinking funds matching name + icon (revive candidates). */
+async function findInactiveBucketMatches(input: {
+  name: string
+  icon: string
+}): Promise<Bucket[]> {
+  const { data, error } = await supabase
+    .from('buckets')
+    .select('*')
+    .eq('is_active', false)
+    .eq('is_system', false)
+    .eq('kind', 'sinking')
+    .eq('name', input.name)
+    .eq('icon', input.icon)
+  if (error) throw new Error(error.message)
+  return (data ?? []).map((row) => mapBucket(row as Record<string, unknown>))
+}
+
+/**
+ * Add sinking fund. Revives one exact name+icon inactive row when found.
+ * On revive, target_amount and opening_balance come from current input
+ * (not from the soft-deleted history values).
+ */
+export async function createBucket(input: NewBucketInput): Promise<Bucket> {
+  if (input.kind === 'emergency' || input.kind === 'investment') {
+    throw new Error('System buckets already exist')
+  }
+  const name = input.name.trim()
+  if (!name) throw new Error('Name is required')
+  const icon = input.icon || '🏦'
+  const target_amount = Number(input.target_amount)
+  if (!Number.isFinite(target_amount) || target_amount <= 0) {
+    throw new Error('Target amount is required')
+  }
+  const opening_balance = Number.isFinite(input.opening_balance)
+    ? Math.max(0, input.opening_balance)
+    : 0
+  const sortOrder = await nextBucketSortOrder()
+
+  const matches = await findInactiveBucketMatches({ name, icon })
+  if (matches.length === 1) {
+    const match = matches[0]
+    const { data, error } = await supabase
+      .from('buckets')
+      .update({
+        is_active: true,
+        sort_order: sortOrder,
+        target_amount,
+        opening_balance,
+      })
+      .eq('id', match.id)
+      .select('*')
+      .single()
+    if (error) throw new Error(error.message)
+    return mapBucket(data as Record<string, unknown>)
+  }
 
   const { data, error } = await supabase
     .from('buckets')
     .insert({
-      name: input.name.trim(),
+      name,
       kind: input.kind,
-      icon: input.icon || '🏦',
-      target_amount: input.target_amount,
-      opening_balance: input.opening_balance,
+      icon,
+      target_amount,
+      opening_balance,
       sort_order: sortOrder,
       is_system: false,
       is_active: true,
@@ -127,6 +181,23 @@ export async function updateBucket(
     .single()
   if (error) throw new Error(error.message)
   return mapBucket(data as Record<string, unknown>)
+}
+
+/** Soft-delete: sets is_active=false. System buckets cannot be deleted. */
+export async function deleteBucket(id: string): Promise<void> {
+  const { data: row, error: fetchError } = await supabase
+    .from('buckets')
+    .select('is_system')
+    .eq('id', id)
+    .maybeSingle()
+  if (fetchError) throw new Error(fetchError.message)
+  if (row?.is_system) throw new Error('System buckets cannot be deleted')
+
+  const { error } = await supabase
+    .from('buckets')
+    .update({ is_active: false })
+    .eq('id', id)
+  if (error) throw new Error(error.message)
 }
 
 /** Ledger movements for balance: all transfer rows. */

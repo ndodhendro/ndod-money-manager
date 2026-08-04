@@ -6,6 +6,7 @@ import {
   formatRupiah,
 } from '../lib/format'
 import type { RecurringBillDisplayParts } from '../lib/recurringBillDisplay'
+import type { MonthCursor } from '../lib/monthCursor'
 import {
   formatRecurringMeta,
   type RecurringBill,
@@ -19,6 +20,10 @@ interface RecurringBillRowContentProps {
   done?: boolean
   inactive?: boolean
   showMeta?: boolean
+  /** When set (Plan checklist), meta shows the date in that month. */
+  monthCursor?: MonthCursor
+  /** Calendar current month already logged — drives "X months left". */
+  currentMonthDone?: boolean
 }
 
 export function RecurringBillRowContent({
@@ -28,6 +33,8 @@ export function RecurringBillRowContent({
   done = false,
   inactive = false,
   showMeta = true,
+  monthCursor,
+  currentMonthDone = false,
 }: RecurringBillRowContentProps) {
   const noteText = note ?? (bill.name.trim() || null)
   const dim = inactive ? 'opacity-50' : done ? 'opacity-60' : ''
@@ -104,7 +111,7 @@ export function RecurringBillRowContent({
         </div>
         {showMeta && (
           <p className="text-xs leading-tight text-neutral-400">
-            {formatRecurringMeta(bill)}
+            {formatRecurringMeta(bill, monthCursor, { currentMonthDone })}
           </p>
         )}
       </div>

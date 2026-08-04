@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { currentMonthCursor, monthCursorKey } from '../lib/monthCursor'
 import {
   fetchRecurringBillLogs,
   fetchRecurringBills,
@@ -11,6 +12,9 @@ import {
 export function useRecurringBills(yearMonth: string) {
   const [bills, setBills] = useState<RecurringBill[]>([])
   const [logs, setLogs] = useState<RecurringBillLog[]>([])
+  const [currentMonthLogs, setCurrentMonthLogs] = useState<RecurringBillLog[]>(
+    [],
+  )
   const [loading, setLoading] = useState(true)
   const [available, setAvailable] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -18,13 +22,18 @@ export function useRecurringBills(yearMonth: string) {
   const reload = useCallback(async () => {
     setLoading(true)
     setError(null)
+    const currentYm = monthCursorKey(currentMonthCursor())
     try {
-      const [billRows, logRows] = await Promise.all([
+      const [billRows, logRows, currentLogRows] = await Promise.all([
         fetchRecurringBills(),
         fetchRecurringBillLogs(yearMonth),
+        yearMonth === currentYm
+          ? Promise.resolve(null)
+          : fetchRecurringBillLogs(currentYm),
       ])
       setBills(billRows.filter((b) => isRecurringActiveInMonth(b, yearMonth)))
       setLogs(logRows)
+      setCurrentMonthLogs(currentLogRows ?? logRows)
       setAvailable(true)
     } catch (err) {
       const message =
@@ -33,6 +42,7 @@ export function useRecurringBills(yearMonth: string) {
         setAvailable(false)
         setBills([])
         setLogs([])
+        setCurrentMonthLogs([])
         setError(null)
       } else {
         setError(message)
@@ -52,6 +62,12 @@ export function useRecurringBills(yearMonth: string) {
     return map
   }, [logs])
 
+  const currentMonthDoneByBillId = useMemo(() => {
+    const set = new Set<string>()
+    for (const log of currentMonthLogs) set.add(log.bill_id)
+    return set
+  }, [currentMonthLogs])
+
   const unpaidCount = useMemo(
     () => bills.filter((b) => !logByBillId.has(b.id)).length,
     [bills, logByBillId],
@@ -61,6 +77,7 @@ export function useRecurringBills(yearMonth: string) {
     bills,
     logs,
     logByBillId,
+    currentMonthDoneByBillId,
     unpaidCount,
     loading,
     available,

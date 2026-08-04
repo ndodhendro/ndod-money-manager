@@ -5,6 +5,7 @@ import { dismissNumericKeyboard } from '../lib/keyboardFocus'
 
 interface SettingsSubPageProps {
   title: string
+  icon: string
   description?: string
   /** Override default back-to-Settings when provided. */
   onBack?: () => void
@@ -13,6 +14,7 @@ interface SettingsSubPageProps {
 
 export function SettingsSubPage({
   title,
+  icon,
   description,
   onBack,
   children,
@@ -40,7 +42,7 @@ export function SettingsSubPage({
         >
           ←
         </button>
-        <PageTitle>{title}</PageTitle>
+        <PageTitle icon={icon}>{title}</PageTitle>
       </div>
 
       {description && (

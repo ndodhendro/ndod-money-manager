@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { CategoryManagePanel } from '../../components/CategoryManagePanel'
 import { SettingsSubPage } from '../../components/SettingsSubPage'
 import { dismissNumericKeyboard } from '../../lib/keyboardFocus'
+import { SettingsIcon } from '../../lib/settingsSections'
 import type { CategoryType } from '../../lib/types'
 
 export function SettingsCategories() {
@@ -45,7 +46,11 @@ export function SettingsCategories() {
   )
 
   return (
-    <SettingsSubPage title={title} onBack={inForm ? goList : undefined}>
+    <SettingsSubPage
+      title={title}
+      icon={SettingsIcon.categories}
+      onBack={inForm ? goList : undefined}
+    >
       <CategoryManagePanel
         type={manageType}
         allowTypeChange

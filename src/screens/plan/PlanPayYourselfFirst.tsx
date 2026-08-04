@@ -1,4 +1,6 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
+import { CollapsibleDayGroup } from '../../components/CollapsibleDayGroup'
+import { GroupedListFrame } from '../../components/GroupedListFrame'
 import { MonthPager } from '../../components/MonthPager'
 import { PlanBudgetRow } from '../../components/PlanBudgetRow'
 import { PlanSubPage } from '../../components/PlanSubPage'
@@ -6,11 +8,63 @@ import { useBuckets } from '../../hooks/useBuckets'
 import { useMonthCursor } from '../../hooks/useMonthCursor'
 import { usePyfSettings } from '../../hooks/usePyfSettings'
 import { useTransactions } from '../../hooks/useTransactions'
+import { groupBucketsByKind } from '../../lib/bucketsGroup'
+import { formatRupiah } from '../../lib/format'
 import {
   buildMoneyPlan,
-  budgetGroupOfTx,
+  makeMoneyPlanBucket,
   sumSavingsActuals,
+  type MoneyPlanBucket,
 } from '../../lib/moneyPlan'
+import { PlanIcon } from '../../lib/planSections'
+import {
+  BUCKET_KIND_LABELS,
+  type BucketKind,
+  type BucketWithBalance,
+} from '../../lib/types'
+
+const KIND_BAR: Record<BucketKind, string> = {
+  emergency: 'bg-teal-500',
+  investment: 'bg-indigo-500',
+  sinking: 'bg-violet-500',
+}
+
+function monthInflowByBucketId(
+  transactions: Array<{
+    type: string
+    amount: number
+    to_bucket_id?: string | null
+  }>,
+): Map<string, number> {
+  const map = new Map<string, number>()
+  for (const tx of transactions) {
+    if (tx.type !== 'transfer' || !tx.to_bucket_id) continue
+    map.set(tx.to_bucket_id, (map.get(tx.to_bucket_id) ?? 0) + tx.amount)
+  }
+  return map
+}
+
+function rowForBucket(
+  b: BucketWithBalance,
+  monthly: MoneyPlanBucket | null,
+  monthlyPct: number | null,
+  totalIncome: number,
+  monthInflow: number,
+): { bucket: MoneyPlanBucket; hint: string } {
+  if (monthly && totalIncome > 0 && monthlyPct != null) {
+    return {
+      bucket: { ...monthly, label: b.name },
+      hint: `${monthlyPct}% of income · via Transfer · bal ${formatRupiah(b.balance)}`,
+    }
+  }
+  return {
+    bucket: makeMoneyPlanBucket(b.name, 0, monthInflow, 'floor'),
+    hint:
+      monthInflow > 0
+        ? `Funded this month · bal ${formatRupiah(b.balance)}`
+        : `No funding this month · bal ${formatRupiah(b.balance)}`,
+  }
+}
 
 export function PlanPayYourselfFirst() {
   const {
@@ -29,20 +83,18 @@ export function PlanPayYourselfFirst() {
     error: planError,
   } = usePyfSettings()
   const {
+    buckets,
     emergency,
     investment,
     loading: bucketsLoading,
     error: bucketsError,
   } = useBuckets()
 
+  const [kindGroupsExpanded, setKindGroupsExpanded] = useState(true)
+  const [kindGroupsVersion, setKindGroupsVersion] = useState(0)
+
   const totalIncome = transactions
     .filter((t) => t.type === 'income')
-    .reduce((sum, t) => sum + t.amount, 0)
-  const needsTotal = transactions
-    .filter((t) => t.type === 'expense' && budgetGroupOfTx(t) === 'needs')
-    .reduce((sum, t) => sum + t.amount, 0)
-  const wantsTotal = transactions
-    .filter((t) => t.type === 'expense' && budgetGroupOfTx(t) === 'wants')
     .reduce((sum, t) => sum + t.amount, 0)
 
   const savingsActuals = useMemo(
@@ -62,12 +114,18 @@ export function PlanPayYourselfFirst() {
       emergencyPct: settings.emergency_fund_pct,
       investmentPct: settings.investment_pct,
       plannedNeeds: settings.planned_needs_amount,
-      needsActual: needsTotal,
-      wantsActual: wantsTotal,
+      needsActual: 0,
+      wantsActual: 0,
       emergencyActual: savingsActuals.emergency,
       investmentActual: savingsActuals.investment,
     })
-  }, [settings, totalIncome, needsTotal, wantsTotal, savingsActuals])
+  }, [settings, totalIncome, savingsActuals])
+
+  const groupedBuckets = useMemo(() => groupBucketsByKind(buckets), [buckets])
+  const inflowsByBucket = useMemo(
+    () => monthInflowByBucketId(transactions),
+    [transactions],
+  )
 
   const pageLoading = loading || planLoading || bucketsLoading
 
@@ -75,6 +133,7 @@ export function PlanPayYourselfFirst() {
     <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
       <PlanSubPage
         title="Pay Yourself First"
+        icon={PlanIcon.payYourselfFirst}
         description=""
       >
         <MonthPager
@@ -97,54 +156,77 @@ export function PlanPayYourselfFirst() {
           <p className="mt-2 text-center text-sm text-red-500">{bucketsError}</p>
         )}
 
-        {!pageLoading && !moneyPlan && (
+        {!pageLoading && buckets.length === 0 && (
           <p className="mt-4 rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
-            Set Money Plan percentages in Settings to see targets.
+            No buckets yet. Add them in Settings → Savings Buckets.
           </p>
         )}
 
-        {!pageLoading && moneyPlan && (
-          <div className="mt-4 space-y-2">
-            {totalIncome <= 0 ? (
-              <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
-                Log this month&apos;s income to see targets. Fund buckets with
-                Transfer.
-              </p>
-            ) : (
-              <>
-                <PlanBudgetRow
-                  bucket={moneyPlan.emergency}
-                  hint={`${settings?.emergency_fund_pct ?? 0}% · via Transfer`}
-                  barClass="bg-teal-500"
-                  mode="floor"
-                />
-                <PlanBudgetRow
-                  bucket={moneyPlan.investment}
-                  hint={`${settings?.investment_pct ?? 0}% · via Transfer`}
-                  barClass="bg-indigo-500"
-                  mode="floor"
-                />
-                <PlanBudgetRow
-                  bucket={moneyPlan.needs}
-                  hint="Planned essentials"
-                  barClass="bg-sky-500"
-                  mode="floor"
-                />
-                <PlanBudgetRow
-                  bucket={moneyPlan.wants}
-                  hint="Leftover after savings & needs"
-                  barClass="bg-amber-400"
-                  mode="ceiling"
-                />
-                {moneyPlan.wantsWarning && (
-                  <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
-                    Wants spending is at{' '}
-                    {Math.round(moneyPlan.wants.ratio * 100)}% of this
-                    month&apos;s budget.
-                  </p>
-                )}
-              </>
-            )}
+        {!pageLoading && !settings && buckets.length > 0 && (
+          <p className="mt-4 rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
+            Set Money Plan percentages in Settings for monthly emergency &amp;
+            investment targets.
+          </p>
+        )}
+
+        {!pageLoading && buckets.length > 0 && (
+          <div className="mt-4">
+            <GroupedListFrame
+              expanded={kindGroupsExpanded}
+              onToggle={(expanded) => {
+                setKindGroupsExpanded(expanded)
+                setKindGroupsVersion((v) => v + 1)
+              }}
+            >
+              <div className="space-y-5">
+                {groupedBuckets.map(([kind, items]) => (
+                  <CollapsibleDayGroup
+                    key={kind}
+                    title={BUCKET_KIND_LABELS[kind]}
+                    persistKey={`plan:pyf:kind:${kind}`}
+                    forceOpen={
+                      kindGroupsVersion > 0 ? kindGroupsExpanded : undefined
+                    }
+                    forceVersion={kindGroupsVersion}
+                  >
+                    <div className="space-y-2">
+                      {items.map((b) => {
+                        const isPyfSystem =
+                          (kind === 'emergency' && b.id === emergency?.id) ||
+                          (kind === 'investment' && b.id === investment?.id)
+                        const monthly = isPyfSystem
+                          ? kind === 'emergency'
+                            ? (moneyPlan?.emergency ?? null)
+                            : (moneyPlan?.investment ?? null)
+                          : null
+                        const monthlyPct = isPyfSystem
+                          ? kind === 'emergency'
+                            ? (settings?.emergency_fund_pct ?? null)
+                            : (settings?.investment_pct ?? null)
+                          : null
+                        const { bucket, hint } = rowForBucket(
+                          b,
+                          monthly,
+                          monthlyPct,
+                          totalIncome,
+                          inflowsByBucket.get(b.id) ?? 0,
+                        )
+                        return (
+                          <PlanBudgetRow
+                            key={b.id}
+                            icon={b.icon}
+                            bucket={bucket}
+                            hint={hint}
+                            barClass={KIND_BAR[kind]}
+                            mode="floor"
+                          />
+                        )
+                      })}
+                    </div>
+                  </CollapsibleDayGroup>
+                ))}
+              </div>
+            </GroupedListFrame>
           </div>
         )}
       </PlanSubPage>

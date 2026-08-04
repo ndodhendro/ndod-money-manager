@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { CircleFilterChips } from '../components/CircleFilterChips'
 import { MonthPager } from '../components/MonthPager'
 import { PageTitle } from '../components/PageTitle'
+import { NavIcon } from '../lib/navTabs'
 import {
   chartColorAt,
   DonutChart,
@@ -127,7 +128,7 @@ export function Dashboard() {
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
-      <PageTitle>Dashboard</PageTitle>
+      <PageTitle icon={NavIcon.dashboard}>Dashboard</PageTitle>
       <MonthPager
         monthLabel={monthLabel}
         canGoNext={canGoNext}

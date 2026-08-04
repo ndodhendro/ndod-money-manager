@@ -1,51 +1,226 @@
-import { useState } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MutableRefObject,
+} from 'react'
 import { useBuckets } from '../hooks/useBuckets'
 import { ActionEmoji } from '../lib/actionEmoji'
 import { showAppToast } from '../lib/appToast'
-import { createBucket, updateBucket } from '../lib/bucketsApi'
+import { createBucket, deleteBucket, updateBucket } from '../lib/bucketsApi'
+import { groupBucketsByKind } from '../lib/bucketsGroup'
+import { areAllCollapseOpen } from '../lib/collapseState'
 import { formatNumber, formatRupiah } from '../lib/format'
-import { BUCKET_KIND_LABELS, type BucketWithBalance } from '../lib/types'
+import {
+  BUCKET_KIND_LABELS,
+  type BucketWithBalance,
+} from '../lib/types'
+import { CollapsibleDayGroup } from './CollapsibleDayGroup'
+import { ConfirmDialog } from './ConfirmDialog'
+import { GroupedListFrame } from './GroupedListFrame'
+import { SwipeDeleteRow } from './SwipeDeleteRow'
 
-export function BucketManagePanel({ onChanged }: { onChanged?: () => void }) {
-  const { buckets, loading, error, reload } = useBuckets({
-    includeInactive: true,
-  })
+interface BucketManagePanelProps {
+  onChanged?: () => void
+  onViewChange?: (info: {
+    view: 'list' | 'form'
+    editing: boolean
+    editingId: string | null
+  }) => void
+  /** Parent can call this to leave the form and return to the list. */
+  backToListRef?: MutableRefObject<(() => void) | null>
+  /** When set by the route, keep the panel form in sync with the URL. */
+  routeWantForm?: boolean
+  routeEditId?: string | null
+}
+
+export function BucketManagePanel({
+  onChanged,
+  onViewChange,
+  backToListRef,
+  routeWantForm,
+  routeEditId = null,
+}: BucketManagePanelProps = {}) {
+  const { buckets, loading, error, reload } = useBuckets()
+
   const [name, setName] = useState('')
   const [icon, setIcon] = useState('🎯')
   const [targetDigits, setTargetDigits] = useState('')
   const [openingDigits, setOpeningDigits] = useState('')
   const [saving, setSaving] = useState(false)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [editName, setEditName] = useState('')
-  const [editIcon, setEditIcon] = useState('')
-  const [editTargetDigits, setEditTargetDigits] = useState('')
-  const [editOpeningDigits, setEditOpeningDigits] = useState('')
+  const [editingId, setEditingId] = useState<string | null>(
+    () => routeEditId ?? null,
+  )
+  const [view, setView] = useState<'list' | 'form'>(() =>
+    routeWantForm ? 'form' : 'list',
+  )
+  const [openSwipeId, setOpenSwipeId] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<BucketWithBalance | null>(
+    null,
+  )
+  const [deleting, setDeleting] = useState(false)
+  const [kindGroupsExpanded, setKindGroupsExpanded] = useState(true)
+  const [kindGroupsVersion, setKindGroupsVersion] = useState(0)
+  const [highlightId, setHighlightId] = useState<string | null>(null)
+  const highlightRef = useRef<HTMLDivElement | null>(null)
+  const hydratedEditIdRef = useRef<string | null>(null)
+  const onViewChangeRef = useRef(onViewChange)
+  onViewChangeRef.current = onViewChange
+
+  const nameRef = useRef<HTMLInputElement>(null)
+  const iconRef = useRef<HTMLInputElement>(null)
+  const targetRef = useRef<HTMLInputElement>(null)
+  const openingRef = useRef<HTMLInputElement>(null)
+
+  const groupedBuckets = useMemo(() => groupBucketsByKind(buckets), [buckets])
+  const kindPersistKeys = useMemo(
+    () => groupedBuckets.map(([kind]) => `settings:buckets:kind:${kind}`),
+    [groupedBuckets],
+  )
+
+  useEffect(() => {
+    onViewChangeRef.current?.({
+      view,
+      editing: editingId != null,
+      editingId,
+    })
+  }, [view, editingId])
+
+  useEffect(() => {
+    if (routeWantForm == null) return
+    if (!routeWantForm) {
+      hydratedEditIdRef.current = null
+      if (view !== 'list') {
+        resetForm()
+        setView('list')
+      }
+      return
+    }
+    if (routeEditId) {
+      const bucket = buckets.find((b) => b.id === routeEditId)
+      if (!bucket) return
+      if (
+        editingId === routeEditId &&
+        view === 'form' &&
+        hydratedEditIdRef.current === routeEditId
+      ) {
+        return
+      }
+      startEdit(bucket)
+      hydratedEditIdRef.current = routeEditId
+      setView('form')
+      return
+    }
+    hydratedEditIdRef.current = null
+    if (view !== 'form' || editingId != null) {
+      resetForm()
+      setView('form')
+    }
+  }, [routeWantForm, routeEditId, buckets])
+
+  useEffect(() => {
+    if (!backToListRef) return
+    backToListRef.current = () => {
+      resetForm()
+      setView('list')
+    }
+    return () => {
+      backToListRef.current = null
+    }
+  })
+
+  useEffect(() => {
+    if (kindGroupsVersion > 0) return
+    setKindGroupsExpanded(areAllCollapseOpen(kindPersistKeys, true))
+  }, [kindPersistKeys, kindGroupsVersion])
+
+  useEffect(() => {
+    if (!highlightId) return
+    const t = window.setTimeout(() => setHighlightId(null), 1800)
+    return () => window.clearTimeout(t)
+  }, [highlightId])
+
+  useEffect(() => {
+    if (!highlightId || loading || view !== 'list') return
+    highlightRef.current?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center',
+    })
+  }, [highlightId, loading, view, buckets])
 
   async function refresh() {
     await reload()
     onChanged?.()
   }
 
+  function resetForm() {
+    setName('')
+    setIcon('🎯')
+    setTargetDigits('')
+    setOpeningDigits('')
+    setEditingId(null)
+    hydratedEditIdRef.current = null
+  }
+
+  function startEdit(b: BucketWithBalance) {
+    setEditingId(b.id)
+    hydratedEditIdRef.current = b.id
+    setName(b.name)
+    setIcon(b.icon)
+    setTargetDigits(
+      b.target_amount != null ? String(Math.round(b.target_amount)) : '',
+    )
+    setOpeningDigits(
+      b.opening_balance > 0 ? String(Math.round(b.opening_balance)) : '',
+    )
+    setOpenSwipeId(null)
+  }
+
+  function openAddForm() {
+    resetForm()
+    setView('form')
+  }
+
+  function openEditForm(b: BucketWithBalance) {
+    startEdit(b)
+    setView('form')
+  }
+
   async function handleAdd() {
+    if (!icon.trim()) {
+      showAppToast('Enter an icon')
+      iconRef.current?.focus()
+      return
+    }
     if (!name.trim()) {
       showAppToast('Name is required')
+      nameRef.current?.focus()
+      return
+    }
+    const target = Number(targetDigits)
+    if (!targetDigits || !Number.isFinite(target) || target <= 0) {
+      showAppToast('Enter a target amount')
+      targetRef.current?.focus()
       return
     }
     setSaving(true)
     try {
-      await createBucket({
+      const created = await createBucket({
         name: name.trim(),
         kind: 'sinking',
         icon: icon || '🎯',
-        target_amount: targetDigits ? Number(targetDigits) : null,
+        target_amount: target,
         opening_balance: openingDigits ? Number(openingDigits) : 0,
       })
-      setName('')
-      setIcon('🎯')
-      setTargetDigits('')
-      setOpeningDigits('')
-      showAppToast('Bucket added')
+      resetForm()
+      setKindGroupsExpanded(true)
+      setKindGroupsVersion((v) => v + 1)
+      showAppToast(`Saved ${ActionEmoji.save}`)
+      setView('list')
       await refresh()
+      setHighlightId(created.id)
     } catch (err) {
       showAppToast(err instanceof Error ? err.message : 'Failed to add')
     } finally {
@@ -53,31 +228,40 @@ export function BucketManagePanel({ onChanged }: { onChanged?: () => void }) {
     }
   }
 
-  function startEdit(b: BucketWithBalance) {
-    setEditingId(b.id)
-    setEditName(b.name)
-    setEditIcon(b.icon)
-    setEditTargetDigits(
-      b.target_amount != null ? String(Math.round(b.target_amount)) : '',
-    )
-    setEditOpeningDigits(
-      b.opening_balance > 0 ? String(Math.round(b.opening_balance)) : '',
-    )
-  }
-
-  async function saveEdit() {
-    if (!editingId || !editName.trim()) return
+  async function handleUpdate() {
+    if (!editingId) return
+    if (!icon.trim()) {
+      showAppToast('Enter an icon')
+      iconRef.current?.focus()
+      return
+    }
+    if (!name.trim()) {
+      showAppToast('Name is required')
+      nameRef.current?.focus()
+      return
+    }
+    const target = Number(targetDigits)
+    if (!targetDigits || !Number.isFinite(target) || target <= 0) {
+      showAppToast('Enter a target amount')
+      targetRef.current?.focus()
+      return
+    }
+    const updatedId = editingId
     setSaving(true)
     try {
-      await updateBucket(editingId, {
-        name: editName.trim(),
-        icon: editIcon || '🏦',
-        target_amount: editTargetDigits ? Number(editTargetDigits) : null,
-        opening_balance: editOpeningDigits ? Number(editOpeningDigits) : 0,
+      await updateBucket(updatedId, {
+        name: name.trim(),
+        icon: icon || '🏦',
+        target_amount: target,
+        opening_balance: openingDigits ? Number(openingDigits) : 0,
       })
-      setEditingId(null)
-      showAppToast('Bucket updated')
+      resetForm()
+      setKindGroupsExpanded(true)
+      setKindGroupsVersion((v) => v + 1)
+      showAppToast(`Updated ${ActionEmoji.edit}`)
+      setView('list')
       await refresh()
+      setHighlightId(updatedId)
     } catch (err) {
       showAppToast(err instanceof Error ? err.message : 'Failed to update')
     } finally {
@@ -85,182 +269,294 @@ export function BucketManagePanel({ onChanged }: { onChanged?: () => void }) {
     }
   }
 
-  async function toggleActive(b: BucketWithBalance) {
-    if (b.is_system && b.is_active) {
-      showAppToast('System buckets stay active')
+  async function confirmDelete() {
+    if (!deleteTarget) return
+    if (deleteTarget.is_system) {
+      showAppToast('System buckets cannot be deleted')
+      setDeleteTarget(null)
       return
     }
+    setDeleting(true)
     try {
-      await updateBucket(b.id, { is_active: !b.is_active })
+      const deletedId = deleteTarget.id
+      await deleteBucket(deletedId)
+      setDeleteTarget(null)
+      setOpenSwipeId(null)
+      if (editingId === deletedId) {
+        resetForm()
+        setView('list')
+      }
+      showAppToast('Deleted')
       await refresh()
     } catch (err) {
-      showAppToast(err instanceof Error ? err.message : 'Failed to update')
+      showAppToast(err instanceof Error ? err.message : 'Failed to delete')
+    } finally {
+      setDeleting(false)
     }
   }
 
+  function handleNameKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      targetRef.current?.focus()
+    }
+  }
+
+  function handleTargetKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      openingRef.current?.focus()
+    }
+  }
+
+  function handleOpeningKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      void (editingId ? handleUpdate() : handleAdd())
+    }
+  }
+
+  const editingBucket =
+    editingId ? buckets.find((b) => b.id === editingId) ?? null : null
+
   return (
     <div className="space-y-3">
-      {loading && (
-        <p className="text-sm text-neutral-400">Loading buckets…</p>
-      )}
+      {loading && <p className="text-sm text-neutral-400">Loading…</p>}
       {error && <p className="text-sm text-red-500">{error}</p>}
 
-      <div className="space-y-2 rounded-xl bg-white p-3 shadow-sm dark:bg-neutral-800">
-        <p className="text-xs font-medium text-neutral-500">Add sinking fund</p>
-        <div className="flex gap-2">
-          <input
-            value={icon}
-            onChange={(e) => setIcon(e.target.value.slice(0, 4))}
-            className="w-14 rounded-lg bg-neutral-100 px-2 py-2 text-center text-sm dark:bg-neutral-700"
-            aria-label="Icon"
-          />
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Name"
-            className="min-w-0 flex-1 rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
-          />
-        </div>
-        <input
-          type="text"
-          inputMode="numeric"
-          placeholder="Target amount (optional)"
-          value={targetDigits ? formatNumber(Number(targetDigits)) : ''}
-          onChange={(e) =>
-            setTargetDigits(e.target.value.replace(/\D/g, ''))
-          }
-          className="w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
-        />
-        <input
-          type="text"
-          inputMode="numeric"
-          placeholder="Opening balance (optional)"
-          value={openingDigits ? formatNumber(Number(openingDigits)) : ''}
-          onChange={(e) =>
-            setOpeningDigits(e.target.value.replace(/\D/g, ''))
-          }
-          className="w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
-        />
-        <button
-          type="button"
-          onClick={() => void handleAdd()}
-          disabled={saving}
-          className="w-full rounded-lg bg-emerald-500 py-2 text-sm font-semibold text-white disabled:opacity-60"
-        >
-          {saving ? 'Saving…' : `Add ${ActionEmoji.add}`}
-        </button>
-      </div>
+      {view === 'list' ? (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-medium text-neutral-500">Buckets list</p>
+            <button
+              type="button"
+              onClick={openAddForm}
+              className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white active:bg-emerald-600"
+            >
+              {ActionEmoji.add} Add New
+            </button>
+          </div>
 
-      <div className="space-y-2">
-        {buckets.map((b) => (
-          <div
-            key={b.id}
-            className={`rounded-xl bg-white px-3 py-2.5 shadow-sm dark:bg-neutral-800 ${
-              b.is_active ? '' : 'opacity-50'
-            }`}
-          >
-            {editingId === b.id ? (
-              <div className="space-y-2">
-                <div className="flex gap-2">
-                  <input
-                    value={editIcon}
-                    onChange={(e) => setEditIcon(e.target.value.slice(0, 4))}
-                    className="w-14 rounded-lg bg-neutral-100 px-2 py-2 text-center text-sm dark:bg-neutral-700"
-                  />
-                  <input
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    className="min-w-0 flex-1 rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700"
-                  />
-                </div>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="Target"
-                  value={
-                    editTargetDigits
-                      ? formatNumber(Number(editTargetDigits))
-                      : ''
-                  }
-                  onChange={(e) =>
-                    setEditTargetDigits(e.target.value.replace(/\D/g, ''))
-                  }
-                  className="w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700"
-                />
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="Opening balance"
-                  value={
-                    editOpeningDigits
-                      ? formatNumber(Number(editOpeningDigits))
-                      : ''
-                  }
-                  onChange={(e) =>
-                    setEditOpeningDigits(e.target.value.replace(/\D/g, ''))
-                  }
-                  className="w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700"
-                />
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void saveEdit()}
-                    disabled={saving}
-                    className="flex-1 rounded-lg bg-emerald-500 py-2 text-sm font-semibold text-white"
+          {!loading && buckets.length === 0 ? (
+            <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
+              No buckets yet. Tap Add New to create one.
+            </p>
+          ) : (
+            <GroupedListFrame
+              expanded={kindGroupsExpanded}
+              onToggle={(expanded) => {
+                setKindGroupsExpanded(expanded)
+                setKindGroupsVersion((v) => v + 1)
+              }}
+            >
+              <div className="space-y-5">
+                {groupedBuckets.map(([kind, items]) => (
+                  <CollapsibleDayGroup
+                    key={kind}
+                    title={BUCKET_KIND_LABELS[kind]}
+                    persistKey={`settings:buckets:kind:${kind}`}
+                    forceOpen={
+                      kindGroupsVersion > 0 ? kindGroupsExpanded : undefined
+                    }
+                    forceVersion={kindGroupsVersion}
                   >
-                    {ActionEmoji.save} Save
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditingId(null)}
-                    className="rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700"
-                  >
-                    {ActionEmoji.cancel}
-                  </button>
-                </div>
+                    <div className="space-y-2">
+                      {items.map((b) => {
+                        const isHighlighted = highlightId === b.id
+                        const row = <BucketRowContent bucket={b} />
+
+                        if (!b.is_system) {
+                          return (
+                            <SwipeDeleteRow
+                              key={b.id}
+                              open={openSwipeId === b.id}
+                              onOpenChange={(open) =>
+                                setOpenSwipeId(open ? b.id : null)
+                              }
+                              onDelete={() => {
+                                setOpenSwipeId(b.id)
+                                setDeleteTarget(b)
+                              }}
+                              contentRef={
+                                isHighlighted ? highlightRef : undefined
+                              }
+                              highlighted={isHighlighted}
+                              onContentClick={() => openEditForm(b)}
+                            >
+                              {row}
+                            </SwipeDeleteRow>
+                          )
+                        }
+
+                        return (
+                          <div
+                            key={b.id}
+                            role="button"
+                            tabIndex={0}
+                            ref={isHighlighted ? highlightRef : undefined}
+                            onClick={() => openEditForm(b)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault()
+                                openEditForm(b)
+                              }
+                            }}
+                            className={`flex w-full cursor-pointer items-start gap-3 rounded-xl px-3 py-2.5 text-left shadow-sm ${
+                              isHighlighted
+                                ? 'tx-row-highlight'
+                                : 'bg-white dark:bg-neutral-800'
+                            }`}
+                          >
+                            {row}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </CollapsibleDayGroup>
+                ))}
               </div>
-            ) : (
-              <div className="flex items-start gap-2">
-                <span className="text-xl">{b.icon}</span>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-neutral-800 dark:text-neutral-100">
-                    {b.name}
-                  </p>
-                  <p className="text-[11px] text-neutral-400">
-                    {BUCKET_KIND_LABELS[b.kind]}
-                    {b.is_system ? ' · system' : ''}
-                  </p>
-                  <p className="mt-0.5 text-xs text-neutral-500">
-                    Balance {formatRupiah(b.balance)}
-                    {b.target_amount != null && b.target_amount > 0
-                      ? ` / ${formatRupiah(b.target_amount)}`
-                      : ''}
-                  </p>
-                </div>
-                <div className="flex shrink-0 flex-col gap-1">
-                  <button
-                    type="button"
-                    onClick={() => startEdit(b)}
-                    className="rounded-lg bg-neutral-100 px-2 py-1 text-xs dark:bg-neutral-700"
-                    aria-label="Edit"
-                  >
-                    {ActionEmoji.edit}
-                  </button>
-                  {!b.is_system && (
-                    <button
-                      type="button"
-                      onClick={() => void toggleActive(b)}
-                      className="rounded-lg bg-neutral-100 px-2 py-1 text-[10px] dark:bg-neutral-700"
-                    >
-                      {b.is_active ? 'Hide' : 'Show'}
-                    </button>
-                  )}
-                </div>
-              </div>
+            </GroupedListFrame>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="space-y-2 rounded-xl bg-white p-4 shadow-sm dark:bg-neutral-800">
+            <p className="text-sm font-medium text-neutral-700 dark:text-neutral-200">
+              {editingId ? 'Edit bucket' : 'Add sinking fund'}
+            </p>
+            <div className="flex gap-2">
+              <input
+                ref={iconRef}
+                value={icon}
+                onChange={(e) => setIcon(e.target.value.slice(0, 4))}
+                className="w-14 rounded-lg bg-neutral-100 px-2 py-2 text-center text-lg dark:bg-neutral-700"
+                aria-label="Icon"
+                maxLength={4}
+              />
+              <input
+                ref={nameRef}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={handleNameKeyDown}
+                placeholder="Name"
+                enterKeyHint="next"
+                className="min-w-0 flex-1 rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
+              />
+            </div>
+            <label className="block">
+              <span className="mb-1 block text-xs text-neutral-500">
+                Target amount
+              </span>
+              <input
+                ref={targetRef}
+                type="text"
+                inputMode="numeric"
+                enterKeyHint="next"
+                placeholder="0"
+                value={targetDigits ? formatNumber(Number(targetDigits)) : ''}
+                onChange={(e) =>
+                  setTargetDigits(e.target.value.replace(/\D/g, ''))
+                }
+                onKeyDown={handleTargetKeyDown}
+                className="w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs text-neutral-500">
+                Opening balance (optional)
+              </span>
+              <input
+                ref={openingRef}
+                type="text"
+                inputMode="numeric"
+                enterKeyHint="done"
+                placeholder="0"
+                value={
+                  openingDigits ? formatNumber(Number(openingDigits)) : ''
+                }
+                onChange={(e) =>
+                  setOpeningDigits(e.target.value.replace(/\D/g, ''))
+                }
+                onKeyDown={handleOpeningKeyDown}
+                className="w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
+              />
+            </label>
+            {editingBucket && (
+              <p className="text-[11px] text-neutral-400">
+                {BUCKET_KIND_LABELS[editingBucket.kind]}
+                {editingBucket.is_system ? ' · system' : ''}
+                {' · '}
+                Balance {formatRupiah(editingBucket.balance)}
+              </p>
             )}
           </div>
-        ))}
-      </div>
+
+          <button
+            type="button"
+            onClick={() => void (editingId ? handleUpdate() : handleAdd())}
+            disabled={saving}
+            className="w-full rounded-xl bg-emerald-500 py-3.5 text-base font-semibold text-white shadow-md active:bg-emerald-600 disabled:opacity-60"
+          >
+            {saving ? 'Saving…' : editingId ? 'Update' : 'Save'}
+          </button>
+
+          {editingBucket && !editingBucket.is_system ? (
+            <button
+              type="button"
+              onClick={() => setDeleteTarget(editingBucket)}
+              disabled={saving}
+              className="w-full rounded-xl bg-red-100 py-3 text-sm font-semibold text-red-700 active:bg-red-200 disabled:opacity-60 dark:bg-red-900/50 dark:text-red-200 dark:active:bg-red-900"
+            >
+              Delete
+            </button>
+          ) : null}
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title="Delete bucket?"
+        message={
+          deleteTarget
+            ? `“${deleteTarget.name}” will be removed from pickers. Balances and history stay.`
+            : ''
+        }
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        busy={deleting}
+        onCancel={() => {
+          if (deleting) return
+          setDeleteTarget(null)
+        }}
+        onConfirm={() => void confirmDelete()}
+      />
     </div>
+  )
+}
+
+function BucketRowContent({ bucket }: { bucket: BucketWithBalance }) {
+  return (
+    <>
+      <span className="text-xl leading-none" aria-hidden>
+        {bucket.icon}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <p className="min-w-0 flex-1 truncate text-sm font-medium text-neutral-800 dark:text-neutral-100">
+            {bucket.name}
+          </p>
+          <p className="shrink-0 text-sm font-semibold text-neutral-700 dark:text-neutral-200">
+            {formatRupiah(bucket.balance)}
+          </p>
+        </div>
+        <p className="text-[11px] text-neutral-400">
+          {BUCKET_KIND_LABELS[bucket.kind]}
+          {bucket.is_system ? ' · system' : ''}
+          {bucket.target_amount != null && bucket.target_amount > 0
+            ? ` · target ${formatRupiah(bucket.target_amount)}`
+            : ''}
+        </p>
+      </div>
+    </>
   )
 }

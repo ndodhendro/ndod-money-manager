@@ -14,9 +14,11 @@ import { areAllCollapseOpen } from '../lib/collapseState'
 import { formatNumber } from '../lib/format'
 import { getRecurringBillDisplayParts } from '../lib/recurringBillDisplay'
 import { getStoredCircle, getStoredProfile, setStoredCircle } from '../lib/profile'
+import { currentMonthCursor, monthCursorKey } from '../lib/monthCursor'
 import {
   createRecurringBill,
   deleteRecurringBill,
+  fetchRecurringBillLogs,
   fetchRecurringBills,
   isMissingRecurringSchema,
   sortRecurringBillsForSettings,
@@ -122,6 +124,9 @@ export function RecurringBillsPanel({
   const { buckets, loading: bucketsLoading } = useBuckets()
 
   const [bills, setBills] = useState<RecurringBill[]>([])
+  const [currentMonthDoneByBillId, setCurrentMonthDoneByBillId] = useState(
+    () => new Set<string>(),
+  )
   const [loading, setLoading] = useState(true)
   const [available, setAvailable] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -249,6 +254,7 @@ export function RecurringBillsPanel({
     return month.value >= startsParts.month
   })
   const isTransfer = type === 'transfer'
+  const isIncome = type === 'income'
   const bucketsById = new Map(buckets.map((b) => [b.id, b]))
   const sortedBills = sortRecurringBillsForSettings(bills)
   const groupedBills = groupByDueDay(sortedBills)
@@ -265,14 +271,20 @@ export function RecurringBillsPanel({
   async function reloadBills() {
     setLoading(true)
     try {
-      const rows = await fetchRecurringBills()
+      const currentYm = monthCursorKey(currentMonthCursor())
+      const [rows, currentLogs] = await Promise.all([
+        fetchRecurringBills(),
+        fetchRecurringBillLogs(currentYm),
+      ])
       setBills(sortRecurringBillsForSettings(rows))
+      setCurrentMonthDoneByBillId(new Set(currentLogs.map((l) => l.bill_id)))
       setAvailable(true)
     } catch (err) {
       const message = err instanceof Error ? err.message : ''
       if (isMissingRecurringSchema(message)) {
         setAvailable(false)
         setBills([])
+        setCurrentMonthDoneByBillId(new Set())
       } else {
         showAppToast(message || 'Failed to load')
       }
@@ -383,12 +395,24 @@ export function RecurringBillsPanel({
       return
     }
     if (isTransfer) {
+      if (!circle) {
+        focusCircleField()
+        return
+      }
       if (fromBucket === undefined) {
         focusFromField()
         return
       }
       if (toBucket === undefined) {
         focusToField()
+        return
+      }
+      focusNoteField()
+      return
+    }
+    if (type === 'income') {
+      if (!categoryId) {
+        focusCategoryField()
         return
       }
       focusNoteField()
@@ -412,11 +436,15 @@ export function RecurringBillsPanel({
     if (next === 'transfer') {
       setFromBucket(null)
       setToBucket(undefined)
-      setCircle(null)
+      setCircle(getStoredCircle())
+    } else if (next === 'income') {
+      setFromBucket(undefined)
+      setToBucket(undefined)
+      setCircle('hd_family')
     } else {
       setFromBucket(undefined)
       setToBucket(undefined)
-      if (!circle) setCircle(getStoredCircle())
+      setCircle(getStoredCircle())
     }
   }
 
@@ -452,9 +480,14 @@ export function RecurringBillsPanel({
 
     if (bill.type === 'transfer') {
       setCategoryId(null)
-      setCircle(null)
+      setCircle(bill.circle ?? getStoredCircle())
       setFromBucket(bill.from_bucket_id)
       setToBucket(bill.to_bucket_id)
+    } else if (bill.type === 'income') {
+      setCategoryId(bill.category_id)
+      setCircle('hd_family')
+      setFromBucket(undefined)
+      setToBucket(undefined)
     } else {
       setCategoryId(bill.category_id)
       setCircle(bill.circle ?? getStoredCircle())
@@ -489,6 +522,10 @@ export function RecurringBillsPanel({
     }
 
     if (type === 'transfer') {
+      if (!circle) {
+        focusCircleField('Pick a circle')
+        return
+      }
       if (fromBucket === undefined) {
         focusFromField('Pick a source')
         return
@@ -505,6 +542,11 @@ export function RecurringBillsPanel({
         showAppToast('Transfer needs at least one bucket')
         return
       }
+    } else if (type === 'income') {
+      if (!categoryId) {
+        focusCategoryField('Pick a category')
+        return
+      }
     } else {
       if (!circle) {
         focusCircleField('Pick a circle')
@@ -515,6 +557,8 @@ export function RecurringBillsPanel({
         return
       }
     }
+
+    const resolvedCircle = type === 'income' ? 'hd_family' : circle!
 
     setSaving(true)
     try {
@@ -527,7 +571,7 @@ export function RecurringBillsPanel({
               category_id: null,
               from_bucket_id: fromBucket ?? null,
               to_bucket_id: toBucket ?? null,
-              circle: 'hd_family',
+              circle: resolvedCircle,
               owner,
               due_day: dueDay,
               starts_year_month: startsYearMonth || null,
@@ -541,7 +585,7 @@ export function RecurringBillsPanel({
               category_id: categoryId!,
               from_bucket_id: null,
               to_bucket_id: null,
-              circle: circle!,
+              circle: resolvedCircle,
               owner,
               due_day: dueDay,
               starts_year_month: startsYearMonth || null,
@@ -549,7 +593,7 @@ export function RecurringBillsPanel({
               icon: resolveIcon(),
             },
       )
-      if (type !== 'transfer' && circle) setStoredCircle(circle)
+      if (type !== 'income') setStoredCircle(resolvedCircle)
       resetForm()
       setDayGroupsExpanded(true)
       setDayGroupsVersion((v) => v + 1)
@@ -574,6 +618,10 @@ export function RecurringBillsPanel({
     }
 
     if (type === 'transfer') {
+      if (!circle) {
+        focusCircleField('Pick a circle')
+        return
+      }
       if (fromBucket === undefined) {
         focusFromField('Pick a source')
         return
@@ -590,6 +638,11 @@ export function RecurringBillsPanel({
         showAppToast('Transfer needs at least one bucket')
         return
       }
+    } else if (type === 'income') {
+      if (!categoryId) {
+        focusCategoryField('Pick a category')
+        return
+      }
     } else {
       if (!circle) {
         focusCircleField('Pick a circle')
@@ -601,6 +654,7 @@ export function RecurringBillsPanel({
       }
     }
 
+    const resolvedCircle = type === 'income' ? 'hd_family' : circle!
     const updatedId = editingId
     setSaving(true)
     try {
@@ -611,14 +665,14 @@ export function RecurringBillsPanel({
         category_id: type === 'transfer' ? null : categoryId,
         from_bucket_id: type === 'transfer' ? (fromBucket ?? null) : null,
         to_bucket_id: type === 'transfer' ? (toBucket ?? null) : null,
-        circle: type === 'transfer' ? 'hd_family' : circle!,
+        circle: resolvedCircle,
         owner,
         due_day: dueDay,
         starts_year_month: startsYearMonth || null,
         ends_year_month: endsYearMonth || null,
         icon: resolveIcon(),
       })
-      if (type !== 'transfer' && circle) setStoredCircle(circle)
+      if (type !== 'income') setStoredCircle(resolvedCircle)
       resetForm()
       setDayGroupsExpanded(true)
       setDayGroupsVersion((v) => v + 1)
@@ -782,7 +836,13 @@ export function RecurringBillsPanel({
                           highlighted={isHighlighted}
                           onContentClick={() => openEditForm(bill)}
                         >
-                          <RecurringBillRowContent bill={bill} display={display} />
+                          <RecurringBillRowContent
+                            bill={bill}
+                            display={display}
+                            currentMonthDone={currentMonthDoneByBillId.has(
+                              bill.id,
+                            )}
+                          />
                         </SwipeDeleteRow>
                       )
                     })}
@@ -844,8 +904,12 @@ export function RecurringBillsPanel({
               setOwner(next)
               setOwnerOpen(false)
               if (isTransfer) {
-                if (fromBucket === undefined) setFromOpen(true)
+                if (!circle) setCircleOpen(true)
+                else if (fromBucket === undefined) setFromOpen(true)
                 else if (toBucket === undefined) setToOpen(true)
+                else focusNoteField()
+              } else if (isIncome) {
+                if (!categoryId) setCategoryOpen(true)
                 else focusNoteField()
               } else if (!circle) {
                 setCircleOpen(true)
@@ -872,6 +936,27 @@ export function RecurringBillsPanel({
               <p className="text-sm text-neutral-400">Loading buckets…</p>
             ) : (
               <>
+                <CirclePicker
+                  value={circle}
+                  onChange={(next) => {
+                    setCircle(next)
+                    setCircleOpen(false)
+                    if (fromBucket === undefined) setFromOpen(true)
+                    else if (toBucket === undefined) setToOpen(true)
+                    else focusNoteField()
+                  }}
+                  open={circleOpen}
+                  onOpenChange={(open) => {
+                    setCircleOpen(open)
+                    if (open) {
+                      setCategoryOpen(false)
+                      setOwnerOpen(false)
+                      setFromOpen(false)
+                      setToOpen(false)
+                    }
+                  }}
+                  highlighted={circleOpen}
+                />
                 <BucketPicker
                   label="From"
                   value={fromBucket}
@@ -882,6 +967,7 @@ export function RecurringBillsPanel({
                     setFromOpen(open)
                     if (open) {
                       setToOpen(false)
+                      setCircleOpen(false)
                       setOwnerOpen(false)
                     }
                   }}
@@ -903,6 +989,7 @@ export function RecurringBillsPanel({
                     setToOpen(open)
                     if (open) {
                       setFromOpen(false)
+                      setCircleOpen(false)
                       setOwnerOpen(false)
                     }
                   }}
@@ -918,7 +1005,7 @@ export function RecurringBillsPanel({
           ) : (
             <>
               <CirclePicker
-                value={circle}
+                value={isIncome ? 'hd_family' : circle}
                 onChange={(next) => {
                   setCircle(next)
                   setCircleOpen(false)
@@ -927,6 +1014,7 @@ export function RecurringBillsPanel({
                 }}
                 open={circleOpen}
                 onOpenChange={(open) => {
+                  if (isIncome) return
                   setCircleOpen(open)
                   if (open) {
                     setCategoryOpen(false)
@@ -934,6 +1022,7 @@ export function RecurringBillsPanel({
                   }
                 }}
                 highlighted={circleOpen}
+                locked={isIncome}
               />
               {catsLoading && treeByUsage.length === 0 ? (
                 <p className="text-sm text-neutral-400">Loading categories…</p>

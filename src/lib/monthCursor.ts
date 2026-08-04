@@ -41,6 +41,33 @@ export function monthCursorKey(cursor: MonthCursor): string {
   return `${cursor.year}-${String(cursor.month + 1).padStart(2, '0')}`
 }
 
+/** Complete calendar months before `from` (default: current month), oldest first. */
+export function previousCompleteMonths(
+  count: number,
+  from: MonthCursor = currentMonthCursor(),
+): MonthCursor[] {
+  const n = Math.max(0, Math.floor(count))
+  const months: MonthCursor[] = []
+  for (let i = n; i >= 1; i--) {
+    months.push(shiftMonthCursor(from, -i))
+  }
+  return months
+}
+
+/** Inclusive date range covering every day in the given months (oldest → newest). */
+export function monthsSpanRange(months: MonthCursor[]): {
+  start: string
+  end: string
+} {
+  if (months.length === 0) {
+    const empty = monthCursorRange(currentMonthCursor())
+    return { start: empty.start, end: empty.start }
+  }
+  const first = monthCursorRange(months[0])
+  const last = monthCursorRange(months[months.length - 1])
+  return { start: first.start, end: last.end }
+}
+
 function daysInMonth(year: number, month: number): number {
   return new Date(year, month + 1, 0).getDate()
 }

@@ -7,6 +7,8 @@ export interface CategoryTreeNode extends Category {
   children: Category[]
 }
 
+const EMPTY_CATEGORIES: Category[] = []
+
 export function useCategories(
   type?: CategoryType,
   options?: { includeInactive?: boolean },
@@ -15,6 +17,11 @@ export function useCategories(
   const [categories, setCategories] = useState<Category[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // Track which request the cached rows belong to so consumers never see a
+  // stale expense map while income is loading (that cleared selectedId on edit).
+  const [fetchedKey, setFetchedKey] = useState<string | null>(null)
+  const requestKey = `${type ?? 'all'}:${includeInactive ? 'all' : 'active'}`
+  const dataMatchesRequest = fetchedKey === requestKey
 
   const load = useCallback(
     async (opts?: { silent?: boolean }) => {
@@ -37,6 +44,7 @@ export function useCategories(
       } else {
         setError(null)
         setCategories((data ?? []) as Category[])
+        setFetchedKey(`${type ?? 'all'}:${includeInactive ? 'all' : 'active'}`)
       }
       setLoading(false)
     },
@@ -47,21 +55,23 @@ export function useCategories(
     void load()
   }, [load])
 
+  const visibleCategories = dataMatchesRequest ? categories : EMPTY_CATEGORIES
+
   const parents = useMemo(
-    () => categories.filter((c) => !c.parent_id),
-    [categories],
+    () => visibleCategories.filter((c) => !c.parent_id),
+    [visibleCategories],
   )
 
   const childrenByParent = useMemo(() => {
     const map = new Map<string, Category[]>()
-    for (const c of categories) {
+    for (const c of visibleCategories) {
       if (!c.parent_id) continue
       const list = map.get(c.parent_id) ?? []
       list.push(c)
       map.set(c.parent_id, list)
     }
     return map
-  }, [categories])
+  }, [visibleCategories])
 
   const tree: CategoryTreeNode[] = useMemo(
     () =>
@@ -94,20 +104,20 @@ export function useCategories(
 
   const byId = useMemo(() => {
     const map = new Map<string, Category>()
-    for (const c of categories) map.set(c.id, c)
+    for (const c of visibleCategories) map.set(c.id, c)
     return map
-  }, [categories])
+  }, [visibleCategories])
 
   const reload = useCallback(() => load({ silent: true }), [load])
 
   return {
-    categories,
+    categories: visibleCategories,
     parents,
     childrenByParent,
     tree,
     treeByUsage,
     byId,
-    loading,
+    loading: loading || !dataMatchesRequest,
     error,
     reload,
   }

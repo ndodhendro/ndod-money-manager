@@ -5,12 +5,14 @@ import { dismissNumericKeyboard } from '../lib/keyboardFocus'
 
 interface PlanSubPageProps {
   title: string
+  icon: string
   description?: string
   children: ReactNode
 }
 
 export function PlanSubPage({
   title,
+  icon,
   description,
   children,
 }: PlanSubPageProps) {
@@ -33,7 +35,7 @@ export function PlanSubPage({
         >
           ←
         </button>
-        <PageTitle>{title}</PageTitle>
+        <PageTitle icon={icon}>{title}</PageTitle>
       </div>
 
       {description && (

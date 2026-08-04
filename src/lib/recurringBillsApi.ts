@@ -143,26 +143,81 @@ export function isRecurringActiveInMonth(
   return bill.ends_year_month >= yearMonth
 }
 
-/** "Due day 15 · Starts August 2026 · Ends August 2027" */
-export function formatRecurringMeta(bill: RecurringBill): string {
-  const left = bill.ends_year_month
-    ? `${formatMonthsLeftLabel(monthsLeftUntil(bill.ends_year_month))} left`
-    : null
-  if (left) return `Due day ${bill.due_day} · ${left}`
-  return `Due day ${bill.due_day} · Ongoing`
+/** Due label for a specific plan month, e.g. "Tue, 15 Aug 2026". */
+export function formatRecurringDueDate(
+  cursor: MonthCursor,
+  dueDay: number,
+): string {
+  const iso = recurringOccurredOn(cursor, dueDay)
+  return new Intl.DateTimeFormat('en-US', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  }).format(new Date(`${iso}T00:00:00`))
 }
 
-function monthsLeftUntil(endsYearMonth: string): number {
-  const [yearRaw, monthRaw] = endsYearMonth.split('-')
-  const endYear = Number(yearRaw)
-  const endMonth = Number(monthRaw)
+/**
+ * Settings list: "Due day 15 · Ongoing"
+ * Plan checklist (with cursor): "Tue, 15 Aug 2026 · Ongoing"
+ *
+ * "X months left" counts remaining monthly occurrences through ends_year_month
+ * (inclusive), including the current calendar month unless it is already checked.
+ */
+export function formatRecurringMeta(
+  bill: RecurringBill,
+  cursor?: MonthCursor,
+  options?: { currentMonthDone?: boolean },
+): string {
+  const remaining = bill.ends_year_month
+    ? remainingOccurrencesLeft(
+        bill.ends_year_month,
+        bill.starts_year_month,
+        options?.currentMonthDone === true,
+      )
+    : null
+  const left =
+    remaining != null && remaining > 0
+      ? `${formatMonthsLeftLabel(remaining)} left`
+      : null
+  const dueLabel = cursor
+    ? formatRecurringDueDate(cursor, bill.due_day)
+    : `Due day ${bill.due_day}`
+  if (left) return `${dueLabel} · ${left}`
+  if (bill.ends_year_month) return dueLabel
+  return `${dueLabel} · Ongoing`
+}
+
+/** Inclusive remaining months from now (or start) through end; skip current if done. */
+function remainingOccurrencesLeft(
+  endsYearMonth: string,
+  startsYearMonth: string | null,
+  currentMonthDone: boolean,
+): number {
+  const [endYear, endMonth] = endsYearMonth.split('-').map(Number)
   if (!Number.isFinite(endYear) || !Number.isFinite(endMonth)) return 0
 
   const now = new Date()
   const currentYear = now.getFullYear()
   const currentMonth = now.getMonth() + 1
-  const diff = (endYear - currentYear) * 12 + (endMonth - currentMonth)
-  return Math.max(0, diff)
+  const currentYm = `${currentYear}-${String(currentMonth).padStart(2, '0')}`
+
+  let fromYear = currentYear
+  let fromMonth = currentMonth
+  let fromYm = currentYm
+  if (startsYearMonth && startsYearMonth > currentYm) {
+    const [startYear, startMonth] = startsYearMonth.split('-').map(Number)
+    if (!Number.isFinite(startYear) || !Number.isFinite(startMonth)) return 0
+    fromYear = startYear
+    fromMonth = startMonth
+    fromYm = startsYearMonth
+  }
+
+  if (endsYearMonth < fromYm) return 0
+
+  let remaining = (endYear - fromYear) * 12 + (endMonth - fromMonth) + 1
+  if (currentMonthDone && fromYm === currentYm) remaining -= 1
+  return Math.max(0, remaining)
 }
 
 function formatMonthsLeftLabel(monthsLeft: number): string {

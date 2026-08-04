@@ -4,6 +4,7 @@ import type {
   Category,
   CategoryWithParent,
   NewTransactionInput,
+  Owner,
   TransactionWithCategory,
 } from './types'
 
@@ -139,13 +140,11 @@ function validateInput(input: NewTransactionInput): void {
   }
 }
 
-function toRow(input: NewTransactionInput): Record<string, unknown> {
+function toBaseRow(input: NewTransactionInput): Record<string, unknown> {
   if (input.type === 'transfer') {
     return {
       type: input.type,
       category_id: null,
-      from_bucket_id: input.from_bucket_id,
-      to_bucket_id: input.to_bucket_id,
       amount: input.amount,
       description: input.description || null,
       owner: input.owner,
@@ -157,8 +156,6 @@ function toRow(input: NewTransactionInput): Record<string, unknown> {
   return {
     type: input.type,
     category_id: input.category_id,
-    from_bucket_id: null,
-    to_bucket_id: null,
     amount: input.amount,
     description: input.description || null,
     owner: input.owner,
@@ -168,17 +165,62 @@ function toRow(input: NewTransactionInput): Record<string, unknown> {
   }
 }
 
+/** Include bucket FKs when schema has them (migrate_buckets_transfer.sql). */
+function toRow(input: NewTransactionInput): Record<string, unknown> {
+  const base = toBaseRow(input)
+  if (input.type === 'transfer') {
+    return {
+      ...base,
+      from_bucket_id: input.from_bucket_id,
+      to_bucket_id: input.to_bucket_id,
+    }
+  }
+  return {
+    ...base,
+    from_bucket_id: null,
+    to_bucket_id: null,
+  }
+}
+
+function throwWriteError(
+  error: { message: string },
+  input: NewTransactionInput,
+): never {
+  if (isMissingBucketsSchema(error.message) && input.type === 'transfer') {
+    throw new Error(
+      'Run migrate_buckets_transfer.sql in Supabase to enable transfers',
+    )
+  }
+  throw new Error(error.message)
+}
+
 export async function createTransaction(
   input: NewTransactionInput,
 ): Promise<string> {
   validateInput(input)
-  const { data, error } = await supabase
+
+  const withBuckets = toRow(input)
+  let result = await supabase
     .from('transactions')
-    .insert(toRow(input))
+    .insert(withBuckets)
     .select('id')
     .single()
-  if (error) throw error
-  return data.id as string
+
+  // Expense/income still work before buckets migration (omit unknown columns).
+  if (
+    result.error &&
+    input.type !== 'transfer' &&
+    isMissingBucketsSchema(result.error.message)
+  ) {
+    result = await supabase
+      .from('transactions')
+      .insert(toBaseRow(input))
+      .select('id')
+      .single()
+  }
+
+  if (result.error) throwWriteError(result.error, input)
+  return result.data.id as string
 }
 
 export async function updateTransaction(
@@ -186,26 +228,41 @@ export async function updateTransaction(
   input: NewTransactionInput,
 ): Promise<void> {
   validateInput(input)
-  const { error } = await supabase
+
+  let { error } = await supabase
     .from('transactions')
     .update(toRow(input))
     .eq('id', id)
-  if (error) throw error
+
+  if (
+    error &&
+    input.type !== 'transfer' &&
+    isMissingBucketsSchema(error.message)
+  ) {
+    ;({ error } = await supabase
+      .from('transactions')
+      .update(toBaseRow(input))
+      .eq('id', id))
+  }
+
+  if (error) throwWriteError(error, input)
 }
 
 export async function deleteTransaction(id: string): Promise<void> {
   const { error } = await supabase.from('transactions').delete().eq('id', id)
-  if (error) throw error
+  if (error) throw new Error(error.message)
 }
 
-/** Catatan unik (terbaru dulu) untuk kategori/sub-kategori tertentu. */
+/** Unique recent notes for a category, scoped to the active profile. */
 export async function fetchNoteSuggestions(
   categoryId: string,
+  owner: Owner,
 ): Promise<string[]> {
   const { data, error } = await supabase
     .from('transactions')
     .select('description')
     .eq('category_id', categoryId)
+    .eq('owner', owner)
     .not('description', 'is', null)
     .order('created_at', { ascending: false })
     .limit(100)

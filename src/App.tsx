@@ -8,16 +8,26 @@ import {
 } from 'react-router-dom'
 import { AppToast } from './components/AppToast'
 import { BottomNav } from './components/BottomNav'
+import { RecurringChecklistFab } from './components/RecurringChecklistFab'
 import { UpdateRequired } from './components/UpdateRequired'
 import { useBackButtonTrap } from './hooks/useBackButton'
 import { isDeviceUnlocked } from './lib/deviceUnlock'
 import { getStoredProfile } from './lib/profile'
 import { History } from './screens/History'
 import { MoneyPlanScreen } from './screens/MoneyPlan'
+import { PlanBuckets } from './screens/plan/PlanBuckets'
+import { PlanEmergency } from './screens/plan/PlanEmergency'
+import { PlanNeedsWants } from './screens/plan/PlanNeedsWants'
+import { PlanPayYourselfFirst } from './screens/plan/PlanPayYourselfFirst'
+import { PlanRecurring } from './screens/plan/PlanRecurring'
 import { PinUnlock } from './screens/PinUnlock'
 import { ProfilePicker } from './screens/ProfilePicker'
 import { QuickAdd } from './screens/QuickAdd'
 import { Settings } from './screens/Settings'
+import { SettingsBuckets } from './screens/settings/SettingsBuckets'
+import { SettingsCategories } from './screens/settings/SettingsCategories'
+import { SettingsMoneyPlan } from './screens/settings/SettingsMoneyPlan'
+import { SettingsRecurring } from './screens/settings/SettingsRecurring'
 import { Dashboard } from './screens/Dashboard'
 
 function App() {
@@ -67,13 +77,33 @@ function AppShell({ onProfileReset }: { onProfileReset: () => void }) {
         <Route path="/riwayat" element={<History />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/rencana" element={<MoneyPlanScreen />} />
+        <Route path="/rencana/recurring" element={<PlanRecurring />} />
+        <Route
+          path="/rencana/pay-yourself-first"
+          element={<PlanPayYourselfFirst />}
+        />
+        <Route path="/rencana/emergency" element={<PlanEmergency />} />
+        <Route path="/rencana/buckets" element={<PlanBuckets />} />
+        <Route path="/rencana/needs-wants" element={<PlanNeedsWants />} />
         <Route path="/ringkasan" element={<Navigate to="/dashboard" replace />} />
         <Route
           path="/pengaturan"
           element={<Settings onProfileReset={onProfileReset} />}
         />
+        <Route path="/pengaturan/money-plan" element={<SettingsMoneyPlan />} />
+        <Route
+          path="/pengaturan/recurring/:billId?"
+          element={<SettingsRecurring />}
+        />
+        <Route path="/pengaturan/buckets" element={<SettingsBuckets />} />
+        <Route path="/pengaturan/categories" element={<SettingsCategories />} />
+        <Route
+          path="/pengaturan/categories/new"
+          element={<SettingsCategories />}
+        />
       </Routes>
       <BottomNav />
+      <RecurringChecklistFab />
       <AppToast />
     </div>
   )

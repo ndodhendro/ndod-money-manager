@@ -14,19 +14,35 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MutableRefObject,
+} from 'react'
 import {
   useCategories,
   type CategoryTreeNode,
 } from '../hooks/useCategories'
+import { showAppToast } from '../lib/appToast'
 import { ActionEmoji } from '../lib/actionEmoji'
 import {
   addCategory,
+  deleteCategory,
   renameCategory,
   reorderCategories,
-  setCategoryVisibility,
 } from '../lib/categoriesApi'
-import type { BudgetGroup, Category, CategoryType } from '../lib/types'
+import {
+  BUDGET_GROUP_LABELS,
+  type BudgetGroup,
+  type Category,
+  type CategoryType,
+} from '../lib/types'
+import { CollapseChevron } from './CollapseChevron'
+import { ConfirmDialog } from './ConfirmDialog'
+import { GroupedListFrame } from './GroupedListFrame'
 
 interface CategoryManagePanelProps {
   type: CategoryType
@@ -34,6 +50,11 @@ interface CategoryManagePanelProps {
   onChanged: () => void
   compact?: boolean
   onTypeChange?: (type: CategoryType) => void
+  onViewChange?: (info: { view: 'list' | 'form' }) => void
+  /** Parent can call this to leave the form and return to the list. */
+  backToListRef?: MutableRefObject<(() => void) | null>
+  /** When set by the route, keep the panel form in sync with the URL. */
+  routeWantForm?: boolean
 }
 
 export function CategoryManagePanel({
@@ -42,22 +63,39 @@ export function CategoryManagePanel({
   onChanged,
   compact = false,
   onTypeChange,
+  onViewChange,
+  backToListRef,
+  routeWantForm,
 }: CategoryManagePanelProps) {
-  const { tree, parents, reload } = useCategories(type, {
-    includeInactive: true,
-  })
+  const { tree, parents, reload } = useCategories(type)
 
   const [orderedTree, setOrderedTree] = useState<CategoryTreeNode[]>([])
   const [name, setName] = useState('')
-  const [budgetGroup, setBudgetGroup] = useState<BudgetGroup>('needs')
+  const [formType, setFormType] = useState<CategoryType | ''>('')
+  const [budgetGroup, setBudgetGroup] = useState<BudgetGroup | ''>('')
   const [icon, setIcon] = useState('🏷️')
-  const [parentId, setParentId] = useState<string>('')
+  /** '' = unset, '__main__' = new parent category, otherwise parent id */
+  const [parentChoice, setParentChoice] = useState('')
   const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
   const [editIcon, setEditIcon] = useState('')
+  const [editBudgetGroup, setEditBudgetGroup] = useState<BudgetGroup | null>(
+    null,
+  )
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set())
+  const [deleteTarget, setDeleteTarget] = useState<Category | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [view, setView] = useState<'list' | 'form'>(() =>
+    routeWantForm ? 'form' : 'list',
+  )
+  const onViewChangeRef = useRef(onViewChange)
+  onViewChangeRef.current = onViewChange
+  const parentRef = useRef<HTMLSelectElement>(null)
+  const typeRef = useRef<HTMLSelectElement>(null)
+  const budgetRef = useRef<HTMLSelectElement>(null)
+  const iconRef = useRef<HTMLInputElement>(null)
+  const nameRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     setOrderedTree(tree)
@@ -74,10 +112,38 @@ export function CategoryManagePanel({
     }
   }, [editingId, orderedTree])
 
-  const parentOptions = useMemo(
-    () => parents.filter((p) => p.is_active),
-    [parents],
-  )
+  // Only notify on view change — not when parent callback identity changes.
+  useEffect(() => {
+    onViewChangeRef.current?.({ view })
+  }, [view])
+
+  useEffect(() => {
+    if (routeWantForm == null) return
+    if (!routeWantForm) {
+      if (view !== 'list') {
+        resetAddForm()
+        setView('list')
+      }
+      return
+    }
+    if (view !== 'form') {
+      resetAddForm()
+      setView('form')
+    }
+  }, [routeWantForm])
+
+  useEffect(() => {
+    if (!backToListRef) return
+    backToListRef.current = () => {
+      resetAddForm()
+      setView('list')
+    }
+    return () => {
+      backToListRef.current = null
+    }
+  })
+
+  const parentOptions = useMemo(() => parents, [parents])
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -93,6 +159,16 @@ export function CategoryManagePanel({
     [orderedTree],
   )
 
+  const expandableParentIds = useMemo(
+    () =>
+      orderedTree.filter((c) => c.children.length > 0).map((c) => c.id),
+    [orderedTree],
+  )
+
+  const allSubsExpanded =
+    expandableParentIds.length > 0 &&
+    expandableParentIds.every((id) => expandedIds.has(id))
+
   function toggleExpand(id: string) {
     setExpandedIds((prev) => {
       const next = new Set(prev)
@@ -102,75 +178,135 @@ export function CategoryManagePanel({
     })
   }
 
+  function setAllSubsExpanded(expanded: boolean) {
+    setExpandedIds(expanded ? new Set(expandableParentIds) : new Set())
+  }
+
   async function refresh() {
     await reload()
     onChanged()
   }
 
+  function resetAddForm() {
+    setName('')
+    setIcon('🏷️')
+    setParentChoice('')
+    setBudgetGroup('')
+    setFormType(allowTypeChange ? '' : type)
+  }
+
+  function openAddForm() {
+    resetAddForm()
+    setEditingId(null)
+    setView('form')
+  }
+
   async function handleAdd() {
-    if (!name.trim()) {
-      setMessage('Category name is required')
+    const resolvedType = allowTypeChange ? formType : type
+
+    if (!resolvedType) {
+      showAppToast('Select expense or income')
+      typeRef.current?.focus()
       return
     }
+    if (!parentChoice) {
+      showAppToast('Select a parent option')
+      parentRef.current?.focus()
+      return
+    }
+    if (resolvedType === 'expense' && !budgetGroup) {
+      showAppToast('Select needs, wants, or savings')
+      budgetRef.current?.focus()
+      return
+    }
+    if (!icon.trim()) {
+      showAppToast('Enter an icon')
+      iconRef.current?.focus()
+      return
+    }
+    if (!name.trim()) {
+      showAppToast('Enter a name')
+      nameRef.current?.focus()
+      return
+    }
+
+    const isMain = parentChoice === '__main__'
     setSaving(true)
     try {
-      const parent = parentId
-        ? parents.find((p) => p.id === parentId)
-        : null
       await addCategory({
         name: name.trim(),
-        type,
+        type: resolvedType,
         icon,
         budget_group:
-          type === 'expense' ? (parent?.budget_group ?? budgetGroup) : null,
-        parent_id: parentId || null,
+          resolvedType === 'expense' ? (budgetGroup as BudgetGroup) : null,
+        parent_id: isMain ? null : parentChoice,
       })
-      setName('')
-      setIcon('🏷️')
-      setParentId('')
-      setMessage('Category added')
+      resetAddForm()
+      setView('list')
+      showAppToast(`Saved ${ActionEmoji.save}`)
       await refresh()
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : 'Failed to add')
+      showAppToast(err instanceof Error ? err.message : 'Failed to add')
     } finally {
       setSaving(false)
     }
   }
 
-  async function handleToggleVisibility(
-    id: string,
-    currentlyActive: boolean,
-    parentIdValue?: string | null,
-  ) {
+  async function confirmDelete() {
+    if (!deleteTarget) return
+    setDeleting(true)
     try {
-      await setCategoryVisibility(id, !currentlyActive, parentIdValue)
+      await deleteCategory(deleteTarget.id)
+      setDeleteTarget(null)
+      if (editingId === deleteTarget.id) setEditingId(null)
+      showAppToast('Deleted')
       await refresh()
     } catch (err) {
-      setMessage(
-        err instanceof Error ? err.message : 'Failed to change visibility',
-      )
+      showAppToast(err instanceof Error ? err.message : 'Failed to delete')
+    } finally {
+      setDeleting(false)
     }
   }
 
-  function startEdit(cat: { id: string; name: string; icon: string }) {
+  function startEdit(cat: Category) {
     setEditingId(cat.id)
     setEditName(cat.name)
     setEditIcon(cat.icon)
+    setEditBudgetGroup(
+      type === 'expense'
+        ? (cat.budget_group === 'needs' ||
+          cat.budget_group === 'wants' ||
+          cat.budget_group === 'savings'
+            ? cat.budget_group
+            : 'needs')
+        : null,
+    )
   }
 
   async function saveEdit() {
     if (!editingId || !editName.trim()) return
     setSaving(true)
     try {
+      const parent = orderedTree.find((p) => p.id === editingId)
+      const isParentWithChildren = Boolean(parent && parent.children.length > 0)
+
       await renameCategory(editingId, {
         name: editName.trim(),
         icon: editIcon || '🏷️',
+        ...(type === 'expense'
+          ? {
+              budget_group: isParentWithChildren
+                ? null
+                : (editBudgetGroup ?? 'needs'),
+            }
+          : {}),
       })
+
       setEditingId(null)
-      setMessage('Category updated')
+      showAppToast(`Updated ${ActionEmoji.edit}`)
       await refresh()
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : 'Failed to update')
+      showAppToast(err instanceof Error ? err.message : 'Failed to update')
     } finally {
       setSaving(false)
     }
@@ -191,7 +327,7 @@ export function CategoryManagePanel({
       onChanged()
     } catch (err) {
       setOrderedTree(tree)
-      setMessage(err instanceof Error ? err.message : 'Failed to reorder')
+      showAppToast(err instanceof Error ? err.message : 'Failed to reorder')
     }
   }
 
@@ -217,155 +353,248 @@ export function CategoryManagePanel({
       onChanged()
     } catch (err) {
       setOrderedTree(tree)
-      setMessage(err instanceof Error ? err.message : 'Failed to reorder')
+      showAppToast(err instanceof Error ? err.message : 'Failed to reorder')
     }
   }
 
   return (
     <div className={compact ? 'space-y-3 p-3' : 'space-y-4'}>
-      <div
-        className={`space-y-2 rounded-xl bg-white p-3 shadow-sm dark:bg-neutral-800 ${
-          compact ? '' : 'p-4'
-        }`}
-      >
-        <p className="text-sm font-medium text-neutral-700 dark:text-neutral-200">
-          Add category / subcategory
-        </p>
-        <div className="flex gap-2">
-          <input
-            value={icon}
-            onChange={(e) => setIcon(e.target.value)}
-            className="w-14 rounded-lg bg-neutral-100 px-2 py-2 text-center text-lg dark:bg-neutral-700"
-            maxLength={4}
-          />
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Name"
-            className="flex-1 rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
-          />
+      {view === 'list' ? (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-medium text-neutral-500">
+              Categories list
+            </p>
+            <button
+              type="button"
+              onClick={openAddForm}
+              className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white active:bg-emerald-600"
+            >
+              {ActionEmoji.add} Add New
+            </button>
+          </div>
+
+          {allowTypeChange && (
+            <div className="grid grid-cols-2 gap-1 rounded-xl bg-neutral-100 p-1 dark:bg-neutral-800">
+              {(['expense', 'income'] as CategoryType[]).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => {
+                    onTypeChange?.(t)
+                    setEditingId(null)
+                  }}
+                  className={`rounded-lg py-2 text-sm font-semibold transition-colors ${
+                    type === t
+                      ? 'bg-white text-neutral-900 shadow-sm dark:bg-neutral-900 dark:text-neutral-50'
+                      : 'text-neutral-500'
+                  }`}
+                >
+                  {t === 'expense' ? 'Expense' : 'Income'}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <p className="text-[11px] text-neutral-400">
+            Hold & drag {ActionEmoji.drag} to reorder.
+          </p>
+
+          {orderedTree.length === 0 ? (
+            <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
+              No categories yet. Tap Add New to create one.
+            </p>
+          ) : (
+            <GroupedListFrame
+              expanded={allSubsExpanded}
+              onToggle={setAllSubsExpanded}
+            >
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleParentDragEnd}
+              >
+                <SortableContext
+                  items={parentIds}
+                  strategy={verticalListSortingStrategy}
+                >
+                  <div className="space-y-2">
+                    {orderedTree.map((cat) => (
+                      <SortableParentRow
+                        key={cat.id}
+                        cat={cat}
+                        categoryType={type}
+                        expanded={expandedIds.has(cat.id)}
+                        editingId={editingId}
+                        editIcon={editIcon}
+                        editName={editName}
+                        editBudgetGroup={editBudgetGroup}
+                        editLeaf={cat.children.length === 0}
+                        saving={saving}
+                        onToggleExpand={() => toggleExpand(cat.id)}
+                        onStartEdit={startEdit}
+                        onDelete={(cat) => setDeleteTarget(cat)}
+                        onEditIconChange={setEditIcon}
+                        onEditNameChange={setEditName}
+                        onEditBudgetGroupChange={setEditBudgetGroup}
+                        onSaveEdit={saveEdit}
+                        onCancelEdit={() => setEditingId(null)}
+                        onChildDragEnd={(event) =>
+                          handleChildDragEnd(cat.id, event)
+                        }
+                      />
+                    ))}
+                  </div>
+                </SortableContext>
+              </DndContext>
+            </GroupedListFrame>
+          )}
         </div>
-        <div className="flex gap-2">
+      ) : (
+        <div
+          className={`space-y-2 rounded-xl bg-white p-3 shadow-sm dark:bg-neutral-800 ${
+            compact ? '' : 'p-4'
+          }`}
+        >
+          <p className="text-sm font-medium text-neutral-700 dark:text-neutral-200">
+            Add category / subcategory
+          </p>
           {allowTypeChange ? (
             <select
-              value={type}
+              ref={typeRef}
+              value={formType}
               onChange={(e) => {
-                const next = e.target.value as CategoryType
-                onTypeChange?.(next)
-                setParentId('')
+                const next = e.target.value as CategoryType | ''
+                setFormType(next)
+                setParentChoice('')
+                setBudgetGroup('')
+                if (next) onTypeChange?.(next)
               }}
-              className="flex-1 rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
+              className="w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
             >
+              <option value="">Select One</option>
               <option value="expense">Expense</option>
               <option value="income">Income</option>
             </select>
           ) : (
-            <div className="flex-1 rounded-lg bg-neutral-100 px-3 py-2 text-sm text-neutral-500 dark:bg-neutral-700">
+            <div className="w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm text-neutral-500 dark:bg-neutral-700">
               {type === 'expense' ? 'Expense' : 'Income'}
             </div>
           )}
-          {type === 'expense' && !parentId && (
+          <div className="flex gap-2">
             <select
-              value={budgetGroup}
-              onChange={(e) => setBudgetGroup(e.target.value as BudgetGroup)}
-              className="flex-1 rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
+              ref={parentRef}
+              value={parentChoice}
+              onChange={(e) => setParentChoice(e.target.value)}
+              className="min-w-0 flex-1 rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
             >
-              <option value="needs">Needs</option>
-              <option value="wants">Wants</option>
-              <option value="savings">Savings</option>
+              <option value="">Select One</option>
+              <option value="__main__">New parent (main category)</option>
+              {parentOptions.map((p) => (
+                <option key={p.id} value={p.id}>
+                  Sub of: {p.icon} {p.name}
+                </option>
+              ))}
             </select>
-          )}
-        </div>
-        <select
-          value={parentId}
-          onChange={(e) => setParentId(e.target.value)}
-          className="w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
-        >
-          <option value="">— New parent (main category) —</option>
-          {parentOptions.map((p) => (
-            <option key={p.id} value={p.id}>
-              Sub of: {p.icon} {p.name}
-            </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          onClick={handleAdd}
-          disabled={saving}
-          className="w-full rounded-lg bg-emerald-500 py-2 text-sm font-semibold text-white disabled:opacity-60"
-        >
-          {saving ? 'Saving…' : 'Add'}
-        </button>
-        {message && <p className="text-xs text-neutral-500">{message}</p>}
-        <p className="text-[11px] text-neutral-400">
-          Hold & drag {ActionEmoji.drag} to reorder.
-        </p>
-      </div>
-
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCenter}
-        onDragEnd={handleParentDragEnd}
-      >
-        <SortableContext items={parentIds} strategy={verticalListSortingStrategy}>
-          <div className="space-y-2">
-            {orderedTree.map((cat) => (
-              <SortableParentRow
-                key={cat.id}
-                cat={cat}
-                expanded={expandedIds.has(cat.id)}
-                editingId={editingId}
-                editIcon={editIcon}
-                editName={editName}
-                saving={saving}
-                onToggleExpand={() => toggleExpand(cat.id)}
-                onStartEdit={startEdit}
-                onToggleVisibility={handleToggleVisibility}
-                onEditIconChange={setEditIcon}
-                onEditNameChange={setEditName}
-                onSaveEdit={saveEdit}
-                onCancelEdit={() => setEditingId(null)}
-                onChildDragEnd={(event) => handleChildDragEnd(cat.id, event)}
-              />
-            ))}
+            {(allowTypeChange ? formType !== 'income' : type === 'expense') && (
+              <select
+                ref={budgetRef}
+                value={budgetGroup}
+                onChange={(e) =>
+                  setBudgetGroup(e.target.value as BudgetGroup | '')
+                }
+                className="w-[38%] shrink-0 rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
+              >
+                <option value="">Select One</option>
+                <option value="needs">Needs</option>
+                <option value="wants">Wants</option>
+                <option value="savings">Savings</option>
+              </select>
+            )}
           </div>
-        </SortableContext>
-      </DndContext>
+          <div className="flex gap-2">
+            <input
+              ref={iconRef}
+              value={icon}
+              onChange={(e) => setIcon(e.target.value)}
+              className="w-14 rounded-lg bg-neutral-100 px-2 py-2 text-center text-lg dark:bg-neutral-700"
+              maxLength={4}
+            />
+            <input
+              ref={nameRef}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Name"
+              className="flex-1 rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={handleAdd}
+            disabled={saving}
+            className="w-full rounded-lg bg-emerald-500 py-2 text-sm font-semibold text-white disabled:opacity-60"
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title="Delete category?"
+        message={
+          deleteTarget
+            ? `“${deleteTarget.name}” will be removed from pickers. Past transactions keep this category.`
+            : ''
+        }
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        busy={deleting}
+        onCancel={() => {
+          if (deleting) return
+          setDeleteTarget(null)
+        }}
+        onConfirm={() => void confirmDelete()}
+      />
     </div>
   )
 }
 
 function SortableParentRow({
   cat,
+  categoryType,
   expanded,
   editingId,
   editIcon,
   editName,
+  editBudgetGroup,
+  editLeaf,
   saving,
   onToggleExpand,
   onStartEdit,
-  onToggleVisibility,
+  onDelete,
   onEditIconChange,
   onEditNameChange,
+  onEditBudgetGroupChange,
   onSaveEdit,
   onCancelEdit,
   onChildDragEnd,
 }: {
   cat: CategoryTreeNode
+  categoryType: CategoryType
   expanded: boolean
   editingId: string | null
   editIcon: string
   editName: string
+  editBudgetGroup: BudgetGroup | null
+  editLeaf: boolean
   saving: boolean
   onToggleExpand: () => void
   onStartEdit: (cat: Category) => void
-  onToggleVisibility: (
-    id: string,
-    currentlyActive: boolean,
-    parentIdValue?: string | null,
-  ) => void
+  onDelete: (cat: Category) => void
   onEditIconChange: (v: string) => void
   onEditNameChange: (v: string) => void
+  onEditBudgetGroupChange: (v: BudgetGroup) => void
   onSaveEdit: () => void
   onCancelEdit: () => void
   onChildDragEnd: (event: DragEndEvent) => void
@@ -401,19 +630,20 @@ function SortableParentRow({
     <div
       ref={setNodeRef}
       style={style}
-      className={`rounded-xl px-3 py-2.5 shadow-sm ${
-        cat.is_active
-          ? 'bg-white dark:bg-neutral-800'
-          : 'bg-neutral-100 opacity-60 dark:bg-neutral-900'
-      } ${isDragging ? 'shadow-lg ring-1 ring-emerald-300' : ''}`}
+      className={`rounded-xl bg-white px-3 py-2.5 shadow-sm dark:bg-neutral-800 ${
+        isDragging ? 'shadow-lg ring-1 ring-emerald-300' : ''
+      }`}
     >
       {editingId === cat.id ? (
         <EditRow
           icon={editIcon}
           name={editName}
+          budgetGroup={editBudgetGroup}
+          showBudgetGroup={categoryType === 'expense' && editLeaf}
           saving={saving}
           onIconChange={onEditIconChange}
           onNameChange={onEditNameChange}
+          onBudgetGroupChange={onEditBudgetGroupChange}
           onSave={onSaveEdit}
           onCancel={onCancelEdit}
         />
@@ -436,7 +666,7 @@ function SortableParentRow({
               className="rounded-lg p-1 text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-700"
               aria-label={expanded ? 'Collapse' : 'Expand'}
             >
-              <IconChevron expanded={expanded} />
+              <CollapseChevron expanded={expanded} />
             </button>
           ) : (
             <span className="w-7" />
@@ -458,9 +688,9 @@ function SortableParentRow({
                   </span>
                 )}
               </p>
-              {cat.budget_group && (
-                <p className="text-[11px] text-neutral-400 uppercase">
-                  {cat.budget_group}
+              {cat.children.length === 0 && cat.budget_group && (
+                <p className="text-[11px] text-neutral-400">
+                  {BUDGET_GROUP_LABELS[cat.budget_group]}
                 </p>
               )}
             </div>
@@ -471,10 +701,9 @@ function SortableParentRow({
             onClick={() => onStartEdit(cat)}
           />
           <EmojiButton
-            label={cat.is_active ? 'Hide' : 'Show'}
-            emoji={ActionEmoji.show}
-            struck={!cat.is_active}
-            onClick={() => onToggleVisibility(cat.id, cat.is_active, null)}
+            label="Delete"
+            emoji={ActionEmoji.delete}
+            onClick={() => onDelete(cat)}
           />
         </div>
       )}
@@ -496,9 +725,12 @@ function SortableParentRow({
                     <EditRow
                       icon={editIcon}
                       name={editName}
+                      budgetGroup={editBudgetGroup}
+                      showBudgetGroup={categoryType === 'expense'}
                       saving={saving}
                       onIconChange={onEditIconChange}
                       onNameChange={onEditNameChange}
+                      onBudgetGroupChange={onEditBudgetGroupChange}
                       onSave={onSaveEdit}
                       onCancel={onCancelEdit}
                     />
@@ -508,7 +740,7 @@ function SortableParentRow({
                     key={child.id}
                     child={child}
                     onStartEdit={onStartEdit}
-                    onToggleVisibility={onToggleVisibility}
+                    onDelete={onDelete}
                   />
                 ),
               )}
@@ -523,15 +755,11 @@ function SortableParentRow({
 function SortableChildRow({
   child,
   onStartEdit,
-  onToggleVisibility,
+  onDelete,
 }: {
   child: Category
   onStartEdit: (cat: Category) => void
-  onToggleVisibility: (
-    id: string,
-    currentlyActive: boolean,
-    parentIdValue?: string | null,
-  ) => void
+  onDelete: (cat: Category) => void
 }) {
   const {
     attributes,
@@ -552,11 +780,9 @@ function SortableChildRow({
     <li
       ref={setNodeRef}
       style={style}
-      className={`flex items-center justify-between gap-2 rounded-lg py-1 pl-2 text-sm ${
-        child.is_active
-          ? 'text-neutral-600 dark:text-neutral-300'
-          : 'bg-neutral-100 text-neutral-500 opacity-60 dark:bg-neutral-900 dark:text-neutral-400'
-      } ${isDragging ? 'bg-emerald-50 dark:bg-emerald-950' : ''}`}
+      className={`flex items-center justify-between gap-2 rounded-lg py-1 pl-2 text-sm text-neutral-600 dark:text-neutral-300 ${
+        isDragging ? 'bg-emerald-50 dark:bg-emerald-950' : ''
+      }`}
     >
       <div className="flex min-w-0 flex-1 items-center gap-1">
         <button
@@ -571,6 +797,11 @@ function SortableChildRow({
         </button>
         <span className="min-w-0 truncate">
           {child.icon} {child.name}
+          {child.budget_group ? (
+            <span className="ml-1.5 text-[11px] text-neutral-400">
+              · {BUDGET_GROUP_LABELS[child.budget_group]}
+            </span>
+          ) : null}
         </span>
       </div>
       <span className="flex shrink-0 gap-0.5">
@@ -580,12 +811,9 @@ function SortableChildRow({
           onClick={() => onStartEdit(child)}
         />
         <EmojiButton
-          label={child.is_active ? 'Hide' : 'Show'}
-          emoji={ActionEmoji.show}
-          struck={!child.is_active}
-          onClick={() =>
-            onToggleVisibility(child.id, child.is_active, child.parent_id)
-          }
+          label="Delete"
+          emoji={ActionEmoji.delete}
+          onClick={() => onDelete(child)}
         />
       </span>
     </li>
@@ -596,12 +824,10 @@ function EmojiButton({
   label,
   emoji,
   onClick,
-  struck = false,
 }: {
   label: string
   emoji: string
   onClick: () => void
-  struck?: boolean
 }) {
   return (
     <button
@@ -611,91 +837,83 @@ function EmojiButton({
       onClick={onClick}
       className="rounded-lg px-1.5 py-1 text-base leading-none hover:bg-neutral-100 dark:hover:bg-neutral-700"
     >
-      {struck ? (
-        <span className="relative inline-block">
-          <span aria-hidden>{emoji}</span>
-          <span
-            aria-hidden
-            className="pointer-events-none absolute top-1/2 left-0 h-[2px] w-full -translate-y-1/2 -rotate-45 rounded bg-neutral-600 dark:bg-neutral-300"
-          />
-        </span>
-      ) : (
-        emoji
-      )}
+      {emoji}
     </button>
-  )
-}
-
-function IconChevron({ expanded }: { expanded: boolean }) {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden
-      className={`transition-transform ${expanded ? 'rotate-90' : ''}`}
-    >
-      <path
-        d="M9 6l6 6-6 6"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
   )
 }
 
 function EditRow({
   icon,
   name,
+  budgetGroup,
+  showBudgetGroup = false,
   saving,
   onIconChange,
   onNameChange,
+  onBudgetGroupChange,
   onSave,
   onCancel,
 }: {
   icon: string
   name: string
+  budgetGroup: BudgetGroup | null
+  showBudgetGroup?: boolean
   saving: boolean
   onIconChange: (v: string) => void
   onNameChange: (v: string) => void
+  onBudgetGroupChange: (v: BudgetGroup) => void
   onSave: () => void
   onCancel: () => void
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <input
-        value={icon}
-        onChange={(e) => onIconChange(e.target.value)}
-        className="w-12 rounded-lg bg-neutral-100 px-1 py-1.5 text-center text-base dark:bg-neutral-700"
-        maxLength={4}
-      />
-      <input
-        value={name}
-        onChange={(e) => onNameChange(e.target.value)}
-        className="min-w-0 flex-1 rounded-lg bg-neutral-100 px-2 py-1.5 text-sm dark:bg-neutral-700 dark:text-neutral-100"
-      />
-      <button
-        type="button"
-        onClick={onSave}
-        disabled={saving}
-        title="Save"
-        aria-label="Save"
-        className="rounded-lg px-1.5 py-1 text-base leading-none disabled:opacity-60"
-      >
-        {ActionEmoji.save}
-      </button>
-      <button
-        type="button"
-        onClick={onCancel}
-        title="Cancel"
-        aria-label="Cancel"
-        className="rounded-lg px-1.5 py-1 text-base leading-none"
-      >
-        {ActionEmoji.cancel}
-      </button>
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          value={icon}
+          onChange={(e) => onIconChange(e.target.value)}
+          className="w-12 rounded-lg bg-neutral-100 px-1 py-1.5 text-center text-base dark:bg-neutral-700"
+          maxLength={4}
+        />
+        <input
+          value={name}
+          onChange={(e) => onNameChange(e.target.value)}
+          className="min-w-0 flex-1 rounded-lg bg-neutral-100 px-2 py-1.5 text-sm dark:bg-neutral-700 dark:text-neutral-100"
+        />
+        <button
+          type="button"
+          onClick={onSave}
+          disabled={saving}
+          title="Save"
+          aria-label="Save"
+          className="rounded-lg px-1.5 py-1 text-base leading-none disabled:opacity-60"
+        >
+          {ActionEmoji.save}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={saving}
+          title="Cancel"
+          aria-label="Cancel"
+          className="rounded-lg px-1.5 py-1 text-base leading-none disabled:opacity-60"
+        >
+          {ActionEmoji.cancel}
+        </button>
+      </div>
+      {showBudgetGroup && (
+        <select
+          value={budgetGroup ?? 'needs'}
+          onChange={(e) =>
+            onBudgetGroupChange(e.target.value as BudgetGroup)
+          }
+          className="w-full rounded-lg bg-neutral-100 px-2 py-1.5 text-sm dark:bg-neutral-700 dark:text-neutral-100"
+          aria-label="Needs or wants"
+        >
+          <option value="needs">Needs</option>
+          <option value="wants">Wants</option>
+          <option value="savings">Savings</option>
+        </select>
+      )}
     </div>
   )
 }

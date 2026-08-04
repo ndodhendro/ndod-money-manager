@@ -185,7 +185,7 @@ export function Dashboard() {
           {needsWantsSlices.length > 0 && (
             <section className="mt-4 rounded-xl bg-white p-4 shadow-sm dark:bg-neutral-800">
               <p className="mb-3 text-sm font-medium text-neutral-600 dark:text-neutral-300">
-                Needs vs wants
+                Needs vs Wants
               </p>
               <DonutChart slices={needsWantsSlices} />
             </section>

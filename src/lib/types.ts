@@ -1,8 +1,14 @@
 export type Owner = 'suami' | 'istri'
 
+export const OWNERS: Owner[] = ['suami', 'istri']
+
 export const OWNER_LABELS: Record<Owner, string> = {
   suami: 'Ndod',
   istri: 'Devi',
+}
+
+export function isOwner(value: unknown): value is Owner {
+  return value === 'suami' || value === 'istri'
 }
 
 /** Warna chip profil — konsisten di seluruh app. */
@@ -47,6 +53,12 @@ export type CategoryType = 'income' | 'expense'
 export type TransactionType = 'income' | 'expense' | 'transfer'
 
 export type BudgetGroup = 'needs' | 'wants' | 'savings'
+
+export const BUDGET_GROUP_LABELS: Record<BudgetGroup, string> = {
+  needs: 'Needs',
+  wants: 'Wants',
+  savings: 'Savings',
+}
 
 export type BucketKind = 'emergency' | 'investment' | 'sinking'
 

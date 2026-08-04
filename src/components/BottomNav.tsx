@@ -34,7 +34,10 @@ export function BottomNav() {
               type="button"
               onPointerDown={() => dismissNumericKeyboard()}
               onClick={() => {
-                if (!active) navigate(tab.to, { replace: true })
+                // Inactive tab → switch. Nested route of this tab → pop to root.
+                if (!active || location.pathname !== tab.to) {
+                  navigate(tab.to, { replace: true })
+                }
               }}
               className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium sm:text-xs ${
                 active

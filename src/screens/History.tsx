@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type TouchEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { CircleBadge } from '../components/CircleBadge'
+import { GroupedListFrame } from '../components/GroupedListFrame'
+import { CollapsibleDayGroup } from '../components/CollapsibleDayGroup'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { OwnerBadge } from '../components/OwnerBadge'
 import { PageTitle } from '../components/PageTitle'
 import { SwipeDeleteRow } from '../components/SwipeDeleteRow'
 import { useCategories } from '../hooks/useCategories'
@@ -18,6 +21,7 @@ import {
   monthRange,
 } from '../lib/format'
 import { requestAmountFocus } from '../lib/keyboardFocus'
+import { areAllCollapseOpen } from '../lib/collapseState'
 import { deleteTransaction } from '../lib/transactionsApi'
 import {
   CIRCLE_LABELS,
@@ -72,6 +76,8 @@ export function History() {
   const [openSwipeId, setOpenSwipeId] = useState<string | null>(null)
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [dayGroupsExpanded, setDayGroupsExpanded] = useState(true)
+  const [dayGroupsVersion, setDayGroupsVersion] = useState(0)
 
   const { parents, childrenByParent, byId } = useCategories()
 
@@ -224,6 +230,15 @@ export function History() {
     {},
   )
   const dates = Object.keys(grouped).sort((a, b) => (a < b ? 1 : -1))
+  const dayPersistKeys = useMemo(
+    () => dates.map((date) => `history:day:${date}`),
+    [dates],
+  )
+
+  useEffect(() => {
+    if (dayGroupsVersion > 0) return
+    setDayGroupsExpanded(areAllCollapseOpen(dayPersistKeys, true))
+  }, [dayPersistKeys, dayGroupsVersion])
 
   return (
     <div
@@ -363,8 +378,17 @@ export function History() {
         </p>
       )}
 
-      <div className="mt-4 space-y-5">
-        {dates.map((date) => {
+      {!loading && filtered.length > 0 && (
+        <GroupedListFrame
+          className="mt-4"
+          expanded={dayGroupsExpanded}
+          onToggle={(expanded) => {
+            setDayGroupsExpanded(expanded)
+            setDayGroupsVersion((v) => v + 1)
+          }}
+        >
+          <div className="space-y-5">
+            {dates.map((date) => {
           const items = grouped[date]!
           const dayTotal = items.reduce((sum, tx) => {
             if (tx.type === 'expense') return sum - tx.amount
@@ -372,19 +396,21 @@ export function History() {
             return sum
           }, 0)
           return (
-            <div key={date}>
-              {/* Header grouping per hari */}
-              <div className="mb-2 flex items-center justify-between">
-                <p className="text-xs font-semibold tracking-wide text-neutral-400">
-                  {formatDateLabel(date)}
-                </p>
+            <CollapsibleDayGroup
+              key={date}
+              title={formatDateLabel(date)}
+              persistKey={`history:day:${date}`}
+              forceOpen={dayGroupsVersion > 0 ? dayGroupsExpanded : undefined}
+              forceVersion={dayGroupsVersion}
+              trailing={
                 <p
                   className={`text-xs font-medium ${amountToneClass(dayTotal >= 0)}`}
                 >
                   {dayTotal < 0 ? '-' : '+'}
                   {formatRupiah(Math.abs(dayTotal))}
                 </p>
-              </div>
+              }
+            >
               <div className="space-y-2">
                 {items.map((tx) => {
                   const isTransfer = tx.type === 'transfer'
@@ -424,63 +450,84 @@ export function History() {
                         navigate(`/transaksi/${tx.id}`, { replace: true })
                       }
                     >
-                      <span className="mt-0.5 text-xl" aria-hidden>
+                      <span className="text-xl leading-none" aria-hidden>
                         {parentIcon}
                       </span>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-neutral-800 dark:text-white">
-                          {parentName}
-                        </p>
-                        {childName && (
-                          <p className="mt-0.5 flex min-w-0 items-center gap-1.5 truncate text-xs text-neutral-400">
-                            <span aria-hidden>{childIcon}</span>
-                            <span className="truncate">{childName}</span>
+                      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
+                          <p className="truncate text-xs font-semibold leading-none text-neutral-800 dark:text-white">
+                            {parentName}
                           </p>
-                        )}
-                        {isTransfer && (
-                          <p className="mt-0.5 text-xs text-neutral-400">
-                            Transfer
-                          </p>
-                        )}
-                        {note && (
-                          <p className="mt-1 truncate text-xs text-neutral-500 dark:text-neutral-400">
-                            {note}
-                          </p>
-                        )}
-                      </div>
-                      <div className="flex shrink-0 flex-col items-end gap-1">
-                        {!isTransfer && (
-                          <CircleBadge
-                            circle={
-                              isCircle(tx.circle) ? tx.circle : 'hd_family'
-                            }
-                          />
-                        )}
-                        <p
-                          className={`text-sm font-semibold whitespace-nowrap ${
-                            tx.type === 'expense'
-                              ? AMOUNT_OUT_CLASS
+                          <OwnerBadge owner={tx.owner} size="inline" />
+                        </div>
+
+                        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
+                          {childName ? (
+                            <p className="flex min-w-0 items-center gap-1 truncate text-xs leading-none text-neutral-400">
+                              <span aria-hidden>{childIcon}</span>
+                              <span className="truncate">{childName}</span>
+                            </p>
+                          ) : isTransfer ? (
+                            <p className="truncate text-xs leading-none text-neutral-400">
+                              Transfer
+                            </p>
+                          ) : (
+                            <span className="invisible truncate text-xs leading-none">
+                              .
+                            </span>
+                          )}
+                          {!isTransfer ? (
+                            <CircleBadge
+                              circle={
+                                isCircle(tx.circle) ? tx.circle : 'hd_family'
+                              }
+                              size="inline"
+                            />
+                          ) : (
+                            <span className="invisible text-xs leading-none">
+                              .
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
+                          {note ? (
+                            <p className="truncate text-xs leading-none text-neutral-500 dark:text-neutral-400">
+                              {note}
+                            </p>
+                          ) : (
+                            <span className="invisible truncate text-xs leading-none">
+                              .
+                            </span>
+                          )}
+                          <p
+                            className={`truncate text-xs font-semibold leading-none whitespace-nowrap ${
+                              tx.type === 'expense'
+                                ? AMOUNT_OUT_CLASS
+                                : tx.type === 'income'
+                                  ? AMOUNT_IN_CLASS
+                                  : 'text-violet-600 dark:text-violet-300'
+                            }`}
+                          >
+                            {tx.type === 'expense'
+                              ? '-'
                               : tx.type === 'income'
-                                ? AMOUNT_IN_CLASS
-                                : 'text-violet-600 dark:text-violet-300'
-                          }`}
-                        >
-                          {tx.type === 'expense'
-                            ? '-'
-                            : tx.type === 'income'
-                              ? '+'
-                              : ''}
-                          {formatRupiah(tx.amount)}
-                        </p>
+                                ? '+'
+                                : ''}
+                            {formatRupiah(tx.amount)}
+                          </p>
+                        </div>
                       </div>
                     </SwipeDeleteRow>
                   )
                 })}
               </div>
-            </div>
+            </CollapsibleDayGroup>
           )
         })}
-      </div>
+          </div>
+        </GroupedListFrame>
+      )}
 
       <ConfirmDialog
         open={pendingDeleteId != null}

@@ -80,3 +80,13 @@ export function formatMonthLabel(year: number, monthIndex: number): string {
     year: 'numeric',
   }).format(new Date(year, monthIndex, 1))
 }
+
+/** YYYY-MM → "August 2027" */
+export function formatYearMonthLabel(yearMonth: string): string {
+  const match = /^(\d{4})-(\d{2})$/.exec(yearMonth)
+  if (!match) return yearMonth
+  const year = Number(match[1])
+  const monthIndex = Number(match[2]) - 1
+  if (!Number.isFinite(year) || monthIndex < 0 || monthIndex > 11) return yearMonth
+  return formatMonthLabel(year, monthIndex)
+}

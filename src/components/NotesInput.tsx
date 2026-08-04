@@ -8,25 +8,30 @@ import {
 } from 'react'
 import { useOverlayBack } from '../hooks/useBackButton'
 import { fetchNoteSuggestions } from '../lib/transactionsApi'
+import type { Owner } from '../lib/types'
 
 interface NotesInputProps {
   value: string
   onChange: (value: string) => void
   categoryId: string | null
+  owner: Owner
   inputRef?: Ref<HTMLInputElement>
   onFocus?: () => void
   onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void
   placeholder?: string
+  enterKeyHint?: 'done' | 'next' | 'enter' | 'go' | 'search' | 'send'
 }
 
 export function NotesInput({
   value,
   onChange,
   categoryId,
+  owner,
   inputRef,
   onFocus,
   onKeyDown,
   placeholder = 'Note (optional)',
+  enterKeyHint = 'done',
 }: NotesInputProps) {
   const listId = useId()
   const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -40,7 +45,7 @@ export function NotesInput({
       return
     }
     let cancelled = false
-    fetchNoteSuggestions(categoryId)
+    fetchNoteSuggestions(categoryId, owner)
       .then((notes) => {
         if (!cancelled) setSuggestions(notes)
       })
@@ -50,7 +55,7 @@ export function NotesInput({
     return () => {
       cancelled = true
     }
-  }, [categoryId])
+  }, [categoryId, owner])
 
   useEffect(() => {
     return () => {
@@ -134,7 +139,7 @@ export function NotesInput({
         onFocus={handleFocus}
         onBlur={handleBlur}
         onKeyDown={handleKeyDown}
-        enterKeyHint="done"
+        enterKeyHint={enterKeyHint}
         autoComplete="off"
         role="combobox"
         aria-expanded={showList}

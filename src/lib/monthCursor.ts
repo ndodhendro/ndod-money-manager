@@ -40,3 +40,16 @@ export function monthCursorLabel(cursor: MonthCursor): string {
 export function monthCursorKey(cursor: MonthCursor): string {
   return `${cursor.year}-${String(cursor.month + 1).padStart(2, '0')}`
 }
+
+function daysInMonth(year: number, month: number): number {
+  return new Date(year, month + 1, 0).getDate()
+}
+
+/** occurred_on for a recurring checklist log (due day clamped to month length). */
+export function recurringOccurredOn(
+  cursor: MonthCursor,
+  dueDay: number,
+): string {
+  const clamped = Math.min(Math.max(1, dueDay), daysInMonth(cursor.year, cursor.month))
+  return `${cursor.year}-${String(cursor.month + 1).padStart(2, '0')}-${String(clamped).padStart(2, '0')}`
+}

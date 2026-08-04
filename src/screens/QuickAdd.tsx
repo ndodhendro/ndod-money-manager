@@ -679,7 +679,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
             ←
           </button>
           <PageTitle>
-            {isEditing ? 'Edit transaction' : 'Log transaction'}
+            {isEditing ? 'Edit Transaction' : 'Add Transaction'}
           </PageTitle>
         </div>
         <OwnerBadge
@@ -807,6 +807,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
           value={description}
           onChange={setDescription}
           categoryId={isTransfer ? null : categoryId}
+          owner={isEditing ? owner : profileOwner}
           onFocus={handleDescriptionFocus}
           onKeyDown={handleDescriptionKeyDown}
           placeholder="Note (optional)"
@@ -819,7 +820,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         disabled={saving}
         className="mt-5 w-full rounded-xl bg-emerald-500 py-3.5 text-base font-semibold text-white shadow-md active:bg-emerald-600 disabled:opacity-60"
       >
-        {saving ? 'Saving…' : 'Save'}
+        {saving ? 'Saving…' : isEditing ? 'Update' : 'Save'}
       </button>
 
       {isEditing && (

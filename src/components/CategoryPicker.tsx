@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useOverlayBack } from '../hooks/useBackButton'
 import type { CategoryTreeNode } from '../hooks/useCategories'
 import { ActionEmoji } from '../lib/actionEmoji'
@@ -39,12 +39,22 @@ export function CategoryPicker({
 
   const [activeParentId, setActiveParentId] = useState<string | null>(null)
   const [managing, setManaging] = useState(false)
+  const [manageView, setManageView] = useState<'list' | 'form'>('list')
+  const backToListRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     if (!open) {
       setManaging(false)
+      setManageView('list')
     }
   }, [open])
+
+  useEffect(() => {
+    if (!managing) {
+      setManageView('list')
+      backToListRef.current?.()
+    }
+  }, [managing])
 
   useEffect(() => {
     if (!open || managing) return
@@ -75,6 +85,10 @@ export function CategoryPicker({
 
   useOverlayBack(open, () => {
     if (managing) {
+      if (manageView === 'form') {
+        backToListRef.current?.()
+        return true
+      }
       setManaging(false)
       return true
     }
@@ -140,13 +154,23 @@ export function CategoryPicker({
           >
             <div className="flex items-center justify-between gap-3 border-b border-neutral-200 px-4 py-3 dark:border-neutral-800">
               <p className="min-w-0 flex-1 truncate text-sm font-semibold text-neutral-800 dark:text-neutral-100">
-                {managing ? 'Manage categories' : 'Category'}
+                {managing
+                  ? manageView === 'form'
+                    ? 'Add Category'
+                    : 'Manage categories'
+                  : 'Category'}
               </p>
               <div className="flex shrink-0 items-center gap-0.5">
                 {managing ? (
                   <button
                     type="button"
-                    onClick={() => setManaging(false)}
+                    onClick={() => {
+                      if (manageView === 'form') {
+                        backToListRef.current?.()
+                        return
+                      }
+                      setManaging(false)
+                    }}
                     className="rounded-lg px-2 py-1 text-base leading-none"
                     aria-label="Back to category picker"
                     title="Back"
@@ -184,6 +208,8 @@ export function CategoryPicker({
                   type={transactionType}
                   onChanged={onCategoriesChanged}
                   compact
+                  onViewChange={(info) => setManageView(info.view)}
+                  backToListRef={backToListRef}
                 />
               </div>
             ) : (

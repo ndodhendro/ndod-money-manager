@@ -3,6 +3,7 @@ import {
   fetchRecurringBillLogs,
   fetchRecurringBills,
   isMissingRecurringSchema,
+  isRecurringActiveInMonth,
   type RecurringBill,
   type RecurringBillLog,
 } from '../lib/recurringBillsApi'
@@ -22,7 +23,7 @@ export function useRecurringBills(yearMonth: string) {
         fetchRecurringBills(),
         fetchRecurringBillLogs(yearMonth),
       ])
-      setBills(billRows)
+      setBills(billRows.filter((b) => isRecurringActiveInMonth(b, yearMonth)))
       setLogs(logRows)
       setAvailable(true)
     } catch (err) {

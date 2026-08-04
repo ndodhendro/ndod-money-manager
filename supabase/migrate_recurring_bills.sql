@@ -7,6 +7,8 @@ create table if not exists recurring_bills (
   category_id uuid references categories(id) on delete set null,
   circle circle_type not null default 'hd_family',
   icon text not null default '📌',
+  starts_year_month text,
+  ends_year_month text,
   sort_order integer not null default 0,
   is_active boolean not null default true,
   created_at timestamptz not null default now()

@@ -38,9 +38,14 @@ create table if not exists categories (
   created_at timestamptz not null default now()
 );
 
--- Nama unik di antara sibling (termasuk root: parent_id null).
-create unique index if not exists categories_name_parent_uidx
-  on categories (name, (coalesce(parent_id, '00000000-0000-0000-0000-000000000000')));
+-- Satu nama aktif per type + sibling (inactive boleh duplikat; revive on add).
+create unique index if not exists categories_name_parent_active_uidx
+  on categories (
+    type,
+    name,
+    (coalesce(parent_id, '00000000-0000-0000-0000-000000000000'::uuid))
+  )
+  where is_active = true;
 
 create index if not exists categories_parent_id_idx on categories (parent_id);
 create index if not exists categories_type_active_idx on categories (type, is_active);
@@ -144,10 +149,17 @@ create table if not exists debts (
 -- ============================================================
 create table if not exists recurring_bills (
   id uuid primary key default gen_random_uuid(),
-  name text not null,
+  name text not null default '',
   amount numeric(14, 2) not null check (amount > 0),
+  type transaction_type not null default 'expense',
   category_id uuid references categories(id) on delete set null,
+  from_bucket_id uuid references buckets(id) on delete set null,
+  to_bucket_id uuid references buckets(id) on delete set null,
   circle circle_type not null default 'hd_family',
+  owner owner_type not null default 'suami',
+  due_day smallint not null default 1 check (due_day >= 1 and due_day <= 31),
+  starts_year_month text,
+  ends_year_month text,
   icon text not null default '📌',
   sort_order integer not null default 0,
   is_active boolean not null default true,

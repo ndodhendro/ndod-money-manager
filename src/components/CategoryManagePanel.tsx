@@ -361,10 +361,7 @@ export function CategoryManagePanel({
     <div className={compact ? 'space-y-3 p-3' : 'space-y-4'}>
       {view === 'list' ? (
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-medium text-neutral-500">
-              Categories list
-            </p>
+          <div className="flex items-center justify-end">
             <button
               type="button"
               onClick={openAddForm}
@@ -406,6 +403,7 @@ export function CategoryManagePanel({
             </p>
           ) : (
             <GroupedListFrame
+              label="Categories List"
               expanded={allSubsExpanded}
               onToggle={setAllSubsExpanded}
             >

@@ -17,7 +17,7 @@ export function RecurringChecklistFab() {
   const navigate = useNavigate()
   const location = useLocation()
   const yearMonth = monthCursorKey(currentMonthCursor())
-  const { bills, logByBillId, loading, available, reload } =
+  const { bills, logByBillId, overrideByBillId, loading, available, reload } =
     useRecurringBills(yearMonth)
   const skipPathReload = useRef(true)
 
@@ -26,7 +26,7 @@ export function RecurringChecklistFab() {
       skipPathReload.current = false
       return
     }
-    void reload()
+    void reload({ silent: true })
   }, [location.pathname, reload])
 
   const dueCount = useMemo(
@@ -36,8 +36,9 @@ export function RecurringChecklistFab() {
         logByBillId,
         currentMonthCursor(),
         todayIso(),
+        overrideByBillId,
       ),
-    [bills, logByBillId],
+    [bills, logByBillId, overrideByBillId],
   )
 
   const hide =

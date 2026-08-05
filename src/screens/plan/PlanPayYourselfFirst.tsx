@@ -172,6 +172,7 @@ export function PlanPayYourselfFirst() {
         {!pageLoading && buckets.length > 0 && (
           <div className="mt-4">
             <GroupedListFrame
+              label="Pay Yourself First"
               expanded={kindGroupsExpanded}
               onToggle={(expanded) => {
                 setKindGroupsExpanded(expanded)

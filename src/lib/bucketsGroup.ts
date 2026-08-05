@@ -6,7 +6,12 @@ export const BUCKET_KIND_ORDER: BucketKind[] = [
   'sinking',
 ]
 
-/** Group buckets by kind in Settings / Plan display order. Omits empty kinds. */
+export function compareBucketNameAsc(a: string, b: string): number {
+  return a.localeCompare(b, 'en', { sensitivity: 'base' })
+}
+
+/** Group buckets by kind in Settings / Plan display order. Omits empty kinds.
+ * Within each kind, items are sorted by name ascending. */
 export function groupBucketsByKind(
   buckets: BucketWithBalance[],
 ): Array<[BucketKind, BucketWithBalance[]]> {
@@ -19,7 +24,9 @@ export function groupBucketsByKind(
   }
   const groups: Array<[BucketKind, BucketWithBalance[]]> = []
   for (const kind of BUCKET_KIND_ORDER) {
-    const items = map.get(kind) ?? []
+    const items = [...(map.get(kind) ?? [])].sort((a, b) =>
+      compareBucketNameAsc(a.name, b.name),
+    )
     if (items.length > 0) groups.push([kind, items])
   }
   return groups

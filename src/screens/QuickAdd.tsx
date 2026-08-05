@@ -204,7 +204,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
 
   useEffect(() => {
     if (type !== 'transfer') return
-    // Default: from Cashflow → pick destination bucket (common funding path).
+    // Default: from Main Account → pick destination bucket (common funding path).
     setFromBucket((prev) => (prev === undefined ? null : prev))
   }, [type])
 

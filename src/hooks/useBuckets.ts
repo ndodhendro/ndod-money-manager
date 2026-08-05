@@ -5,6 +5,10 @@ import {
   fetchBuckets,
   fetchTransferMovements,
 } from '../lib/bucketsApi'
+import {
+  BUCKET_KIND_ORDER,
+  compareBucketNameAsc,
+} from '../lib/bucketsGroup'
 import type { Bucket, BucketWithBalance } from '../lib/types'
 
 export function useBuckets(options?: { includeInactive?: boolean }) {
@@ -57,14 +61,18 @@ export function useBuckets(options?: { includeInactive?: boolean }) {
     [buckets, movements],
   )
 
-  const withBalances: BucketWithBalance[] = useMemo(
-    () =>
-      buckets.map((b) => ({
-        ...b,
-        balance: balances.get(b.id) ?? b.opening_balance,
-      })),
-    [buckets, balances],
-  )
+  const withBalances: BucketWithBalance[] = useMemo(() => {
+    const list = buckets.map((b) => ({
+      ...b,
+      balance: balances.get(b.id) ?? b.opening_balance,
+    }))
+    return list.sort((a, b) => {
+      const ai = BUCKET_KIND_ORDER.indexOf(a.kind)
+      const bi = BUCKET_KIND_ORDER.indexOf(b.kind)
+      if (ai !== bi) return ai - bi
+      return compareBucketNameAsc(a.name, b.name)
+    })
+  }, [buckets, balances])
 
   const byId = useMemo(() => {
     const map = new Map<string, BucketWithBalance>()

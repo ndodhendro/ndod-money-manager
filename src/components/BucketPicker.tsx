@@ -2,12 +2,12 @@ import { useId, useRef } from 'react'
 import { useOverlayBack } from '../hooks/useBackButton'
 import { CASHFLOW_LABEL, type BucketWithBalance } from '../lib/types'
 
-/** null = Cashflow (checking / available money). */
+/** null = Main Account (checking / available money). */
 export type BucketSelection = string | null
 
 interface BucketPickerProps {
   label: string
-  /** undefined = not chosen yet; null = Cashflow; string = bucket id */
+  /** undefined = not chosen yet; null = Main Account; string = bucket id */
   value: BucketSelection | undefined
   buckets: BucketWithBalance[]
   /** Exclude this bucket id from options (e.g. the other side of a transfer). */

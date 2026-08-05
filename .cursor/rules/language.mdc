@@ -1,5 +1,5 @@
 ---
-description: Product UI is English; AI replies match prompt language (default Indonesian)
+description: Product UI is English with Title Case labels; AI replies match prompt language (default Indonesian)
 alwaysApply: true
 ---
 
@@ -11,6 +11,15 @@ alwaysApply: true
 - Do not add Indonesian (or other non-English) strings in product UI. If existing copy is non-English, prefer correcting it to English when touching that area.
 - Code comments and commit messages may follow repo norms; this rule targets what users see in the product.
 - Prefer clear, short English suited to a mobile cashflow app (e.g. "Save", "Income", "Expense", "History").
+
+## Title Case (titles, subtitles, menus, sub-menus)
+
+- **Titles, subtitles, menu labels, and sub-menu labels** use **Title Case**: capitalize the first letter of every word.
+- **Exception — short connecting words** stay lowercase unless they are the first or last word: `a`, `an`, `and`, `as`, `at`, `but`, `by`, `for`, `in`, `nor`, `of`, `on`, `or`, `the`, `to`, `vs`, `via`.
+- Applies to page titles, section headings, nav/tab labels, settings rows, and similar hierarchical labels — not to full sentences in body copy, placeholders, toasts, or error messages.
+- Examples:
+  - ✅ "Pay Yourself First", "Due This Month", "Money Plan", "History of Transactions"
+  - ❌ "pay yourself first", "Due this month", "Money plan", "History Of Transactions"
 
 ## Assistant replies
 

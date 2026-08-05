@@ -33,6 +33,7 @@ export function PlanRecurring() {
   const {
     bills,
     logByBillId,
+    overrideByBillId,
     currentMonthDoneByBillId,
     loading: billsLoading,
     available: billsAvailable,
@@ -64,6 +65,7 @@ export function PlanRecurring() {
             cursor={cursor}
             bills={bills}
             logByBillId={logByBillId}
+            overrideByBillId={overrideByBillId}
             currentMonthDoneByBillId={currentMonthDoneByBillId}
             loading={billsLoading}
             available={billsAvailable}

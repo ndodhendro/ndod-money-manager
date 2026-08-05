@@ -382,6 +382,7 @@ export function History() {
       {!loading && filtered.length > 0 && (
         <GroupedListFrame
           className="mt-4"
+          label="History"
           expanded={dayGroupsExpanded}
           onToggle={(expanded) => {
             setDayGroupsExpanded(expanded)

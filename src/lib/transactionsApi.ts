@@ -1,3 +1,4 @@
+import { clearBillLogsByTransactionId } from './recurringBillsApi'
 import { supabase } from './supabase'
 import type {
   Bucket,
@@ -249,6 +250,10 @@ export async function updateTransaction(
 }
 
 export async function deleteTransaction(id: string): Promise<void> {
+  // Remove checklist "checked" state before the tx row goes away
+  // (FK is ON DELETE SET NULL, which would leave the item checked).
+  await clearBillLogsByTransactionId(id)
+
   const { error } = await supabase.from('transactions').delete().eq('id', id)
   if (error) throw new Error(error.message)
 }

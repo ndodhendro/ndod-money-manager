@@ -174,7 +174,7 @@ export function Dashboard() {
 
           <section className="mt-6 rounded-xl bg-white p-4 shadow-sm dark:bg-neutral-800">
             <p className="mb-3 text-sm font-medium text-neutral-600 dark:text-neutral-300">
-              Expense by category
+              Expense by Category
             </p>
             <DonutChart
               slices={categorySlices}

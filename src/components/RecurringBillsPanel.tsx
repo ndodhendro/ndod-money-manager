@@ -12,7 +12,10 @@ import { ActionEmoji } from '../lib/actionEmoji'
 import { showAppToast } from '../lib/appToast'
 import { areAllCollapseOpen } from '../lib/collapseState'
 import { formatNumber } from '../lib/format'
-import { getRecurringBillDisplayParts } from '../lib/recurringBillDisplay'
+import {
+  getRecurringBillDisplayParts,
+  sortRecurringBillsForSettings,
+} from '../lib/recurringBillDisplay'
 import { getStoredCircle, getStoredProfile, setStoredCircle } from '../lib/profile'
 import { currentMonthCursor, monthCursorKey } from '../lib/monthCursor'
 import {
@@ -21,7 +24,6 @@ import {
   fetchRecurringBillLogs,
   fetchRecurringBills,
   isMissingRecurringSchema,
-  sortRecurringBillsForSettings,
   updateRecurringBill,
   type RecurringBill,
 } from '../lib/recurringBillsApi'
@@ -145,6 +147,7 @@ export function RecurringBillsPanel({
     () => getStoredProfile() ?? 'suami',
   )
   const [dueDay, setDueDay] = useState(1)
+  const [intervalMonths, setIntervalMonths] = useState(1)
   const [startsYearMonth, setStartsYearMonth] = useState(() =>
     currentYearMonthValue(),
   )
@@ -230,6 +233,7 @@ export function RecurringBillsPanel({
 
   const amountRef = useRef<HTMLInputElement>(null)
   const noteRef = useRef<HTMLInputElement>(null)
+  const intervalMonthsRef = useRef<HTMLSelectElement>(null)
   const dueDayRef = useRef<HTMLSelectElement>(null)
   const startsRef = useRef<HTMLSelectElement>(null)
   const endsRef = useRef<HTMLSelectElement>(null)
@@ -255,8 +259,14 @@ export function RecurringBillsPanel({
   })
   const isTransfer = type === 'transfer'
   const isIncome = type === 'income'
-  const bucketsById = new Map(buckets.map((b) => [b.id, b]))
-  const sortedBills = sortRecurringBillsForSettings(bills)
+  const bucketsById = useMemo(
+    () => new Map(buckets.map((b) => [b.id, b])),
+    [buckets],
+  )
+  const sortedBills = useMemo(
+    () => sortRecurringBillsForSettings(bills, allById, bucketsById),
+    [bills, allById, bucketsById],
+  )
   const groupedBills = groupByDueDay(sortedBills)
   const dayPersistKeys = useMemo(
     () => groupedBills.map(([day]) => `settings:recurring:day:${day}`),
@@ -276,7 +286,7 @@ export function RecurringBillsPanel({
         fetchRecurringBills(),
         fetchRecurringBillLogs(currentYm),
       ])
-      setBills(sortRecurringBillsForSettings(rows))
+      setBills(rows)
       setCurrentMonthDoneByBillId(new Set(currentLogs.map((l) => l.bill_id)))
       setAvailable(true)
     } catch (err) {
@@ -332,6 +342,11 @@ export function RecurringBillsPanel({
   function focusNoteField() {
     closePickers()
     noteRef.current?.focus()
+  }
+
+  function focusIntervalField() {
+    closePickers()
+    intervalMonthsRef.current?.focus()
   }
 
   function focusDueDayField() {
@@ -458,6 +473,7 @@ export function RecurringBillsPanel({
     setCircle(getStoredCircle())
     setOwner(getStoredProfile() ?? 'suami')
     setDueDay(1)
+    setIntervalMonths(1)
     setStartsYearMonth(currentYearMonthValue())
     setEndsYearMonth('')
     setEditingId(null)
@@ -473,6 +489,7 @@ export function RecurringBillsPanel({
     setAmountDigits(String(Math.round(bill.amount)))
     setOwner(bill.owner ?? getStoredProfile() ?? 'suami')
     setDueDay(bill.due_day)
+    setIntervalMonths(bill.interval_months ?? 1)
     setStartsYearMonth(bill.starts_year_month ?? currentYearMonthValue())
     setEndsYearMonth(bill.ends_year_month ?? '')
     setOpenSwipeId(null)
@@ -574,6 +591,7 @@ export function RecurringBillsPanel({
               circle: resolvedCircle,
               owner,
               due_day: dueDay,
+              interval_months: intervalMonths,
               starts_year_month: startsYearMonth || null,
               ends_year_month: endsYearMonth || null,
               icon: resolveIcon(),
@@ -588,6 +606,7 @@ export function RecurringBillsPanel({
               circle: resolvedCircle,
               owner,
               due_day: dueDay,
+              interval_months: intervalMonths,
               starts_year_month: startsYearMonth || null,
               ends_year_month: endsYearMonth || null,
               icon: resolveIcon(),
@@ -668,6 +687,7 @@ export function RecurringBillsPanel({
         circle: resolvedCircle,
         owner,
         due_day: dueDay,
+        interval_months: intervalMonths,
         starts_year_month: startsYearMonth || null,
         ends_year_month: endsYearMonth || null,
         icon: resolveIcon(),
@@ -696,6 +716,13 @@ export function RecurringBillsPanel({
   }
 
   function handleNoteKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      focusIntervalField()
+    }
+  }
+
+  function handleIntervalKeyDown(e: KeyboardEvent<HTMLSelectElement>) {
     if (e.key === 'Enter') {
       e.preventDefault()
       focusDueDayField()
@@ -765,6 +792,12 @@ export function RecurringBillsPanel({
     endsYearMonth && endsParts
       ? formatRecurringPoint(dueDay, endsYearMonth)
       : null
+  const intervalLabel =
+    intervalMonths === 1 ? 'month' : `${intervalMonths} months`
+  const cadenceLabel =
+    intervalMonths === 1
+      ? `Runs monthly on day ${dueDay}`
+      : `Runs every ${intervalLabel} on day ${dueDay}`
   const deleteLabel =
     deleteTarget?.name.trim() ||
     (deleteTarget
@@ -780,10 +813,7 @@ export function RecurringBillsPanel({
       )}
       {view === 'list' ? (
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-medium text-neutral-500">
-              Recurring list
-            </p>
+          <div className="flex items-center justify-end">
             <button
               type="button"
               onClick={openAddForm}
@@ -798,6 +828,7 @@ export function RecurringBillsPanel({
             </p>
           ) : (
             <GroupedListFrame
+              label="Recurring list"
               expanded={dayGroupsExpanded}
               onToggle={(expanded) => {
                 setDayGroupsExpanded(expanded)
@@ -1066,7 +1097,24 @@ export function RecurringBillsPanel({
           />
         </div>
 
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-2">
+          <label className="block min-w-0">
+            <span className="mb-1.5 block text-xs text-neutral-400">Every</span>
+            <select
+              ref={intervalMonthsRef}
+              value={intervalMonths}
+              onChange={(e) => setIntervalMonths(Number(e.target.value))}
+              onKeyDown={handleIntervalKeyDown}
+              className="w-full rounded-xl bg-white px-3 py-3 text-sm shadow-sm dark:bg-neutral-800 dark:text-neutral-100"
+            >
+              {Array.from({ length: 12 }, (_, i) => i + 1).map((n) => (
+                <option key={n} value={n}>
+                  {n} {n === 1 ? 'month' : 'months'}
+                </option>
+              ))}
+            </select>
+          </label>
+
           <label className="block min-w-0">
             <span className="mb-1.5 block text-xs text-neutral-400">Due day</span>
             <select
@@ -1083,7 +1131,9 @@ export function RecurringBillsPanel({
               ))}
             </select>
           </label>
+        </div>
 
+        <div className="grid grid-cols-2 gap-2">
           <label className="block min-w-0">
             <span className="mb-1.5 block text-xs text-neutral-400">Starts</span>
             <div className="grid grid-cols-2 gap-1.5">
@@ -1198,8 +1248,8 @@ export function RecurringBillsPanel({
         </div>
         <p className="text-[11px] text-neutral-400">
           {endsPoint
-            ? `Runs monthly on day ${dueDay}. Starts from ${startsPoint} until ${endsPoint}.`
-            : `Runs monthly on day ${dueDay}. Starts from ${startsPoint} with no end date.`}
+            ? `${cadenceLabel}. Starts from ${startsPoint} until ${endsPoint}.`
+            : `${cadenceLabel}. Starts from ${startsPoint} with no end date.`}
         </p>
 
         <button

@@ -111,6 +111,7 @@ export function PlanEmergency() {
       {!pageLoading && buckets.length > 0 && (
         <div className="mt-4">
           <GroupedListFrame
+            label="Savings Goals"
             expanded={kindGroupsExpanded}
             onToggle={(expanded) => {
               setKindGroupsExpanded(expanded)

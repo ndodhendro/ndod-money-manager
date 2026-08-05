@@ -4,7 +4,10 @@ import { ActionEmoji } from '../lib/actionEmoji'
 import { showAppToast } from '../lib/appToast'
 import { areAllCollapseOpen, setCollapseOpen } from '../lib/collapseState'
 import { formatDateLabel, todayIso } from '../lib/format'
-import { getRecurringBillDisplayParts } from '../lib/recurringBillDisplay'
+import {
+  getRecurringBillDisplayParts,
+  sortRecurringBillsForChecklist,
+} from '../lib/recurringBillDisplay'
 import {
   currentMonthCursor,
   monthCursorKey,
@@ -13,11 +16,14 @@ import {
 } from '../lib/monthCursor'
 import { getStoredProfile } from '../lib/profile'
 import {
+  effectiveAmount,
+  effectiveDueDay,
   markBillPaid,
-  sortRecurringBillsForChecklist,
   unmarkBillPaid,
+  upsertRecurringBillMonthOverride,
   type RecurringBill,
   type RecurringBillLog,
+  type RecurringBillMonthOverride,
 } from '../lib/recurringBillsApi'
 import { createTransaction, deleteTransaction } from '../lib/transactionsApi'
 import { useBuckets } from '../hooks/useBuckets'
@@ -26,13 +32,17 @@ import { GroupedListFrame } from './GroupedListFrame'
 import { CollapsibleDayGroup } from './CollapsibleDayGroup'
 import { CollapsibleSection } from './CollapsibleSection'
 import { RecurringBillRowContent } from './RecurringBillRowContent'
+import { RecurringMonthOverrideSheet } from './RecurringMonthOverrideSheet'
 
 export type RecurringFocusState = { focusDue?: boolean }
+
+const EMPTY_OVERRIDE_BY_BILL_ID = new Map<string, RecurringBillMonthOverride>()
 
 interface DueThisMonthChecklistProps {
   cursor: MonthCursor
   bills: RecurringBill[]
   logByBillId: Map<string, RecurringBillLog>
+  overrideByBillId?: Map<string, RecurringBillMonthOverride>
   /** Bills already checked in the calendar current month (for "X months left"). */
   currentMonthDoneByBillId?: Set<string>
   loading: boolean
@@ -44,10 +54,14 @@ interface DueThisMonthChecklistProps {
 function groupByOccurredOn(
   bills: RecurringBill[],
   cursor: MonthCursor,
+  overrideByBillId: Map<string, RecurringBillMonthOverride>,
 ): Array<[string, RecurringBill[]]> {
   const map = new Map<string, RecurringBill[]>()
   for (const bill of bills) {
-    const date = recurringOccurredOn(cursor, bill.due_day)
+    const date = recurringOccurredOn(
+      cursor,
+      effectiveDueDay(bill, overrideByBillId.get(bill.id)),
+    )
     const list = map.get(date) ?? []
     list.push(bill)
     map.set(date, list)
@@ -86,11 +100,19 @@ function firstDueUncheckedId(
   bills: RecurringBill[],
   logByBillId: Map<string, RecurringBillLog>,
   cursor: MonthCursor,
+  overrideByBillId: Map<string, RecurringBillMonthOverride>,
 ): string | null {
   const today = todayIso()
   for (const bill of bills) {
     if (logByBillId.has(bill.id)) continue
-    if (recurringOccurredOn(cursor, bill.due_day) <= today) return bill.id
+    if (
+      recurringOccurredOn(
+        cursor,
+        effectiveDueDay(bill, overrideByBillId.get(bill.id)),
+      ) <= today
+    ) {
+      return bill.id
+    }
   }
   return null
 }
@@ -99,6 +121,7 @@ export function DueThisMonthChecklist({
   cursor,
   bills,
   logByBillId,
+  overrideByBillId: overrideByBillIdProp,
   currentMonthDoneByBillId,
   loading,
   available,
@@ -112,7 +135,10 @@ export function DueThisMonthChecklist({
   const [focusBillId, setFocusBillId] = useState<string | null>(null)
   const [dayGroupsExpanded, setDayGroupsExpanded] = useState(true)
   const [dayGroupsVersion, setDayGroupsVersion] = useState(0)
+  const [editingBill, setEditingBill] = useState<RecurringBill | null>(null)
+  const [savingOverride, setSavingOverride] = useState(false)
   const yearMonth = monthCursorKey(cursor)
+  const overrideByBillId = overrideByBillIdProp ?? EMPTY_OVERRIDE_BY_BILL_ID
   const { byId } = useCategories(undefined, { includeInactive: true })
   const { buckets } = useBuckets()
   const bucketsById = useMemo(
@@ -121,12 +147,19 @@ export function DueThisMonthChecklist({
   )
 
   const sortedBills = useMemo(
-    () => sortRecurringBillsForChecklist(bills, logByBillId, cursor),
-    [bills, logByBillId, cursor],
+    () =>
+      sortRecurringBillsForChecklist(
+        bills,
+        logByBillId,
+        cursor,
+        byId,
+        overrideByBillId,
+      ),
+    [bills, logByBillId, cursor, byId, overrideByBillId],
   )
   const groupedBills = useMemo(
-    () => groupByOccurredOn(sortedBills, cursor),
-    [sortedBills, cursor],
+    () => groupByOccurredOn(sortedBills, cursor, overrideByBillId),
+    [sortedBills, cursor, overrideByBillId],
   )
   const dayPersistKeys = useMemo(
     () => groupedBills.map(([date]) => `plan:recurring:day:${date}`),
@@ -150,18 +183,34 @@ export function DueThisMonthChecklist({
     if (!focusDue || loading) return
     if (monthCursorKey(cursor) !== monthCursorKey(currentMonthCursor())) return
 
-    const targetId = firstDueUncheckedId(sortedBills, logByBillId, cursor)
+    const targetId = firstDueUncheckedId(
+      sortedBills,
+      logByBillId,
+      cursor,
+      overrideByBillId,
+    )
     navigate('.', { replace: true, state: null })
     if (!targetId) return
 
     const target = sortedBills.find((b) => b.id === targetId)
     if (!target) return
-    const date = recurringOccurredOn(cursor, target.due_day)
+    const date = recurringOccurredOn(
+      cursor,
+      effectiveDueDay(target, overrideByBillId.get(target.id)),
+    )
     setCollapseOpen(`plan:recurring:day:${date}`, true)
     setDayGroupsExpanded(true)
     setDayGroupsVersion((v) => v + 1)
     setFocusBillId(targetId)
-  }, [location.state, loading, sortedBills, logByBillId, cursor, navigate])
+  }, [
+    location.state,
+    loading,
+    sortedBills,
+    logByBillId,
+    overrideByBillId,
+    cursor,
+    navigate,
+  ])
 
   useEffect(() => {
     if (!focusBillId || loading) return
@@ -206,7 +255,10 @@ export function DueThisMonthChecklist({
           return
         }
 
-        const occurredOn = recurringOccurredOn(cursor, bill.due_day)
+        const override = overrideByBillId.get(bill.id)
+        const amount = effectiveAmount(bill, override)
+        const dueDay = effectiveDueDay(bill, override)
+        const occurredOn = recurringOccurredOn(cursor, dueDay)
         const owner = bill.owner ?? getStoredProfile() ?? 'suami'
         const circle = bill.type === 'income' ? 'hd_family' : bill.circle
         const txId = await createTransaction(
@@ -216,7 +268,7 @@ export function DueThisMonthChecklist({
                 category_id: null,
                 from_bucket_id: bill.from_bucket_id,
                 to_bucket_id: bill.to_bucket_id,
-                amount: bill.amount,
+                amount,
                 description: bill.name,
                 owner,
                 circle,
@@ -228,7 +280,7 @@ export function DueThisMonthChecklist({
                 category_id: bill.category_id,
                 from_bucket_id: null,
                 to_bucket_id: null,
-                amount: bill.amount,
+                amount,
                 description: bill.name,
                 owner,
                 circle,
@@ -249,6 +301,31 @@ export function DueThisMonthChecklist({
       showAppToast(err instanceof Error ? err.message : 'Failed to update')
     } finally {
       setBusyId(null)
+    }
+  }
+
+  async function handleSaveOverride(input: {
+    amount: number
+    dueDay: number
+  }) {
+    if (!editingBill || savingOverride) return
+    setSavingOverride(true)
+    try {
+      await upsertRecurringBillMonthOverride({
+        billId: editingBill.id,
+        yearMonth,
+        amount: input.amount,
+        dueDay: input.dueDay,
+        templateAmount: editingBill.amount,
+        templateDueDay: editingBill.due_day,
+      })
+      setEditingBill(null)
+      showAppToast(`Saved ${ActionEmoji.save}`)
+      onChanged()
+    } catch (err) {
+      showAppToast(err instanceof Error ? err.message : 'Failed to save')
+    } finally {
+      setSavingOverride(false)
     }
   }
 
@@ -292,74 +369,124 @@ export function DueThisMonthChecklist({
     )
   }
 
+  const editingOverride = editingBill
+    ? overrideByBillId.get(editingBill.id)
+    : undefined
+
   const content = (
-    <GroupedListFrame
-      expanded={dayGroupsExpanded}
-      onToggle={(expanded) => {
-        setDayGroupsExpanded(expanded)
-        setDayGroupsVersion((v) => v + 1)
-      }}
-    >
-      <div className="space-y-5">
-        {groupedBills.map(([date, items]) => (
-          <CollapsibleDayGroup
-            key={date}
-            title={formatDateLabel(date)}
-            persistKey={`plan:recurring:day:${date}`}
-            forceOpen={dayGroupsVersion > 0 ? dayGroupsExpanded : undefined}
-            forceVersion={dayGroupsVersion}
-          >
-            <div className="space-y-2">
-              {items.map((bill) => {
-                const done = logByBillId.has(bill.id)
-                const busy = busyId === bill.id
-                const dueOrOverdue =
-                  !done &&
-                  recurringOccurredOn(cursor, bill.due_day) <= todayIso()
-                const justChecked = justCheckedId === bill.id
-                const display = getRecurringBillDisplayParts(
-                  bill,
-                  byId,
-                  bucketsById,
-                )
-                const label =
-                  bill.name.trim() || display.parentName || 'recurring item'
-                return (
-                  <button
-                    key={bill.id}
-                    id={`recurring-bill-${bill.id}`}
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void handleToggle(bill, done)}
-                    aria-label={done ? `Uncheck ${label}` : `Check ${label}`}
-                    className={`relative flex w-full items-center gap-2 rounded-xl border-2 px-3 py-2.5 text-left shadow-sm transition-colors disabled:opacity-60 ${
-                      justChecked
-                        ? 'border-transparent tx-row-highlight'
-                        : dueOrOverdue
-                          ? 'recurring-due-highlight bg-white dark:bg-neutral-800'
-                          : 'border-transparent bg-white dark:bg-neutral-800'
-                    }`}
-                  >
-                    <ChecklistCheckbox checked={done} />
-                    <div className="flex min-w-0 flex-1 items-center gap-3">
-                      <RecurringBillRowContent
-                        bill={bill}
-                        display={display}
-                        done={done}
-                        monthCursor={cursor}
-                        currentMonthDone={
-                          currentMonthDoneByBillId?.has(bill.id) ?? done
+    <>
+      <GroupedListFrame
+        label={embedded ? 'Recurring Checklist' : 'Recurring this month'}
+        expanded={dayGroupsExpanded}
+        onToggle={(expanded) => {
+          setDayGroupsExpanded(expanded)
+          setDayGroupsVersion((v) => v + 1)
+        }}
+      >
+        <div className="space-y-5">
+          {groupedBills.map(([date, items]) => (
+            <CollapsibleDayGroup
+              key={date}
+              title={formatDateLabel(date)}
+              persistKey={`plan:recurring:day:${date}`}
+              forceOpen={dayGroupsVersion > 0 ? dayGroupsExpanded : undefined}
+              forceVersion={dayGroupsVersion}
+            >
+              <div className="space-y-2">
+                {items.map((bill) => {
+                  const done = logByBillId.has(bill.id)
+                  const busy = busyId === bill.id
+                  const override = overrideByBillId.get(bill.id)
+                  const amount = effectiveAmount(bill, override)
+                  const dueDay = effectiveDueDay(bill, override)
+                  const dueOrOverdue =
+                    !done && recurringOccurredOn(cursor, dueDay) <= todayIso()
+                  const justChecked = justCheckedId === bill.id
+                  const displayBill = { ...bill, amount, due_day: dueDay }
+                  const display = getRecurringBillDisplayParts(
+                    bill,
+                    byId,
+                    bucketsById,
+                  )
+                  const label =
+                    bill.name.trim() || display.parentName || 'recurring item'
+                  return (
+                    <div
+                      key={bill.id}
+                      id={`recurring-bill-${bill.id}`}
+                      className={`relative flex w-full items-center gap-1 rounded-xl border-2 shadow-sm transition-colors ${
+                        justChecked
+                          ? 'border-transparent tx-row-highlight'
+                          : dueOrOverdue
+                            ? 'recurring-due-highlight bg-white dark:bg-neutral-800'
+                            : 'border-transparent bg-white dark:bg-neutral-800'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void handleToggle(bill, done)}
+                        aria-label={
+                          done ? `Uncheck ${label}` : `Check ${label}`
                         }
-                      />
+                        className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left disabled:opacity-60"
+                      >
+                        <ChecklistCheckbox checked={done} />
+                        <div className="flex min-w-0 flex-1 items-center gap-3">
+                          <RecurringBillRowContent
+                            bill={displayBill}
+                            display={display}
+                            done={done}
+                            monthCursor={cursor}
+                            currentMonthDone={
+                              currentMonthDoneByBillId?.has(bill.id) ?? done
+                            }
+                          />
+                        </div>
+                      </button>
+                      {!done ? (
+                        <button
+                          type="button"
+                          disabled={busy || savingOverride}
+                          onClick={() => setEditingBill(bill)}
+                          aria-label={`Edit ${label} for this month`}
+                          title="Edit This Month"
+                          className="mr-2 shrink-0 rounded-lg px-2 py-2 text-base leading-none disabled:opacity-60"
+                        >
+                          {ActionEmoji.edit}
+                        </button>
+                      ) : null}
                     </div>
-                  </button>
-                )
-              })}
-            </div>
-          </CollapsibleDayGroup>
-        ))}
-      </div>
-    </GroupedListFrame>
+                  )
+                })}
+              </div>
+            </CollapsibleDayGroup>
+          ))}
+        </div>
+      </GroupedListFrame>
+
+      <RecurringMonthOverrideSheet
+        open={editingBill != null}
+        bill={editingBill}
+        cursor={cursor}
+        initialAmount={
+          editingBill
+            ? effectiveAmount(editingBill, editingOverride)
+            : 0
+        }
+        initialDueDay={
+          editingBill
+            ? effectiveDueDay(editingBill, editingOverride)
+            : 1
+        }
+        busy={savingOverride}
+        onClose={() => {
+          if (savingOverride) return
+          setEditingBill(null)
+        }}
+        onSave={(input) => void handleSaveOverride(input)}
+      />
+    </>
   )
 
   if (embedded) return content

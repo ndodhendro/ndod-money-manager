@@ -129,7 +129,11 @@ export function SettingsMoneyPlan() {
 
       {!loading && settings && (
         <div className="space-y-5">
-          <GroupedListFrame expanded={allOpen} onToggle={toggleAll}>
+          <GroupedListFrame
+            label="Money Plan"
+            expanded={allOpen}
+            onToggle={toggleAll}
+          >
             <div className="space-y-5">
               <GroupedListFrame
                 label="Emergency Fund"

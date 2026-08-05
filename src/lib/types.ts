@@ -68,8 +68,8 @@ export const BUCKET_KIND_LABELS: Record<BucketKind, string> = {
   sinking: 'Sinking fund',
 }
 
-/** Sentinel: null bucket id = household cashflow (checking). */
-export const CASHFLOW_LABEL = 'Cashflow'
+/** Sentinel: null bucket id = main account (checking / available money). */
+export const CASHFLOW_LABEL = 'Main Account'
 
 export interface Bucket {
   id: string

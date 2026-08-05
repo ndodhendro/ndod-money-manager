@@ -1,3 +1,4 @@
+import { BUCKET_KIND_ORDER, compareBucketNameAsc } from './bucketsGroup'
 import { supabase } from './supabase'
 import type { Bucket, BucketKind } from './types'
 
@@ -77,14 +78,41 @@ export type NewBucketInput = {
   opening_balance: number
 }
 
-async function nextBucketSortOrder(): Promise<number> {
-  const { data: maxRow } = await supabase
-    .from('buckets')
-    .select('sort_order')
-    .order('sort_order', { ascending: false })
-    .limit(1)
-    .maybeSingle()
-  return Number(maxRow?.sort_order ?? 0) + 1
+/**
+ * Persist sort_order: kind section order, then name ascending within each kind.
+ * Active buckets only (inactive keep their last sort_order).
+ */
+export async function reorderBucketsByNameWithinKinds(): Promise<void> {
+  const buckets = await fetchBuckets()
+  const byKind = new Map<BucketKind, Bucket[]>()
+  for (const kind of BUCKET_KIND_ORDER) byKind.set(kind, [])
+  for (const b of buckets) {
+    const list = byKind.get(b.kind) ?? []
+    list.push(b)
+    byKind.set(b.kind, list)
+  }
+
+  let order = 1
+  const pending: Array<PromiseLike<{ error: { message: string } | null }>> =
+    []
+  for (const kind of BUCKET_KIND_ORDER) {
+    const items = [...(byKind.get(kind) ?? [])].sort((a, b) =>
+      compareBucketNameAsc(a.name, b.name),
+    )
+    for (const b of items) {
+      if (b.sort_order !== order) {
+        pending.push(
+          supabase.from('buckets').update({ sort_order: order }).eq('id', b.id),
+        )
+      }
+      order += 1
+    }
+  }
+  if (pending.length === 0) return
+  const results = await Promise.all(pending)
+  for (const result of results) {
+    if (result.error) throw new Error(result.error.message)
+  }
 }
 
 /** Inactive sinking funds matching name + icon (revive candidates). */
@@ -108,6 +136,7 @@ async function findInactiveBucketMatches(input: {
  * Add sinking fund. Revives one exact name+icon inactive row when found.
  * On revive, target_amount and opening_balance come from current input
  * (not from the soft-deleted history values).
+ * After save, active buckets are reordered by name within each kind section.
  */
 export async function createBucket(input: NewBucketInput): Promise<Bucket> {
   if (input.kind === 'emergency' || input.kind === 'investment') {
@@ -123,8 +152,8 @@ export async function createBucket(input: NewBucketInput): Promise<Bucket> {
   const opening_balance = Number.isFinite(input.opening_balance)
     ? Math.max(0, input.opening_balance)
     : 0
-  const sortOrder = await nextBucketSortOrder()
 
+  let createdId: string
   const matches = await findInactiveBucketMatches({ name, icon })
   if (matches.length === 1) {
     const match = matches[0]
@@ -132,7 +161,6 @@ export async function createBucket(input: NewBucketInput): Promise<Bucket> {
       .from('buckets')
       .update({
         is_active: true,
-        sort_order: sortOrder,
         target_amount,
         opening_balance,
       })
@@ -140,25 +168,31 @@ export async function createBucket(input: NewBucketInput): Promise<Bucket> {
       .select('*')
       .single()
     if (error) throw new Error(error.message)
-    return mapBucket(data as Record<string, unknown>)
+    createdId = String((data as Record<string, unknown>).id)
+  } else {
+    const { data, error } = await supabase
+      .from('buckets')
+      .insert({
+        name,
+        kind: input.kind,
+        icon,
+        target_amount,
+        opening_balance,
+        sort_order: 0,
+        is_system: false,
+        is_active: true,
+      })
+      .select('*')
+      .single()
+    if (error) throw new Error(error.message)
+    createdId = String((data as Record<string, unknown>).id)
   }
 
-  const { data, error } = await supabase
-    .from('buckets')
-    .insert({
-      name,
-      kind: input.kind,
-      icon,
-      target_amount,
-      opening_balance,
-      sort_order: sortOrder,
-      is_system: false,
-      is_active: true,
-    })
-    .select('*')
-    .single()
-  if (error) throw new Error(error.message)
-  return mapBucket(data as Record<string, unknown>)
+  await reorderBucketsByNameWithinKinds()
+  const refreshed = await fetchBuckets({ includeInactive: true })
+  const row = refreshed.find((b) => b.id === createdId)
+  if (!row) throw new Error('Bucket not found after save')
+  return row
 }
 
 export type UpdateBucketInput = {
@@ -180,6 +214,14 @@ export async function updateBucket(
     .select('*')
     .single()
   if (error) throw new Error(error.message)
+
+  if (patch.name != null || patch.is_active != null) {
+    await reorderBucketsByNameWithinKinds()
+    const refreshed = await fetchBuckets({ includeInactive: true })
+    const row = refreshed.find((b) => b.id === id)
+    if (row) return row
+  }
+
   return mapBucket(data as Record<string, unknown>)
 }
 
@@ -198,6 +240,7 @@ export async function deleteBucket(id: string): Promise<void> {
     .update({ is_active: false })
     .eq('id', id)
   if (error) throw new Error(error.message)
+  await reorderBucketsByNameWithinKinds()
 }
 
 /** Ledger movements for balance: all transfer rows. */

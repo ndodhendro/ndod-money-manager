@@ -25,13 +25,17 @@ export function GroupedListFrame({
   children,
 }: GroupedListFrameProps) {
   const showContent = !collapseContent || expanded
+  // Legend sits on the top border (h-7, -translate-y-1/2). Extra top padding
+  // keeps the first child group from overlapping that control — more when a
+  // text label is shown, and enough for a nested GroupedListFrame legend.
+  const contentPad = label ? 'pt-9' : 'pt-6'
 
   return (
     <div className={`relative ${className}`}>
       <div
         className={
           showContent
-            ? 'rounded-2xl border border-neutral-200/80 px-3 pt-4 pb-3 dark:border-neutral-700/80'
+            ? `rounded-2xl border border-neutral-200/80 px-3 ${contentPad} pb-3 dark:border-neutral-700/80`
             : 'h-3 rounded-2xl border border-neutral-200/80 dark:border-neutral-700/80'
         }
       >

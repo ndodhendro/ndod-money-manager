@@ -145,7 +145,7 @@ create table if not exists debts (
 );
 
 -- ============================================================
--- recurring bills (monthly checklist)
+-- recurring bills (checklist; every N months via interval_months)
 -- ============================================================
 create table if not exists recurring_bills (
   id uuid primary key default gen_random_uuid(),
@@ -158,6 +158,7 @@ create table if not exists recurring_bills (
   circle circle_type not null default 'hd_family',
   owner owner_type not null default 'suami',
   due_day smallint not null default 1 check (due_day >= 1 and due_day <= 31),
+  interval_months smallint not null default 1 check (interval_months >= 1 and interval_months <= 12),
   starts_year_month text,
   ends_year_month text,
   icon text not null default '📌',
@@ -181,6 +182,20 @@ create table if not exists recurring_bill_logs (
 create index if not exists recurring_bill_logs_month_idx
   on recurring_bill_logs (year_month);
 
+-- Per-month amount / due_day overrides (Plan checklist only; template unchanged).
+create table if not exists recurring_bill_month_overrides (
+  id uuid primary key default gen_random_uuid(),
+  bill_id uuid not null references recurring_bills(id) on delete cascade,
+  year_month text not null,
+  amount numeric(14, 2) check (amount is null or amount > 0),
+  due_day smallint check (due_day is null or (due_day >= 1 and due_day <= 31)),
+  unique (bill_id, year_month),
+  check (amount is not null or due_day is not null)
+);
+
+create index if not exists recurring_bill_month_overrides_month_idx
+  on recurring_bill_month_overrides (year_month);
+
 -- ============================================================
 -- Row Level Security
 -- Tidak ada login/auth di app ini (lihat catatan desain). Akses pakai anon
@@ -196,6 +211,7 @@ alter table sinking_funds enable row level security;
 alter table debts enable row level security;
 alter table recurring_bills enable row level security;
 alter table recurring_bill_logs enable row level security;
+alter table recurring_bill_month_overrides enable row level security;
 
 drop policy if exists "categories_anon_all" on categories;
 create policy "categories_anon_all" on categories for all to anon using (true) with check (true);
@@ -221,6 +237,10 @@ create policy "recurring_bills_anon_all" on recurring_bills
 
 drop policy if exists "recurring_bill_logs_anon_all" on recurring_bill_logs;
 create policy "recurring_bill_logs_anon_all" on recurring_bill_logs
+  for all to anon using (true) with check (true);
+
+drop policy if exists "recurring_bill_month_overrides_anon_all" on recurring_bill_month_overrides;
+create policy "recurring_bill_month_overrides_anon_all" on recurring_bill_month_overrides
   for all to anon using (true) with check (true);
 
 -- ============================================================

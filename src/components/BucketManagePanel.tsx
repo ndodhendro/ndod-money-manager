@@ -326,8 +326,7 @@ export function BucketManagePanel({
 
       {view === 'list' ? (
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-medium text-neutral-500">Buckets list</p>
+          <div className="flex items-center justify-end">
             <button
               type="button"
               onClick={openAddForm}
@@ -343,6 +342,7 @@ export function BucketManagePanel({
             </p>
           ) : (
             <GroupedListFrame
+              label="Buckets List"
               expanded={kindGroupsExpanded}
               onToggle={(expanded) => {
                 setKindGroupsExpanded(expanded)

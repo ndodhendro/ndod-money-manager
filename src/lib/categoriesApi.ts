@@ -202,8 +202,18 @@ export async function renameCategory(
     name?: string
     icon?: string
     budget_group?: BudgetGroup | null
+    /** Move subcategory under another main parent, or `null` to promote to main. */
+    parent_id?: string | null
   },
 ): Promise<void> {
+  const { data: current, error: currentError } = await supabase
+    .from('categories')
+    .select('id, type, parent_id')
+    .eq('id', id)
+    .maybeSingle()
+  if (currentError) throw currentError
+  if (!current) throw new Error('Category not found')
+
   const update: Record<string, unknown> = {
     ...(patch.name != null ? { name: patch.name.trim() } : {}),
     ...(patch.icon != null ? { icon: patch.icon } : {}),
@@ -211,6 +221,49 @@ export async function renameCategory(
   if (patch.budget_group !== undefined) {
     update.budget_group = patch.budget_group
   }
+
+  if (patch.parent_id !== undefined) {
+    const nextParentId = patch.parent_id
+    if (nextParentId === id) {
+      throw new Error('A category cannot be its own parent')
+    }
+
+    if (nextParentId) {
+      const { data: parent, error: parentError } = await supabase
+        .from('categories')
+        .select('id, type, parent_id, is_active, budget_group')
+        .eq('id', nextParentId)
+        .maybeSingle()
+      if (parentError) throw parentError
+      if (!parent) throw new Error('Parent category not found')
+      if (parent.parent_id) {
+        throw new Error('Parent must be a main category')
+      }
+      if (parent.type !== current.type) {
+        throw new Error('Parent must match category type')
+      }
+      if (!parent.is_active) {
+        await showCategory(nextParentId)
+      }
+      if (
+        current.type === 'expense' &&
+        parent.budget_group != null
+      ) {
+        const { error: clearParentBudgetError } = await supabase
+          .from('categories')
+          .update({ budget_group: null })
+          .eq('id', nextParentId)
+        if (clearParentBudgetError) throw clearParentBudgetError
+      }
+    }
+
+    if (nextParentId !== current.parent_id) {
+      update.parent_id = nextParentId
+      update.sort_order = await nextSortOrderUnderParent(nextParentId)
+    }
+  }
+
+  if (Object.keys(update).length === 0) return
 
   const { error } = await supabase
     .from('categories')
@@ -222,6 +275,22 @@ export async function renameCategory(
     }
     throw error
   }
+}
+
+async function nextSortOrderUnderParent(
+  parentId: string | null,
+): Promise<number> {
+  let query = supabase
+    .from('categories')
+    .select('sort_order')
+    .order('sort_order', { ascending: false })
+    .limit(1)
+  query = parentId
+    ? query.eq('parent_id', parentId)
+    : query.is('parent_id', null)
+  const { data, error } = await query.maybeSingle()
+  if (error) throw error
+  return Number(data?.sort_order ?? 0) + 1
 }
 
 /** Update sort_order berurutan sesuai array id. */

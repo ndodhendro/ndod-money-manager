@@ -17,7 +17,7 @@ export function RecurringChecklistFab() {
   const navigate = useNavigate()
   const location = useLocation()
   const yearMonth = monthCursorKey(currentMonthCursor())
-  const { bills, logByBillId, overrideByBillId, loading, available, reload } =
+  const { bills, logByOccurrenceKey, overrideByBillId, loading, available, reload } =
     useRecurringBills(yearMonth)
   const skipPathReload = useRef(true)
 
@@ -33,12 +33,13 @@ export function RecurringChecklistFab() {
     () =>
       countDueOrOverdueUnchecked(
         bills,
-        logByBillId,
+        logByOccurrenceKey,
         currentMonthCursor(),
         todayIso(),
+        yearMonth,
         overrideByBillId,
       ),
-    [bills, logByBillId, overrideByBillId],
+    [bills, logByOccurrenceKey, overrideByBillId, yearMonth],
   )
 
   const hide =

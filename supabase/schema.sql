@@ -145,7 +145,7 @@ create table if not exists debts (
 );
 
 -- ============================================================
--- recurring bills (checklist; every N months via interval_months)
+-- recurring bills (checklist; every N months/weeks via interval_*)
 -- ============================================================
 create table if not exists recurring_bills (
   id uuid primary key default gen_random_uuid(),
@@ -158,13 +158,23 @@ create table if not exists recurring_bills (
   circle circle_type not null default 'hd_family',
   owner owner_type not null default 'suami',
   due_day smallint not null default 1 check (due_day >= 1 and due_day <= 31),
-  interval_months smallint not null default 1 check (interval_months >= 1 and interval_months <= 120),
+  interval_unit text not null default 'month' check (interval_unit in ('week', 'month')),
+  -- N in "every N"; for week only 1 or 2; for month 1–120 (years as multiples of 12)
+  interval_months smallint not null default 1,
   starts_year_month text,
   ends_year_month text,
+  -- First due / weekly grid anchor (required when interval_unit = week)
+  starts_on date,
+  -- Amount may differ each cycle — Plan confirms before check
+  variable_amount boolean not null default false,
   icon text not null default '📌',
   sort_order integer not null default 0,
   is_active boolean not null default true,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  check (
+    (interval_unit = 'month' and interval_months >= 1 and interval_months <= 120)
+    or (interval_unit = 'week' and interval_months in (1, 2))
+  )
 );
 
 create index if not exists recurring_bills_active_sort_idx
@@ -174,13 +184,17 @@ create table if not exists recurring_bill_logs (
   id uuid primary key default gen_random_uuid(),
   bill_id uuid not null references recurring_bills(id) on delete cascade,
   year_month text not null,
+  occurred_on date not null,
   transaction_id uuid references transactions(id) on delete set null,
   completed_at timestamptz not null default now(),
-  unique (bill_id, year_month)
+  unique (bill_id, occurred_on)
 );
 
 create index if not exists recurring_bill_logs_month_idx
   on recurring_bill_logs (year_month);
+
+create index if not exists recurring_bill_logs_occurred_on_idx
+  on recurring_bill_logs (occurred_on);
 
 -- Per-month amount / due_day overrides (Plan checklist only; template unchanged).
 create table if not exists recurring_bill_month_overrides (

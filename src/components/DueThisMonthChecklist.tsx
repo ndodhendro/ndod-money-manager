@@ -3,15 +3,15 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { ActionEmoji } from '../lib/actionEmoji'
 import { showAppToast } from '../lib/appToast'
 import { areAllCollapseOpen, setCollapseOpen } from '../lib/collapseState'
-import { formatDateLabel, todayIso } from '../lib/format'
+import { formatDateLabel, formatRupiah, todayIso } from '../lib/format'
 import {
   getRecurringBillDisplayParts,
-  sortRecurringBillsForChecklist,
+  sortRecurringOccurrencesForChecklist,
+  type RecurringChecklistOccurrence,
 } from '../lib/recurringBillDisplay'
 import {
   currentMonthCursor,
   monthCursorKey,
-  recurringOccurredOn,
   type MonthCursor,
 } from '../lib/monthCursor'
 import { getStoredProfile } from '../lib/profile'
@@ -20,6 +20,8 @@ import {
   effectiveDueDay,
   isRecurringSkipped,
   markBillPaid,
+  occurrenceLogKey,
+  occurrencesInMonth,
   setRecurringBillMonthSkipped,
   unmarkBillPaid,
   upsertRecurringBillMonthOverride,
@@ -41,15 +43,19 @@ import { SwipeDeleteRow } from './SwipeDeleteRow'
 export type RecurringFocusState = { focusDue?: boolean }
 
 const EMPTY_OVERRIDE_BY_BILL_ID = new Map<string, RecurringBillMonthOverride>()
+const EMPTY_LOG_BY_OCCURRENCE = new Map<string, RecurringBillLog>()
 
 type ChecklistStatus = 'unchecked' | 'checked' | 'skipped'
 
 interface DueThisMonthChecklistProps {
   cursor: MonthCursor
   bills: RecurringBill[]
-  logByBillId: Map<string, RecurringBillLog>
+  /** Preferred: one log entry per bill occurrence date. */
+  logByOccurrenceKey?: Map<string, RecurringBillLog>
+  /** @deprecated Prefer logByOccurrenceKey. */
+  logByBillId?: Map<string, RecurringBillLog>
   overrideByBillId?: Map<string, RecurringBillMonthOverride>
-  /** Bills already checked in the calendar current month (for "X months left"). */
+  /** Bills already checked in the calendar current month (for "X left"). */
   currentMonthDoneByBillId?: Set<string>
   loading: boolean
   available: boolean
@@ -61,21 +67,15 @@ function dayPersistKey(status: ChecklistStatus, date: string): string {
   return `plan:recurring:${status}:day:${date}`
 }
 
-function groupByOccurredOn(
-  bills: RecurringBill[],
-  cursor: MonthCursor,
-  overrideByBillId: Map<string, RecurringBillMonthOverride>,
+function groupOccurrencesByDate(
+  items: RecurringChecklistOccurrence[],
   dateOrder: 'asc' | 'desc' = 'desc',
-): Array<[string, RecurringBill[]]> {
-  const map = new Map<string, RecurringBill[]>()
-  for (const bill of bills) {
-    const date = recurringOccurredOn(
-      cursor,
-      effectiveDueDay(bill, overrideByBillId.get(bill.id)),
-    )
-    const list = map.get(date) ?? []
-    list.push(bill)
-    map.set(date, list)
+): Array<[string, RecurringChecklistOccurrence[]]> {
+  const map = new Map<string, RecurringChecklistOccurrence[]>()
+  for (const item of items) {
+    const list = map.get(item.occurredOn) ?? []
+    list.push(item)
+    map.set(item.occurredOn, list)
   }
   return [...map.entries()].sort(([a], [b]) =>
     dateOrder === 'asc' ? (a < b ? -1 : 1) : a < b ? 1 : -1,
@@ -109,32 +109,52 @@ function ChecklistCheckbox({ checked }: { checked: boolean }) {
   )
 }
 
-function firstDueUncheckedId(
-  bills: RecurringBill[],
-  logByBillId: Map<string, RecurringBillLog>,
-  cursor: MonthCursor,
-  overrideByBillId: Map<string, RecurringBillMonthOverride>,
+function firstDueUncheckedKey(
+  items: RecurringChecklistOccurrence[],
+  logByOccurrenceKey: Map<string, RecurringBillLog>,
   isSkipped: (billId: string) => boolean,
 ): string | null {
   const today = todayIso()
-  for (const bill of bills) {
-    if (logByBillId.has(bill.id)) continue
-    if (isSkipped(bill.id)) continue
-    if (
-      recurringOccurredOn(
-        cursor,
-        effectiveDueDay(bill, overrideByBillId.get(bill.id)),
-      ) <= today
-    ) {
-      return bill.id
-    }
+  for (const item of items) {
+    if (logByOccurrenceKey.has(item.key)) continue
+    if (isSkipped(item.bill.id)) continue
+    if (item.occurredOn <= today) return item.key
   }
   return null
+}
+
+function resolveLogMap(
+  logByOccurrenceKey: Map<string, RecurringBillLog> | undefined,
+  logByBillId: Map<string, RecurringBillLog> | undefined,
+  bills: RecurringBill[],
+  yearMonth: string,
+  overrideByBillId: Map<string, RecurringBillMonthOverride>,
+): Map<string, RecurringBillLog> {
+  if (logByOccurrenceKey) return logByOccurrenceKey
+  if (!logByBillId) return EMPTY_LOG_BY_OCCURRENCE
+  const map = new Map<string, RecurringBillLog>()
+  for (const bill of bills) {
+    const log = logByBillId.get(bill.id)
+    if (!log) continue
+    const dates = occurrencesInMonth(
+      bill,
+      yearMonth,
+      overrideByBillId.get(bill.id),
+    )
+    const occurredOn = log.occurred_on || dates[0]
+    if (!occurredOn) continue
+    map.set(occurrenceLogKey(bill.id, occurredOn), {
+      ...log,
+      occurred_on: occurredOn,
+    })
+  }
+  return map
 }
 
 export function DueThisMonthChecklist({
   cursor,
   bills,
+  logByOccurrenceKey: logByOccurrenceKeyProp,
   logByBillId,
   overrideByBillId: overrideByBillIdProp,
   currentMonthDoneByBillId,
@@ -145,9 +165,11 @@ export function DueThisMonthChecklist({
 }: DueThisMonthChecklistProps) {
   const location = useLocation()
   const navigate = useNavigate()
-  const [busyId, setBusyId] = useState<string | null>(null)
-  const [justCheckedId, setJustCheckedId] = useState<string | null>(null)
-  const [focusBillId, setFocusBillId] = useState<string | null>(null)
+  const [busyKey, setBusyKey] = useState<string | null>(null)
+  const [justCheckedKey, setJustCheckedKey] = useState<string | null>(null)
+  const [focusOccurrenceKey, setFocusOccurrenceKey] = useState<string | null>(
+    null,
+  )
   /** Per-status expand-all for date groups inside Unchecked / Checked / Skipped. */
   const [sectionDayForce, setSectionDayForce] = useState<
     Record<ChecklistStatus, { expanded: boolean; version: number }>
@@ -160,6 +182,13 @@ export function DueThisMonthChecklist({
   /** Bumps when a single day group toggles so section chevrons re-sync. */
   const [collapseTick, setCollapseTick] = useState(0)
   const [editingBill, setEditingBill] = useState<RecurringBill | null>(null)
+  const [editingOccurredOn, setEditingOccurredOn] = useState<string | null>(null)
+  const [autoFocusAmount, setAutoFocusAmount] = useState(false)
+  const [checkAfterEdit, setCheckAfterEdit] = useState(false)
+  const [pendingAmountConfirm, setPendingAmountConfirm] = useState<{
+    bill: RecurringBill
+    occurredOn: string
+  } | null>(null)
   const [savingOverride, setSavingOverride] = useState(false)
   const [openSwipeId, setOpenSwipeId] = useState<string | null>(null)
   const [pendingSkipBill, setPendingSkipBill] = useState<RecurringBill | null>(
@@ -179,6 +208,17 @@ export function DueThisMonthChecklist({
   )
   const yearMonth = monthCursorKey(cursor)
   const overrideByBillId = overrideByBillIdProp ?? EMPTY_OVERRIDE_BY_BILL_ID
+  const baseLogByOccurrenceKey = useMemo(
+    () =>
+      resolveLogMap(
+        logByOccurrenceKeyProp,
+        logByBillId,
+        bills,
+        yearMonth,
+        overrideByBillId,
+      ),
+    [logByOccurrenceKeyProp, logByBillId, bills, yearMonth, overrideByBillId],
+  )
   const { byId } = useCategories(undefined, { includeInactive: true })
   const { buckets } = useBuckets()
   const bucketsById = useMemo(
@@ -192,15 +232,15 @@ export function DueThisMonthChecklist({
       if (prev.size === 0) return prev
       const next = new Map(prev)
       let changed = false
-      for (const [id, done] of prev) {
-        if (logByBillId.has(id) === done) {
-          next.delete(id)
+      for (const [key, done] of prev) {
+        if (baseLogByOccurrenceKey.has(key) === done) {
+          next.delete(key)
           changed = true
         }
       }
       return changed ? next : prev
     })
-  }, [logByBillId])
+  }, [baseLogByOccurrenceKey])
 
   useEffect(() => {
     setPendingSkipped((prev) => {
@@ -217,88 +257,97 @@ export function DueThisMonthChecklist({
     })
   }, [overrideByBillId])
 
-  const effectiveLogByBillId = useMemo(() => {
-    if (pendingDone.size === 0) return logByBillId
-    const map = new Map(logByBillId)
-    for (const [id, done] of pendingDone) {
+  const effectiveLogByOccurrenceKey = useMemo(() => {
+    if (pendingDone.size === 0) return baseLogByOccurrenceKey
+    const map = new Map(baseLogByOccurrenceKey)
+    for (const [key, done] of pendingDone) {
       if (done) {
-        if (!map.has(id)) {
-          map.set(id, {
-            id: `pending-${id}`,
-            bill_id: id,
+        if (!map.has(key)) {
+          const occurredOn = key.includes(':') ? key.slice(key.indexOf(':') + 1) : key
+          const billId = key.includes(':') ? key.slice(0, key.indexOf(':')) : key
+          map.set(key, {
+            id: `pending-${key}`,
+            bill_id: billId,
             year_month: yearMonth,
+            occurred_on: occurredOn,
             transaction_id: 'pending',
             completed_at: new Date().toISOString(),
           })
         }
       } else {
-        map.delete(id)
+        map.delete(key)
       }
     }
     return map
-  }, [logByBillId, pendingDone, yearMonth])
+  }, [baseLogByOccurrenceKey, pendingDone, yearMonth])
 
   function isSkipped(billId: string): boolean {
     if (pendingSkipped.has(billId)) return pendingSkipped.get(billId) === true
     return isRecurringSkipped(overrideByBillId.get(billId))
   }
 
-  const sortedBills = useMemo(
-    () =>
-      sortRecurringBillsForChecklist(
-        bills,
-        effectiveLogByBillId,
-        cursor,
-        byId,
-        overrideByBillId,
-      ),
-    [bills, effectiveLogByBillId, cursor, byId, overrideByBillId],
-  )
+  const occurrenceItems = useMemo(() => {
+    const items: RecurringChecklistOccurrence[] = []
+    for (const bill of bills) {
+      const override = overrideByBillId.get(bill.id)
+      for (const occurredOn of occurrencesInMonth(bill, yearMonth, override)) {
+        items.push({
+          bill,
+          occurredOn,
+          key: occurrenceLogKey(bill.id, occurredOn),
+        })
+      }
+    }
+    return sortRecurringOccurrencesForChecklist(
+      items,
+      effectiveLogByOccurrenceKey,
+      byId,
+    )
+  }, [bills, yearMonth, overrideByBillId, effectiveLogByOccurrenceKey, byId])
+
   const statusSections = useMemo(() => {
-    const unchecked: RecurringBill[] = []
-    const checked: RecurringBill[] = []
-    const skipped: RecurringBill[] = []
-    for (const bill of sortedBills) {
-      if (isSkipped(bill.id)) {
-        skipped.push(bill)
+    const unchecked: RecurringChecklistOccurrence[] = []
+    const checked: RecurringChecklistOccurrence[] = []
+    const skipped: RecurringChecklistOccurrence[] = []
+    for (const item of occurrenceItems) {
+      if (isSkipped(item.bill.id)) {
+        skipped.push(item)
         continue
       }
-      if (effectiveLogByBillId.has(bill.id)) checked.push(bill)
-      else unchecked.push(bill)
+      if (effectiveLogByOccurrenceKey.has(item.key)) checked.push(item)
+      else unchecked.push(item)
     }
     const sections: Array<{
       status: ChecklistStatus
       label: string
-      groups: Array<[string, RecurringBill[]]>
+      groups: Array<[string, RecurringChecklistOccurrence[]]>
     }> = []
     if (unchecked.length > 0) {
       sections.push({
         status: 'unchecked',
         label: 'Unchecked',
-        groups: groupByOccurredOn(unchecked, cursor, overrideByBillId, 'asc'),
+        groups: groupOccurrencesByDate(unchecked, 'asc'),
       })
     }
     if (checked.length > 0) {
       sections.push({
         status: 'checked',
         label: 'Checked',
-        groups: groupByOccurredOn(checked, cursor, overrideByBillId),
+        groups: groupOccurrencesByDate(checked),
       })
     }
     if (skipped.length > 0) {
       sections.push({
         status: 'skipped',
         label: 'Skipped',
-        groups: groupByOccurredOn(skipped, cursor, overrideByBillId),
+        groups: groupOccurrencesByDate(skipped),
       })
     }
     return sections
-    // isSkipped reads pendingSkipped + overrideByBillId
     // eslint-disable-next-line react-hooks/exhaustive-deps -- pendingSkipped intentional
   }, [
-    sortedBills,
-    effectiveLogByBillId,
-    cursor,
+    occurrenceItems,
+    effectiveLogByOccurrenceKey,
     overrideByBillId,
     pendingSkipped,
   ])
@@ -353,10 +402,10 @@ export function DueThisMonthChecklist({
   ])
 
   useEffect(() => {
-    if (!justCheckedId) return
-    const t = window.setTimeout(() => setJustCheckedId(null), 1600)
+    if (!justCheckedKey) return
+    const t = window.setTimeout(() => setJustCheckedKey(null), 1600)
     return () => window.clearTimeout(t)
-  }, [justCheckedId])
+  }, [justCheckedKey])
 
   function toggleSectionDays(status: ChecklistStatus, expanded: boolean) {
     setSectionDayForce((prev) => ({
@@ -380,34 +429,28 @@ export function DueThisMonthChecklist({
     if (!focusDue || loading) return
     if (monthCursorKey(cursor) !== monthCursorKey(currentMonthCursor())) return
 
-    const targetId = firstDueUncheckedId(
-      sortedBills,
-      effectiveLogByBillId,
-      cursor,
-      overrideByBillId,
+    const targetKey = firstDueUncheckedKey(
+      occurrenceItems,
+      effectiveLogByOccurrenceKey,
       isSkipped,
     )
     navigate('.', { replace: true, state: null })
-    if (!targetId) return
+    if (!targetKey) return
 
-    const target = sortedBills.find((b) => b.id === targetId)
+    const target = occurrenceItems.find((item) => item.key === targetKey)
     if (!target) return
-    const date = recurringOccurredOn(
-      cursor,
-      effectiveDueDay(target, overrideByBillId.get(target.id)),
-    )
-    setCollapseOpen(dayPersistKey('unchecked', date), true)
+    setCollapseOpen(dayPersistKey('unchecked', target.occurredOn), true)
     setSectionDayForce((prev) => ({
       ...prev,
       unchecked: { expanded: true, version: prev.unchecked.version + 1 },
     }))
-    setFocusBillId(targetId)
+    setFocusOccurrenceKey(targetKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- isSkipped via pendingSkipped
   }, [
     location.state,
     loading,
-    sortedBills,
-    effectiveLogByBillId,
+    occurrenceItems,
+    effectiveLogByOccurrenceKey,
     overrideByBillId,
     pendingSkipped,
     cursor,
@@ -415,42 +458,53 @@ export function DueThisMonthChecklist({
   ])
 
   useEffect(() => {
-    if (!focusBillId || loading) return
+    if (!focusOccurrenceKey || loading) return
     const t = window.setTimeout(() => {
       document
-        .getElementById(`recurring-bill-${focusBillId}`)
+        .getElementById(`recurring-bill-${focusOccurrenceKey}`)
         ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }, 80)
     return () => window.clearTimeout(t)
-  }, [focusBillId, loading, sectionDayForceKey, statusSections])
+  }, [focusOccurrenceKey, loading, sectionDayForceKey, statusSections])
 
   const doneCount = useMemo(
     () =>
-      sortedBills.filter(
-        (b) => effectiveLogByBillId.has(b.id) && !isSkipped(b.id),
+      occurrenceItems.filter(
+        (item) =>
+          effectiveLogByOccurrenceKey.has(item.key) && !isSkipped(item.bill.id),
       ).length,
     // eslint-disable-next-line react-hooks/exhaustive-deps -- isSkipped via pendingSkipped
-    [sortedBills, effectiveLogByBillId, pendingSkipped, overrideByBillId],
+    [occurrenceItems, effectiveLogByOccurrenceKey, pendingSkipped, overrideByBillId],
   )
 
   const activeCount = useMemo(
-    () => sortedBills.filter((b) => !isSkipped(b.id)).length,
+    () => occurrenceItems.filter((item) => !isSkipped(item.bill.id)).length,
     // eslint-disable-next-line react-hooks/exhaustive-deps -- isSkipped via pendingSkipped
-    [sortedBills, pendingSkipped, overrideByBillId],
+    [occurrenceItems, pendingSkipped, overrideByBillId],
   )
 
-  async function handleToggle(bill: RecurringBill, done: boolean) {
-    if (busyId) return
+  async function handleToggle(
+    bill: RecurringBill,
+    occurredOn: string,
+    done: boolean,
+    amountOverride?: number,
+  ) {
+    const key = occurrenceLogKey(bill.id, occurredOn)
+    if (busyKey) return
     if (isSkipped(bill.id)) return
-    setBusyId(bill.id)
+    setBusyKey(key)
     setPendingDone((prev) => {
       const next = new Map(prev)
-      next.set(bill.id, !done)
+      next.set(key, !done)
       return next
     })
     try {
       if (done) {
-        const { transactionId } = await unmarkBillPaid(bill.id, yearMonth)
+        const { transactionId } = await unmarkBillPaid(
+          bill.id,
+          yearMonth,
+          occurredOn,
+        )
         if (transactionId) {
           try {
             await deleteTransaction(transactionId)
@@ -468,7 +522,7 @@ export function DueThisMonthChecklist({
             showAppToast('Fix From/To for this transfer in Settings')
             setPendingDone((prev) => {
               const next = new Map(prev)
-              next.delete(bill.id)
+              next.delete(key)
               return next
             })
             return
@@ -477,16 +531,17 @@ export function DueThisMonthChecklist({
           showAppToast('Set a category for this item in Settings')
           setPendingDone((prev) => {
             const next = new Map(prev)
-            next.delete(bill.id)
+            next.delete(key)
             return next
           })
           return
         }
 
         const override = overrideByBillId.get(bill.id)
-        const amount = effectiveAmount(bill, override)
-        const dueDay = effectiveDueDay(bill, override)
-        const occurredOn = recurringOccurredOn(cursor, dueDay)
+        const amount =
+          amountOverride != null && amountOverride > 0
+            ? amountOverride
+            : effectiveAmount(bill, override)
         const owner = bill.owner ?? getStoredProfile() ?? 'suami'
         const circle = bill.type === 'income' ? 'hd_family' : bill.circle
         const txId = await createTransaction(
@@ -519,22 +574,44 @@ export function DueThisMonthChecklist({
         await markBillPaid({
           billId: bill.id,
           yearMonth,
+          occurredOn,
           transactionId: txId,
         })
-        setJustCheckedId(bill.id)
+        setJustCheckedKey(key)
         showAppToast(`Logged ${ActionEmoji.save}`)
       }
       onChanged()
     } catch (err) {
       setPendingDone((prev) => {
         const next = new Map(prev)
-        next.delete(bill.id)
+        next.delete(key)
         return next
       })
       showAppToast(err instanceof Error ? err.message : 'Failed to update')
     } finally {
-      setBusyId(null)
+      setBusyKey(null)
     }
+  }
+
+  function requestCheck(bill: RecurringBill, occurredOn: string) {
+    if (bill.variable_amount) {
+      setPendingAmountConfirm({ bill, occurredOn })
+      return
+    }
+    void handleToggle(bill, occurredOn, false)
+  }
+
+  function openAmountEdit(
+    bill: RecurringBill,
+    occurredOn: string,
+    options?: { checkAfterSave?: boolean; focusAmount?: boolean },
+  ) {
+    setPendingAmountConfirm(null)
+    setEditingBill(bill)
+    setEditingOccurredOn(occurredOn)
+    setCheckAfterEdit(options?.checkAfterSave === true)
+    setAutoFocusAmount(options?.focusAmount === true)
+    setOpenSwipeId(null)
   }
 
   async function confirmSkip() {
@@ -595,19 +672,29 @@ export function DueThisMonthChecklist({
     dueDay: number
   }) {
     if (!editingBill || savingOverride) return
+    const bill = editingBill
+    const occurredOn = editingOccurredOn
+    const shouldCheck = checkAfterEdit && occurredOn != null
     setSavingOverride(true)
     try {
       await upsertRecurringBillMonthOverride({
-        billId: editingBill.id,
+        billId: bill.id,
         yearMonth,
         amount: input.amount,
         dueDay: input.dueDay,
-        templateAmount: editingBill.amount,
-        templateDueDay: editingBill.due_day,
+        templateAmount: bill.amount,
+        templateDueDay: bill.due_day,
       })
       setEditingBill(null)
+      setEditingOccurredOn(null)
+      setAutoFocusAmount(false)
+      setCheckAfterEdit(false)
       showAppToast(`Saved ${ActionEmoji.save}`)
-      onChanged()
+      if (shouldCheck && occurredOn) {
+        await handleToggle(bill, occurredOn, false, input.amount)
+      } else {
+        onChanged()
+      }
     } catch (err) {
       showAppToast(err instanceof Error ? err.message : 'Failed to save')
     } finally {
@@ -640,7 +727,7 @@ export function DueThisMonthChecklist({
     )
   }
 
-  if (sortedBills.length === 0) {
+  if (occurrenceItems.length === 0) {
     return (
       <section className={embedded ? '' : 'mt-6'}>
         {!embedded && (
@@ -693,18 +780,21 @@ export function DueThisMonthChecklist({
                       }}
                     >
                       <div className="space-y-2">
-                        {items.map((bill) => {
+                        {items.map((item) => {
+                          const { bill, occurredOn, key } = item
                           const skipped = section.status === 'skipped'
                           const done =
-                            !skipped && effectiveLogByBillId.has(bill.id)
-                          const busy = busyId === bill.id
+                            !skipped && effectiveLogByOccurrenceKey.has(key)
+                          const busy = busyKey === key
                           const override = overrideByBillId.get(bill.id)
                           const amount = effectiveAmount(bill, override)
                           const dueDay = effectiveDueDay(bill, override)
                           const dueOrOverdue =
                             section.status === 'unchecked' &&
-                            recurringOccurredOn(cursor, dueDay) <= todayIso()
-                          const justChecked = justCheckedId === bill.id
+                            occurredOn <= todayIso()
+                          const variableDue =
+                            dueOrOverdue && bill.variable_amount === true
+                          const justChecked = justCheckedKey === key
                           const displayBill = {
                             ...bill,
                             amount,
@@ -724,6 +814,7 @@ export function DueThisMonthChecklist({
                               ? done
                               : (currentMonthDoneByBillId?.has(bill.id) ??
                                 false)
+                          const rowId = `recurring-bill-${key}`
                           const rowInner = (
                             <>
                               {!skipped ? (
@@ -738,6 +829,7 @@ export function DueThisMonthChecklist({
                                   done={done}
                                   inactive={skipped}
                                   monthCursor={cursor}
+                                  occurredOn={occurredOn}
                                   currentMonthDone={currentMonthDone}
                                 />
                               </div>
@@ -747,8 +839,8 @@ export function DueThisMonthChecklist({
                           if (skipped) {
                             return (
                               <div
-                                key={bill.id}
-                                id={`recurring-bill-${bill.id}`}
+                                key={key}
+                                id={rowId}
                                 className="relative flex w-full items-center gap-1 rounded-xl border-2 border-transparent bg-white shadow-sm dark:bg-neutral-800"
                               >
                                 <div className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5">
@@ -771,38 +863,46 @@ export function DueThisMonthChecklist({
                           if (section.status === 'unchecked') {
                             return (
                               <div
-                                key={bill.id}
-                                id={`recurring-bill-${bill.id}`}
+                                key={key}
+                                id={rowId}
                                 className={`rounded-xl border-2 transition-colors ${
                                   justChecked
                                     ? 'border-transparent'
-                                    : dueOrOverdue
-                                      ? 'recurring-due-highlight'
-                                      : 'border-transparent'
+                                    : variableDue
+                                      ? 'recurring-variable-highlight'
+                                      : dueOrOverdue
+                                        ? 'recurring-due-highlight'
+                                        : 'border-transparent'
                                 }`}
                               >
                                 <SwipeDeleteRow
-                                  open={openSwipeId === bill.id}
+                                  open={openSwipeId === key}
                                   onOpenChange={(open) =>
-                                    setOpenSwipeId(open ? bill.id : null)
+                                    setOpenSwipeId(open ? key : null)
                                   }
                                   onDelete={() => {
-                                    setOpenSwipeId(bill.id)
+                                    setOpenSwipeId(key)
                                     setPendingSkipBill(bill)
                                   }}
                                   deleteAriaLabel={`Skip ${label} for this month`}
                                   highlighted={justChecked}
                                   onContentClick={() => {
                                     if (busy) return
-                                    void handleToggle(bill, done)
+                                    if (done) {
+                                      void handleToggle(bill, occurredOn, true)
+                                    } else {
+                                      requestCheck(bill, occurredOn)
+                                    }
                                   }}
                                   trailing={
                                     <button
                                       type="button"
                                       disabled={busy || savingOverride}
                                       onClick={() => {
-                                        setOpenSwipeId(null)
-                                        setEditingBill(bill)
+                                        openAmountEdit(bill, occurredOn, {
+                                          focusAmount: false,
+                                          checkAfterSave: false,
+                                        })
                                       }}
                                       aria-label={`Edit ${label} for this month`}
                                       title="Edit This Month"
@@ -820,8 +920,8 @@ export function DueThisMonthChecklist({
 
                           return (
                             <div
-                              key={bill.id}
-                              id={`recurring-bill-${bill.id}`}
+                              key={key}
+                              id={rowId}
                               className={`relative flex w-full items-center gap-1 rounded-xl border-2 shadow-sm transition-colors ${
                                 justChecked
                                   ? 'border-transparent tx-row-highlight'
@@ -831,7 +931,13 @@ export function DueThisMonthChecklist({
                               <button
                                 type="button"
                                 disabled={busy}
-                                onClick={() => void handleToggle(bill, done)}
+                                onClick={() => {
+                                  if (done) {
+                                    void handleToggle(bill, occurredOn, true)
+                                  } else {
+                                    requestCheck(bill, occurredOn)
+                                  }
+                                }}
                                 aria-label={
                                   done ? `Uncheck ${label}` : `Check ${label}`
                                 }
@@ -867,11 +973,57 @@ export function DueThisMonthChecklist({
             : 1
         }
         busy={savingOverride}
+        autoFocusAmount={autoFocusAmount}
         onClose={() => {
           if (savingOverride) return
           setEditingBill(null)
+          setEditingOccurredOn(null)
+          setAutoFocusAmount(false)
+          setCheckAfterEdit(false)
         }}
         onSave={(input) => void handleSaveOverride(input)}
+      />
+
+      <ConfirmDialog
+        open={pendingAmountConfirm != null}
+        title="Confirm Amount?"
+        message={
+          pendingAmountConfirm
+            ? `Is ${formatRupiah(
+                effectiveAmount(
+                  pendingAmountConfirm.bill,
+                  overrideByBillId.get(pendingAmountConfirm.bill.id),
+                ),
+              )} correct for this bill?`
+            : ''
+        }
+        confirmLabel="Yes"
+        alternateLabel="Edit Amount"
+        busyLabel="Logging…"
+        danger={false}
+        busy={
+          pendingAmountConfirm != null &&
+          busyKey ===
+            occurrenceLogKey(
+              pendingAmountConfirm.bill.id,
+              pendingAmountConfirm.occurredOn,
+            )
+        }
+        onCancel={() => setPendingAmountConfirm(null)}
+        onAlternate={() => {
+          if (!pendingAmountConfirm) return
+          openAmountEdit(
+            pendingAmountConfirm.bill,
+            pendingAmountConfirm.occurredOn,
+            { checkAfterSave: true, focusAmount: true },
+          )
+        }}
+        onConfirm={() => {
+          if (!pendingAmountConfirm) return
+          const { bill, occurredOn } = pendingAmountConfirm
+          setPendingAmountConfirm(null)
+          void handleToggle(bill, occurredOn, false)
+        }}
       />
 
       <ConfirmDialog

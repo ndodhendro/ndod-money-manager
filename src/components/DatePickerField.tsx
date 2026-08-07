@@ -8,6 +8,8 @@ interface DatePickerFieldProps {
   onChange: (isoDate: string) => void
   /** Dipanggil setelah Reset, Cancel, atau Set (sheet tutup) supaya parent bisa fokus field kosong berikutnya. */
   onFinished?: () => void
+  /** Allow picking dates after the current month (e.g. recurring Starts). */
+  allowFuture?: boolean
 }
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
@@ -80,6 +82,7 @@ export function DatePickerField({
   value,
   onChange,
   onFinished,
+  allowFuture = false,
 }: DatePickerFieldProps) {
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState(value)
@@ -107,17 +110,22 @@ export function DatePickerField({
     return result
   }, [y, m])
 
-  const maxIso = endOfCurrentMonthIso()
+  const maxIso = allowFuture ? null : endOfCurrentMonthIso()
   const now = new Date()
-  const canGoNextMonth =
-    y < now.getFullYear() ||
-    (y === now.getFullYear() && m < now.getMonth())
+  const canGoNextMonth = allowFuture
+    ? true
+    : y < now.getFullYear() ||
+      (y === now.getFullYear() && m < now.getMonth())
+
+  function clampToMax(next: string): string {
+    if (maxIso == null) return next
+    return next > maxIso ? maxIso : next
+  }
 
   function closeAndFinish(nextValue?: string) {
     setOpen(false)
     if (nextValue !== undefined) {
-      const clamped = nextValue > maxIso ? maxIso : nextValue
-      onChange(clamped)
+      onChange(clampToMax(nextValue))
     }
     // Tunggu sheet tutup dulu, baru pindah fokus.
     window.setTimeout(() => onFinished?.(), 50)
@@ -134,7 +142,7 @@ export function DatePickerField({
 
   function handleSet() {
     const next = draft || todayIso()
-    closeAndFinish(next > maxIso ? maxIso : next)
+    closeAndFinish(clampToMax(next))
   }
 
   useOverlayBack(open, () => {
@@ -146,12 +154,14 @@ export function DatePickerField({
     setView((prev) => {
       const dt = new Date(prev.y, prev.m + delta, 1)
       const next = { y: dt.getFullYear(), m: dt.getMonth() }
-      // Tidak boleh ke bulan setelah bulan berjalan.
-      if (
-        next.y > now.getFullYear() ||
-        (next.y === now.getFullYear() && next.m > now.getMonth())
-      ) {
-        return prev
+      if (!allowFuture) {
+        // Tidak boleh ke bulan setelah bulan berjalan.
+        if (
+          next.y > now.getFullYear() ||
+          (next.y === now.getFullYear() && next.m > now.getMonth())
+        ) {
+          return prev
+        }
       }
       return next
     })

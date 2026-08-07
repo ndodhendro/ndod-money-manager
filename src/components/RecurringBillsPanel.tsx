@@ -11,24 +11,26 @@ import { useCategories } from '../hooks/useCategories'
 import { ActionEmoji } from '../lib/actionEmoji'
 import { showAppToast } from '../lib/appToast'
 import { areAllCollapseOpen } from '../lib/collapseState'
-import { formatNumber } from '../lib/format'
+import { formatNumber, todayIso } from '../lib/format'
 import {
   getRecurringBillDisplayParts,
   sortRecurringBillsForSettings,
 } from '../lib/recurringBillDisplay'
 import { getStoredCircle, getStoredProfile, setStoredCircle } from '../lib/profile'
-import { currentMonthCursor, monthCursorKey } from '../lib/monthCursor'
+import { currentMonthCursor, monthCursorKey, yearMonthFromIso } from '../lib/monthCursor'
 import {
   createRecurringBill,
   deleteRecurringBill,
   fetchRecurringBillLogs,
   fetchRecurringBills,
-  formatIntervalMonthsLabel,
+  formatIntervalLabel,
   formatRecurringSettingsDescription,
   isMissingRecurringSchema,
   RECURRING_EVERY_OPTIONS,
+  recurringEveryKey,
   updateRecurringBill,
   type RecurringBill,
+  type RecurringIntervalUnit,
 } from '../lib/recurringBillsApi'
 import type { Circle, Owner, TransactionType } from '../lib/types'
 import {
@@ -37,6 +39,7 @@ import {
 } from './BucketPicker'
 import { CategoryPicker } from './CategoryPicker'
 import { CirclePicker } from './CirclePicker'
+import { DatePickerField } from './DatePickerField'
 import { GroupedListFrame } from './GroupedListFrame'
 import { CollapsibleDayGroup } from './CollapsibleDayGroup'
 import { ConfirmDialog } from './ConfirmDialog'
@@ -135,16 +138,17 @@ export function RecurringBillsPanel({
   const [toBucket, setToBucket] = useState<BucketSelection | undefined>(
     undefined,
   )
-  const [circle, setCircle] = useState<Circle | null>(() => getStoredCircle())
-  const [owner, setOwner] = useState<Owner>(
-    () => getStoredProfile() ?? 'suami',
-  )
+  const [circle, setCircle] = useState<Circle | null>(null)
+  const [owner, setOwner] = useState<Owner | null>(null)
   const [dueDay, setDueDay] = useState(1)
+  const [intervalUnit, setIntervalUnit] = useState<RecurringIntervalUnit>('month')
   const [intervalMonths, setIntervalMonths] = useState(1)
   const [startsYearMonth, setStartsYearMonth] = useState(() =>
     currentYearMonthValue(),
   )
+  const [startsOn, setStartsOn] = useState(() => todayIso())
   const [endsYearMonth, setEndsYearMonth] = useState('')
+  const [variableAmount, setVariableAmount] = useState(false)
   const yearOptions = useMemo(() => {
     const base = buildYearOptions()
     const minYear = base[0] ?? 2026
@@ -455,7 +459,7 @@ export function RecurringBillsPanel({
     if (next === 'transfer') {
       setFromBucket(null)
       setToBucket(undefined)
-      setCircle(getStoredCircle())
+      setCircle(null)
     } else if (next === 'income') {
       setFromBucket(undefined)
       setToBucket(undefined)
@@ -463,7 +467,7 @@ export function RecurringBillsPanel({
     } else {
       setFromBucket(undefined)
       setToBucket(undefined)
-      setCircle(getStoredCircle())
+      setCircle(null)
     }
   }
 
@@ -474,12 +478,15 @@ export function RecurringBillsPanel({
     setCategoryId(null)
     setFromBucket(undefined)
     setToBucket(undefined)
-    setCircle(getStoredCircle())
-    setOwner(getStoredProfile() ?? 'suami')
+    setCircle(null)
+    setOwner(null)
     setDueDay(1)
+    setIntervalUnit('month')
     setIntervalMonths(1)
     setStartsYearMonth(currentYearMonthValue())
+    setStartsOn(todayIso())
     setEndsYearMonth('')
+    setVariableAmount(false)
     setEditingId(null)
     hydratedEditIdRef.current = null
     closePickers()
@@ -493,9 +500,17 @@ export function RecurringBillsPanel({
     setAmountDigits(String(Math.round(bill.amount)))
     setOwner(bill.owner ?? getStoredProfile() ?? 'suami')
     setDueDay(bill.due_day)
+    setIntervalUnit(bill.interval_unit ?? 'month')
     setIntervalMonths(bill.interval_months ?? 1)
     setStartsYearMonth(bill.starts_year_month ?? currentYearMonthValue())
+    setStartsOn(
+      bill.starts_on ??
+        (bill.starts_year_month
+          ? `${bill.starts_year_month}-${String(bill.due_day).padStart(2, '0')}`
+          : todayIso()),
+    )
     setEndsYearMonth(bill.ends_year_month ?? '')
+    setVariableAmount(bill.variable_amount === true)
     setOpenSwipeId(null)
     closePickers()
 
@@ -535,10 +550,39 @@ export function RecurringBillsPanel({
     return cat?.icon ?? '📌'
   }
 
+  function buildIntervalFields() {
+    if (intervalUnit === 'week') {
+      const day = Number(startsOn.slice(8, 10))
+    return {
+      interval_unit: 'week' as const,
+      interval_months: intervalMonths,
+      starts_on: startsOn,
+      starts_year_month: yearMonthFromIso(startsOn),
+      due_day: Number.isFinite(day) && day >= 1 && day <= 31 ? day : 1,
+      ends_year_month: endsYearMonth || null,
+      variable_amount: variableAmount,
+    }
+  }
+  return {
+    interval_unit: 'month' as const,
+    interval_months: intervalMonths,
+    starts_on: null as string | null,
+    starts_year_month: startsYearMonth || null,
+    due_day: dueDay,
+    ends_year_month: endsYearMonth || null,
+    variable_amount: variableAmount,
+  }
+}
+
   async function handleAdd() {
     const amount = Number(amountDigits)
     if (!amount || amount <= 0) {
       focusAmountField('Enter an amount')
+      return
+    }
+
+    if (!owner) {
+      focusOwnerField('Pick a profile')
       return
     }
 
@@ -580,6 +624,7 @@ export function RecurringBillsPanel({
     }
 
     const resolvedCircle = type === 'income' ? 'hd_family' : circle!
+    const intervalFields = buildIntervalFields()
 
     setSaving(true)
     try {
@@ -594,11 +639,8 @@ export function RecurringBillsPanel({
               to_bucket_id: toBucket ?? null,
               circle: resolvedCircle,
               owner,
-              due_day: dueDay,
-              interval_months: intervalMonths,
-              starts_year_month: startsYearMonth || null,
-              ends_year_month: endsYearMonth || null,
               icon: resolveIcon(),
+              ...intervalFields,
             }
           : {
               name: note.trim(),
@@ -609,11 +651,8 @@ export function RecurringBillsPanel({
               to_bucket_id: null,
               circle: resolvedCircle,
               owner,
-              due_day: dueDay,
-              interval_months: intervalMonths,
-              starts_year_month: startsYearMonth || null,
-              ends_year_month: endsYearMonth || null,
               icon: resolveIcon(),
+              ...intervalFields,
             },
       )
       if (type !== 'income') setStoredCircle(resolvedCircle)
@@ -637,6 +676,11 @@ export function RecurringBillsPanel({
     const amount = Number(amountDigits)
     if (!amount || amount <= 0) {
       focusAmountField('Enter an amount')
+      return
+    }
+
+    if (!owner) {
+      focusOwnerField('Pick a profile')
       return
     }
 
@@ -679,6 +723,7 @@ export function RecurringBillsPanel({
 
     const resolvedCircle = type === 'income' ? 'hd_family' : circle!
     const updatedId = editingId
+    const intervalFields = buildIntervalFields()
     setSaving(true)
     try {
       await updateRecurringBill(updatedId, {
@@ -690,11 +735,8 @@ export function RecurringBillsPanel({
         to_bucket_id: type === 'transfer' ? (toBucket ?? null) : null,
         circle: resolvedCircle,
         owner,
-        due_day: dueDay,
-        interval_months: intervalMonths,
-        starts_year_month: startsYearMonth || null,
-        ends_year_month: endsYearMonth || null,
         icon: resolveIcon(),
+        ...intervalFields,
       })
       if (type !== 'income') setStoredCircle(resolvedCircle)
       resetForm()
@@ -729,7 +771,8 @@ export function RecurringBillsPanel({
   function handleIntervalKeyDown(e: KeyboardEvent<HTMLSelectElement>) {
     if (e.key === 'Enter') {
       e.preventDefault()
-      focusDueDayField()
+      if (intervalUnit === 'week') focusStartsField()
+      else focusDueDayField()
     }
   }
 
@@ -793,11 +836,15 @@ export function RecurringBillsPanel({
 
   const displayAmount = amountDigits ? formatNumber(Number(amountDigits)) : ''
   const settingsDescription = formatRecurringSettingsDescription({
+    intervalUnit,
     intervalMonths,
-    dueDay,
-    startsYearMonth: startsYearMonth || null,
+    dueDay: intervalUnit === 'week' ? Number(startsOn.slice(8, 10)) || dueDay : dueDay,
+    startsYearMonth:
+      intervalUnit === 'week' ? yearMonthFromIso(startsOn) : startsYearMonth || null,
     endsYearMonth: endsYearMonth || null,
+    startsOn: intervalUnit === 'week' ? startsOn : null,
   })
+  const everySelectValue = recurringEveryKey(intervalUnit, intervalMonths)
   const deleteLabel =
     deleteTarget?.name.trim() ||
     (deleteTarget
@@ -926,6 +973,23 @@ export function RecurringBillsPanel({
               className="w-full bg-transparent text-2xl font-semibold tabular-nums text-neutral-900 outline-none placeholder:text-neutral-300 dark:text-neutral-50"
             />
           </div>
+        </label>
+
+        <label className="flex cursor-pointer items-start gap-3 rounded-xl bg-white px-4 py-3 shadow-sm dark:bg-neutral-800">
+          <input
+            type="checkbox"
+            checked={variableAmount}
+            onChange={(e) => setVariableAmount(e.target.checked)}
+            className="mt-0.5 h-4 w-4 shrink-0 rounded border-neutral-300 text-amber-600 accent-amber-500"
+          />
+          <span className="min-w-0">
+            <span className="block text-sm font-medium text-neutral-700 dark:text-neutral-200">
+              Variable Amount
+            </span>
+            <span className="mt-0.5 block text-xs text-neutral-400">
+              Amount may change each cycle. Plan will confirm before checking.
+            </span>
+          </span>
         </label>
 
         <div className="space-y-3">
@@ -1097,93 +1161,123 @@ export function RecurringBillsPanel({
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
+        <div
+          className={`grid gap-2 ${intervalUnit === 'week' ? 'grid-cols-1' : 'grid-cols-2'}`}
+        >
           <label className="block min-w-0">
             <span className="mb-1.5 block text-xs text-neutral-400">Every</span>
             <select
               ref={intervalMonthsRef}
-              value={intervalMonths}
-              onChange={(e) => setIntervalMonths(Number(e.target.value))}
+              value={everySelectValue}
+              onChange={(e) => {
+                const next = RECURRING_EVERY_OPTIONS.find(
+                  (o) => o.key === e.target.value,
+                )
+                if (!next) return
+                setIntervalUnit(next.unit)
+                setIntervalMonths(next.every)
+                if (next.unit === 'week' && !startsOn) setStartsOn(todayIso())
+              }}
               onKeyDown={handleIntervalKeyDown}
               className="w-full rounded-xl bg-white px-3 py-3 text-sm shadow-sm dark:bg-neutral-800 dark:text-neutral-100"
             >
-              {RECURRING_EVERY_OPTIONS.map((n) => (
-                <option key={n} value={n}>
-                  {formatIntervalMonthsLabel(n)}
+              {RECURRING_EVERY_OPTIONS.map((o) => (
+                <option key={o.key} value={o.key}>
+                  {formatIntervalLabel(o.unit, o.every)}
                 </option>
               ))}
             </select>
           </label>
 
-          <label className="block min-w-0">
-            <span className="mb-1.5 block text-xs text-neutral-400">Due day</span>
-            <select
-              ref={dueDayRef}
-              value={dueDay}
-              onChange={(e) => setDueDay(Number(e.target.value))}
-              onKeyDown={handleDueDayKeyDown}
-              className="w-full rounded-xl bg-white px-3 py-3 text-sm shadow-sm dark:bg-neutral-800 dark:text-neutral-100"
-            >
-              {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
-                <option key={d} value={d}>
-                  Day {d}
-                </option>
-              ))}
-            </select>
-          </label>
+          {intervalUnit === 'month' ? (
+            <label className="block min-w-0">
+              <span className="mb-1.5 block text-xs text-neutral-400">
+                Due day
+              </span>
+              <select
+                ref={dueDayRef}
+                value={dueDay}
+                onChange={(e) => setDueDay(Number(e.target.value))}
+                onKeyDown={handleDueDayKeyDown}
+                className="w-full rounded-xl bg-white px-3 py-3 text-sm shadow-sm dark:bg-neutral-800 dark:text-neutral-100"
+              >
+                {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
+                  <option key={d} value={d}>
+                    Day {d}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
         </div>
 
         <div className="grid grid-cols-2 gap-2">
           <label className="block min-w-0">
             <span className="mb-1.5 block text-xs text-neutral-400">Starts</span>
-            <div className="grid grid-cols-2 gap-1.5">
-              <select
-                value={startsParts.month}
-                onChange={(e) => {
-                  const nextMonth = Number(e.target.value)
-                  const nextStarts = toYearMonth(startsParts.year, nextMonth)
-                  setStartsYearMonth(nextStarts)
-                  if (endsYearMonth && nextStarts > endsYearMonth) {
-                    setEndsYearMonth(nextStarts)
+            {intervalUnit === 'week' ? (
+              <DatePickerField
+                value={startsOn}
+                allowFuture
+                onChange={(iso) => {
+                  setStartsOn(iso)
+                  const nextYm = yearMonthFromIso(iso)
+                  setStartsYearMonth(nextYm)
+                  if (endsYearMonth && nextYm > endsYearMonth) {
+                    setEndsYearMonth(nextYm)
                   }
                 }}
-                className="w-full rounded-xl bg-white px-2 py-3 text-sm shadow-sm dark:bg-neutral-800 dark:text-neutral-100"
-              >
-                {startsMonthOptions.map((m) => (
-                  <option key={m.value} value={m.value}>
-                    {m.label}
-                  </option>
-                ))}
-              </select>
-              <select
-                ref={startsRef}
-                value={startsParts.year}
-                onChange={(e) => {
-                  const nextYear = Number(e.target.value)
-                  let nextMonth = startsParts.month
-                  if (
-                    endsParts &&
-                    nextYear === endsParts.year &&
-                    nextMonth > endsParts.month
-                  ) {
-                    nextMonth = endsParts.month
-                  }
-                  const nextStarts = toYearMonth(nextYear, nextMonth)
-                  setStartsYearMonth(nextStarts)
-                  if (endsYearMonth && nextStarts > endsYearMonth) {
-                    setEndsYearMonth(nextStarts)
-                  }
-                }}
-                onKeyDown={handleStartsKeyDown}
-                className="w-full rounded-xl bg-white px-2 py-3 text-sm shadow-sm dark:bg-neutral-800 dark:text-neutral-100"
-              >
-                {startsYearOptions.map((year) => (
-                  <option key={year} value={year}>
-                    {year}
-                  </option>
-                ))}
-              </select>
-            </div>
+                onFinished={() => focusEndsField()}
+              />
+            ) : (
+              <div className="grid grid-cols-2 gap-1.5">
+                <select
+                  value={startsParts.month}
+                  onChange={(e) => {
+                    const nextMonth = Number(e.target.value)
+                    const nextStarts = toYearMonth(startsParts.year, nextMonth)
+                    setStartsYearMonth(nextStarts)
+                    if (endsYearMonth && nextStarts > endsYearMonth) {
+                      setEndsYearMonth(nextStarts)
+                    }
+                  }}
+                  className="w-full rounded-xl bg-white px-2 py-3 text-sm shadow-sm dark:bg-neutral-800 dark:text-neutral-100"
+                >
+                  {startsMonthOptions.map((m) => (
+                    <option key={m.value} value={m.value}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  ref={startsRef}
+                  value={startsParts.year}
+                  onChange={(e) => {
+                    const nextYear = Number(e.target.value)
+                    let nextMonth = startsParts.month
+                    if (
+                      endsParts &&
+                      nextYear === endsParts.year &&
+                      nextMonth > endsParts.month
+                    ) {
+                      nextMonth = endsParts.month
+                    }
+                    const nextStarts = toYearMonth(nextYear, nextMonth)
+                    setStartsYearMonth(nextStarts)
+                    if (endsYearMonth && nextStarts > endsYearMonth) {
+                      setEndsYearMonth(nextStarts)
+                    }
+                  }}
+                  onKeyDown={handleStartsKeyDown}
+                  className="w-full rounded-xl bg-white px-2 py-3 text-sm shadow-sm dark:bg-neutral-800 dark:text-neutral-100"
+                >
+                  {startsYearOptions.map((year) => (
+                    <option key={year} value={year}>
+                      {year}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </label>
 
           <label className="block min-w-0">

@@ -61,7 +61,7 @@ export function OwnerPicker({
                 : 'text-neutral-400'
             }`}
           >
-            {value ? OWNER_LABELS[value] : 'Select profile'}
+            {value ? OWNER_LABELS[value] : 'Select One'}
           </p>
         </div>
         <span className="shrink-0 text-neutral-300">›</span>
@@ -78,7 +78,7 @@ export function OwnerPicker({
           <div className="relative flex max-h-[50vh] flex-col rounded-t-2xl bg-neutral-100 shadow-2xl dark:bg-neutral-900">
             <div className="flex items-center justify-between gap-3 border-b border-neutral-200 px-4 py-3 dark:border-neutral-800">
               <p className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
-                Select profile
+                Select One
               </p>
               <button
                 type="button"

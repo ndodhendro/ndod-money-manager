@@ -96,6 +96,24 @@ textarea {
   animation: recurring-due-glow 2.8s ease-in-out infinite;
 }
 
+/* Gold pulse for unchecked variable-amount recurring rows. */
+@keyframes recurring-variable-glow {
+  0%,
+  100% {
+    border-color: rgb(217 119 6 / 0.55);
+    box-shadow: 0 0 0 0 rgb(245 158 11 / 0);
+  }
+  50% {
+    border-color: rgb(245 158 11);
+    box-shadow: 0 0 0 6px rgb(245 158 11 / 0.22);
+  }
+}
+
+.recurring-variable-highlight {
+  border-color: rgb(217 119 6 / 0.55);
+  animation: recurring-variable-glow 2.8s ease-in-out infinite;
+}
+
 .dark .tx-row-highlight {
   animation-name: tx-just-saved-dark;
 }

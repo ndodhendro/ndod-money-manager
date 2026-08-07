@@ -1,7 +1,7 @@
 import {
   effectiveAmount,
-  isRecurringActiveInMonth,
   isRecurringSkipped,
+  occurrencesInMonth,
   type RecurringBill,
   type RecurringBillMonthOverride,
 } from './recurringBillsApi'
@@ -100,13 +100,14 @@ export function sumCommittedWants(
   for (const bill of bills) {
     if (bill.type !== 'expense') continue
     if (!bill.is_active) continue
-    if (!isRecurringActiveInMonth(bill, yearMonth)) continue
     const override = overridesByBillId.get(bill.id)
     if (isRecurringSkipped(override)) continue
     if (budgetGroupOfCategory(bill.category_id, categoriesById) !== 'wants') {
       continue
     }
-    sum += effectiveAmount(bill, override)
+    const count = occurrencesInMonth(bill, yearMonth, override).length
+    if (count === 0) continue
+    sum += effectiveAmount(bill, override) * count
   }
   return sum
 }

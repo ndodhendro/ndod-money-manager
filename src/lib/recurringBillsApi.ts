@@ -1,7 +1,17 @@
-import { recurringOccurredOn, type MonthCursor } from './monthCursor'
+import {
+  addDaysIso,
+  cursorFromYearMonth,
+  daysBetweenIso,
+  lastDayOfYearMonth,
+  recurringOccurredOn,
+  yearMonthFromIso,
+  type MonthCursor,
+} from './monthCursor'
 import { notifyRecurringBillsChanged } from './recurringBillsEvents'
 import { supabase } from './supabase'
 import { isOwner, type Circle, type Owner, type TransactionType } from './types'
+
+export type RecurringIntervalUnit = 'week' | 'month'
 
 export interface RecurringBill {
   id: string
@@ -14,27 +24,76 @@ export interface RecurringBill {
   circle: Circle
   owner: Owner
   due_day: number
-  /** Every N months (1–12, or 24–120 for 2–10 years). Grid anchored on starts_year_month. */
+  /** month = every N months; week = every N weeks (N in interval_months). */
+  interval_unit: RecurringIntervalUnit
+  /**
+   * Every N: months 1–12 or 24–120 (years); weeks 1 or 2.
+   * Grid for months anchored on starts_year_month; weeks on starts_on.
+   */
   interval_months: number
   /** First YYYY-MM on checklist; null = no lower bound */
   starts_year_month: string | null
   /** Last YYYY-MM on checklist; null = ongoing */
   ends_year_month: string | null
+  /** First due / weekly grid anchor (required when interval_unit = week). */
+  starts_on: string | null
+  /**
+   * When true, amount may differ each cycle — Plan checklist confirms
+   * amount before check and shows a gold highlight while unchecked.
+   */
+  variable_amount: boolean
   icon: string
   sort_order: number
   is_active: boolean
   created_at: string
 }
 
+export type RecurringEveryOption = {
+  unit: RecurringIntervalUnit
+  every: number
+  /** Select value, e.g. "week:1" / "month:12" */
+  key: string
+}
+
 const MIN_INTERVAL_MONTHS = 1
 /** 10 years — dropdown offers 1–12 months plus 2–10 years. */
 const MAX_INTERVAL_MONTHS = 120
+const MAX_INTERVAL_WEEKS = 2
 
-/** Settings Every dropdown: 1–12 months, then 2–10 years. */
-export const RECURRING_EVERY_OPTIONS: number[] = [
-  ...Array.from({ length: 12 }, (_, i) => i + 1),
-  ...Array.from({ length: 9 }, (_, i) => (i + 2) * 12),
+/** Settings Every dropdown: 1–2 weeks, then 1–12 months, then 2–10 years. */
+export const RECURRING_EVERY_OPTIONS: RecurringEveryOption[] = [
+  { unit: 'week', every: 1, key: 'week:1' },
+  { unit: 'week', every: 2, key: 'week:2' },
+  ...Array.from({ length: 12 }, (_, i) => {
+    const every = i + 1
+    return { unit: 'month' as const, every, key: `month:${every}` }
+  }),
+  ...Array.from({ length: 9 }, (_, i) => {
+    const every = (i + 2) * 12
+    return { unit: 'month' as const, every, key: `month:${every}` }
+  }),
 ]
+
+export function recurringEveryKey(
+  unit: RecurringIntervalUnit,
+  every: number,
+): string {
+  return `${unit}:${every}`
+}
+
+export function parseRecurringEveryKey(
+  key: string,
+): RecurringEveryOption | null {
+  const match = /^(week|month):(\d+)$/.exec(key)
+  if (!match) return null
+  const unit = match[1] as RecurringIntervalUnit
+  const every = Number(match[2])
+  if (!Number.isFinite(every)) return null
+  const found = RECURRING_EVERY_OPTIONS.find(
+    (o) => o.unit === unit && o.every === every,
+  )
+  return found ?? null
+}
 
 function clampIntervalMonths(value: unknown): number {
   const n = Number(value ?? MIN_INTERVAL_MONTHS)
@@ -45,15 +104,56 @@ function clampIntervalMonths(value: unknown): number {
   )
 }
 
-/** "1 month" / "6 months" / "2 years" for Every labels and cadence copy. */
-export function formatIntervalMonthsLabel(intervalMonths: number): string {
-  const interval = clampIntervalMonths(intervalMonths)
+function clampIntervalWeeks(value: unknown): number {
+  const n = Number(value ?? 1)
+  if (!Number.isFinite(n)) return 1
+  return Math.min(MAX_INTERVAL_WEEKS, Math.max(1, Math.round(n)))
+}
+
+export function clampIntervalEvery(
+  unit: RecurringIntervalUnit,
+  every: unknown,
+): number {
+  return unit === 'week' ? clampIntervalWeeks(every) : clampIntervalMonths(every)
+}
+
+function parseIntervalUnit(value: unknown): RecurringIntervalUnit {
+  return value === 'week' ? 'week' : 'month'
+}
+
+function parseStartsOn(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return null
+  return trimmed
+}
+
+/** "1 week" / "2 weeks" / "1 month" / "6 months" / "2 years". */
+export function formatIntervalLabel(
+  unit: RecurringIntervalUnit,
+  every: number,
+): string {
+  if (unit === 'week') {
+    const n = clampIntervalWeeks(every)
+    return n === 1 ? '1 week' : `${n} weeks`
+  }
+  const interval = clampIntervalMonths(every)
   if (interval === 1) return '1 month'
   if (interval % 12 === 0 && interval >= 24) {
     const years = interval / 12
     return `${years} years`
   }
   return `${interval} months`
+}
+
+/** @deprecated Prefer formatIntervalLabel — kept for month-only call sites. */
+export function formatIntervalMonthsLabel(intervalMonths: number): string {
+  return formatIntervalLabel('month', intervalMonths)
+}
+
+/** Map key for checklist logs: one entry per bill occurrence date. */
+export function occurrenceLogKey(billId: string, occurredOn: string): string {
+  return `${billId}:${occurredOn}`
 }
 
 /** Month index for YYYY-MM arithmetic (Jan 0000 = 0). */
@@ -95,6 +195,8 @@ export interface RecurringBillLog {
   id: string
   bill_id: string
   year_month: string
+  /** Due / paid date for this checklist row (YYYY-MM-DD). */
+  occurred_on: string
   transaction_id: string | null
   completed_at: string
 }
@@ -138,6 +240,61 @@ export function effectiveDueDay(
   return bill.due_day
 }
 
+/**
+ * Due dates (YYYY-MM-DD) for this bill in the given month.
+ * Weekly: same weekday every N weeks from starts_on.
+ * Monthly: single due day when on the month grid.
+ */
+export function occurrencesInMonth(
+  bill: RecurringBill,
+  yearMonth: string,
+  override?: RecurringBillMonthOverride | null,
+): string[] {
+  if (bill.starts_year_month && bill.starts_year_month > yearMonth) return []
+  if (bill.ends_year_month && bill.ends_year_month < yearMonth) return []
+
+  if (bill.interval_unit === 'week') {
+    const startsOn = bill.starts_on
+    if (!startsOn) return []
+    const stepDays = clampIntervalWeeks(bill.interval_months) * 7
+    const monthStart = `${yearMonth}-01`
+    const monthEnd = lastDayOfYearMonth(yearMonth)
+    if (!monthEnd) return []
+
+    let cursor = startsOn
+    if (cursor < monthStart) {
+      const diff = daysBetweenIso(startsOn, monthStart)
+      const steps = Math.ceil(diff / stepDays)
+      cursor = addDaysIso(startsOn, steps * stepDays)
+    }
+
+    const dates: string[] = []
+    for (let d = cursor; d <= monthEnd; d = addDaysIso(d, stepDays)) {
+      if (d < startsOn) continue
+      if (yearMonthFromIso(d) !== yearMonth) break
+      if (bill.ends_year_month && yearMonthFromIso(d) > bill.ends_year_month) {
+        break
+      }
+      dates.push(d)
+    }
+    return dates
+  }
+
+  if (
+    !isOnIntervalGrid(
+      yearMonth,
+      bill.starts_year_month,
+      bill.interval_months,
+    )
+  ) {
+    return []
+  }
+  const cursor = cursorFromYearMonth(yearMonth)
+  if (!cursor) return []
+  const dueDay = effectiveDueDay(bill, override)
+  return [recurringOccurredOn(cursor, dueDay)]
+}
+
 function parseEndsYearMonth(value: unknown): string | null {
   if (typeof value !== 'string') return null
   const trimmed = value.trim()
@@ -165,6 +322,9 @@ function mapBill(row: Record<string, unknown>): RecurringBill {
       ? rawDueDay
       : 1
 
+  const interval_unit = parseIntervalUnit(row.interval_unit)
+  const interval_months = clampIntervalEvery(interval_unit, row.interval_months)
+
   return {
     id: String(row.id),
     name: String(row.name ?? ''),
@@ -176,9 +336,12 @@ function mapBill(row: Record<string, unknown>): RecurringBill {
     circle: row.circle as Circle,
     owner: isOwner(row.owner) ? row.owner : 'suami',
     due_day,
-    interval_months: clampIntervalMonths(row.interval_months),
+    interval_unit,
+    interval_months,
     starts_year_month: parseStartsYearMonth(row.starts_year_month),
     ends_year_month: parseEndsYearMonth(row.ends_year_month),
+    starts_on: parseStartsOn(row.starts_on),
+    variable_amount: Boolean(row.variable_amount),
     icon: String(row.icon ?? '📌'),
     sort_order: Number(row.sort_order ?? 0),
     is_active: Boolean(row.is_active),
@@ -187,10 +350,15 @@ function mapBill(row: Record<string, unknown>): RecurringBill {
 }
 
 function mapLog(row: Record<string, unknown>): RecurringBillLog {
+  const year_month = String(row.year_month)
+  const rawOccurred = parseStartsOn(row.occurred_on)
+  const occurred_on =
+    rawOccurred ?? (year_month.length === 7 ? `${year_month}-01` : year_month)
   return {
     id: String(row.id),
     bill_id: String(row.bill_id),
-    year_month: String(row.year_month),
+    year_month,
+    occurred_on,
     transaction_id: (row.transaction_id as string | null) ?? null,
     completed_at: String(row.completed_at),
   }
@@ -199,9 +367,7 @@ function mapLog(row: Record<string, unknown>): RecurringBillLog {
 function mapOverride(row: Record<string, unknown>): RecurringBillMonthOverride {
   const rawAmount = row.amount
   const amount =
-    rawAmount == null || rawAmount === ''
-      ? null
-      : Number(rawAmount)
+    rawAmount == null || rawAmount === '' ? null : Number(rawAmount)
   const parsedAmount =
     amount != null && Number.isFinite(amount) && amount > 0 ? amount : null
 
@@ -226,21 +392,28 @@ function mapOverride(row: Record<string, unknown>): RecurringBillMonthOverride {
   }
 }
 
-/** Unchecked checklist items due today or earlier in the given month. */
+/** Unchecked checklist occurrences due today or earlier in the given month. */
 export function countDueOrOverdueUnchecked(
   bills: RecurringBill[],
-  logByBillId: Map<string, RecurringBillLog>,
-  cursor: MonthCursor,
+  logByOccurrenceKey: Map<string, RecurringBillLog>,
+  _cursor: MonthCursor,
   today: string,
+  yearMonth: string,
   overrideByBillId?: Map<string, RecurringBillMonthOverride>,
 ): number {
-  return bills.filter((bill) => {
-    if (logByBillId.has(bill.id)) return false
+  let count = 0
+  for (const bill of bills) {
     const override = overrideByBillId?.get(bill.id)
-    if (isRecurringSkipped(override)) return false
-    const dueDay = effectiveDueDay(bill, override)
-    return recurringOccurredOn(cursor, dueDay) <= today
-  }).length
+    if (isRecurringSkipped(override)) continue
+    for (const occurredOn of occurrencesInMonth(bill, yearMonth, override)) {
+      if (occurredOn > today) continue
+      if (logByOccurrenceKey.has(occurrenceLogKey(bill.id, occurredOn))) {
+        continue
+      }
+      count += 1
+    }
+  }
+  return count
 }
 
 /** Still appears on checklist for this YYYY-MM. */
@@ -248,13 +421,17 @@ export function isRecurringActiveInMonth(
   bill: RecurringBill,
   yearMonth: string,
 ): boolean {
-  if (bill.starts_year_month && bill.starts_year_month > yearMonth) return false
-  if (bill.ends_year_month && bill.ends_year_month < yearMonth) return false
-  return isOnIntervalGrid(
-    yearMonth,
-    bill.starts_year_month,
-    bill.interval_months,
-  )
+  return occurrencesInMonth(bill, yearMonth).length > 0
+}
+
+/** Due label for a specific ISO date, e.g. "Tue, 15 Aug 2026". */
+export function formatOccurredOnLabel(occurredOn: string): string {
+  return new Intl.DateTimeFormat('en-US', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  }).format(new Date(`${occurredOn}T00:00:00`))
 }
 
 /** Due label for a specific plan month, e.g. "Tue, 15 Aug 2026". */
@@ -262,13 +439,7 @@ export function formatRecurringDueDate(
   cursor: MonthCursor,
   dueDay: number,
 ): string {
-  const iso = recurringOccurredOn(cursor, dueDay)
-  return new Intl.DateTimeFormat('en-US', {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  }).format(new Date(`${iso}T00:00:00`))
+  return formatOccurredOnLabel(recurringOccurredOn(cursor, dueDay))
 }
 
 /** Anchor date for settings copy, e.g. "1 Jan 2026". */
@@ -288,27 +459,51 @@ export function formatRecurringAnchorDate(
   return `${day} ${monthLabel} ${year}`
 }
 
+function formatIsoAnchorDate(iso: string): string {
+  const day = Number(iso.slice(8, 10))
+  const year = Number(iso.slice(0, 4))
+  const monthIndex = Number(iso.slice(5, 7)) - 1
+  const monthLabel = new Date(year, monthIndex, 1).toLocaleString('en-US', {
+    month: 'short',
+  })
+  return `${day} ${monthLabel} ${year}`
+}
+
 /**
  * Settings list/form cadence, e.g.
  * "Every 12 months, starts from 1 Jan 2026 to 1 Jan 2030"
+ * "Every week, starts from 7 Aug 2026"
  */
 export function formatRecurringSettingsDescription(input: {
+  intervalUnit?: RecurringIntervalUnit
   intervalMonths: number
   dueDay: number
   startsYearMonth: string | null | undefined
   endsYearMonth: string | null | undefined
+  startsOn?: string | null | undefined
 }): string {
-  const interval = clampIntervalMonths(input.intervalMonths)
+  const unit = input.intervalUnit ?? 'month'
+  const every = clampIntervalEvery(unit, input.intervalMonths)
   const cadence =
-    interval === 1
+    unit === 'month' && every === 1
       ? 'Every month'
-      : `Every ${formatIntervalMonthsLabel(interval)}`
+      : unit === 'week' && every === 1
+        ? 'Every week'
+        : `Every ${formatIntervalLabel(unit, every)}`
 
-  const starts = input.startsYearMonth
-    ? formatRecurringAnchorDate(input.dueDay, input.startsYearMonth)
-    : null
+  const starts =
+    unit === 'week' && input.startsOn
+      ? formatIsoAnchorDate(input.startsOn)
+      : input.startsYearMonth
+        ? formatRecurringAnchorDate(input.dueDay, input.startsYearMonth)
+        : null
   const ends = input.endsYearMonth
-    ? formatRecurringAnchorDate(input.dueDay, input.endsYearMonth)
+    ? formatRecurringAnchorDate(
+        unit === 'week' && input.startsOn
+          ? Number(input.startsOn.slice(8, 10))
+          : input.dueDay,
+        input.endsYearMonth,
+      )
     : null
 
   if (starts && ends) {
@@ -320,77 +515,81 @@ export function formatRecurringSettingsDescription(input: {
 }
 
 /**
- * Settings list: "Every 12 months, starts from 1 Jan 2026 to 1 Jan 2030"
- * Plan checklist (with cursor): "Tue, 15 Aug 2026 · Ongoing"
- *
- * "X months left" counts remaining on-grid occurrences through ends_year_month
- * (inclusive), including the current calendar month unless it is already checked.
+ * Settings list / plan meta copy for a recurring bill.
  */
 export function formatRecurringMeta(
   bill: RecurringBill,
   cursor?: MonthCursor,
-  options?: { currentMonthDone?: boolean },
+  options?: { currentMonthDone?: boolean; occurredOn?: string },
 ): string {
   const remaining = bill.ends_year_month
-    ? remainingOccurrencesLeft(
-        bill.ends_year_month,
-        bill.starts_year_month,
-        bill.interval_months,
-        options?.currentMonthDone === true,
-      )
+    ? remainingOccurrencesLeft(bill, options?.currentMonthDone === true)
     : null
   const left =
     remaining != null && remaining > 0
-      ? `${formatMonthsLeftLabel(remaining)} left`
+      ? `${formatOccurrencesLeftLabel(remaining, bill.interval_unit)} left`
       : null
 
   if (cursor) {
-    const dueLabel = formatRecurringDueDate(cursor, bill.due_day)
+    const dueLabel = options?.occurredOn
+      ? formatOccurredOnLabel(options.occurredOn)
+      : formatRecurringDueDate(cursor, bill.due_day)
     if (left) return `${dueLabel} · ${left}`
     if (bill.ends_year_month) return dueLabel
     return `${dueLabel} · Ongoing`
   }
 
   const description = formatRecurringSettingsDescription({
+    intervalUnit: bill.interval_unit,
     intervalMonths: bill.interval_months,
     dueDay: bill.due_day,
     startsYearMonth: bill.starts_year_month,
     endsYearMonth: bill.ends_year_month,
+    startsOn: bill.starts_on,
   })
   if (left) return `${description} · ${left}`
   return description
 }
 
-/** Inclusive remaining on-grid months from now (or start) through end; skip current if done. */
+/** Inclusive remaining on-grid occurrences from now (or start) through end. */
 function remainingOccurrencesLeft(
-  endsYearMonth: string,
-  startsYearMonth: string | null,
-  intervalMonths: number,
+  bill: RecurringBill,
   currentMonthDone: boolean,
 ): number {
+  const endsYearMonth = bill.ends_year_month
+  if (!endsYearMonth) return 0
   const endIdx = yearMonthIndex(endsYearMonth)
   if (endIdx == null) return 0
 
   const now = new Date()
   const currentYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
   let fromYm = currentYm
-  if (startsYearMonth && startsYearMonth > currentYm) {
-    fromYm = startsYearMonth
+  if (bill.starts_year_month && bill.starts_year_month > currentYm) {
+    fromYm = bill.starts_year_month
   }
 
   const fromIdx = yearMonthIndex(fromYm)
   if (fromIdx == null) return 0
   if (endIdx < fromIdx) return 0
 
-  const interval = clampIntervalMonths(intervalMonths)
   let remaining = 0
   for (let idx = fromIdx; idx <= endIdx; idx++) {
     const ym = indexToYearMonth(idx)
-    if (!isOnIntervalGrid(ym, startsYearMonth, interval)) continue
+    const dates = occurrencesInMonth(bill, ym)
     if (currentMonthDone && ym === currentYm) continue
-    remaining += 1
+    remaining += dates.length
   }
   return remaining
+}
+
+function formatOccurrencesLeftLabel(
+  count: number,
+  unit: RecurringIntervalUnit,
+): string {
+  if (unit === 'week') {
+    return `${count} ${count === 1 ? 'week' : 'weeks'}`
+  }
+  return formatMonthsLeftLabel(count)
 }
 
 function formatMonthsLeftLabel(monthsLeft: number): string {
@@ -437,6 +636,26 @@ function isMissingDueDayColumn(message: string): boolean {
 function isMissingIntervalMonthsColumn(message: string): boolean {
   const lower = message.toLowerCase()
   return lower.includes('interval_months')
+}
+
+function isMissingIntervalUnitColumn(message: string): boolean {
+  const lower = message.toLowerCase()
+  return lower.includes('interval_unit')
+}
+
+function isMissingStartsOnColumn(message: string): boolean {
+  const lower = message.toLowerCase()
+  return lower.includes('starts_on')
+}
+
+function isMissingVariableAmountColumn(message: string): boolean {
+  const lower = message.toLowerCase()
+  return lower.includes('variable_amount')
+}
+
+function isMissingOccurredOnColumn(message: string): boolean {
+  const lower = message.toLowerCase()
+  return lower.includes('occurred_on')
 }
 
 function isMissingEndsColumn(message: string): boolean {
@@ -718,9 +937,12 @@ export type NewRecurringBillInput = {
   circle: Circle
   owner: Owner
   due_day: number
+  interval_unit: RecurringIntervalUnit
   interval_months: number
   starts_year_month: string | null
   ends_year_month: string | null
+  starts_on: string | null
+  variable_amount: boolean
   icon: string
 }
 
@@ -728,9 +950,12 @@ type InsertFlags = {
   includeTypeColumns: boolean
   includeDueDay: boolean
   includeIntervalMonths: boolean
+  includeIntervalUnit: boolean
   includeStarts: boolean
+  includeStartsOn: boolean
   includeEnds: boolean
   includeOwner: boolean
+  includeVariableAmount: boolean
 }
 
 function toInsertRow(
@@ -738,6 +963,8 @@ function toInsertRow(
   sortOrder: number,
   flags: InsertFlags,
 ): Record<string, unknown> {
+  const unit = input.interval_unit
+  const every = clampIntervalEvery(unit, input.interval_months)
   const base: Record<string, unknown> = {
     name: input.name.trim(),
     amount: input.amount,
@@ -754,13 +981,22 @@ function toInsertRow(
     base.due_day = input.due_day
   }
   if (flags.includeIntervalMonths) {
-    base.interval_months = clampIntervalMonths(input.interval_months)
+    base.interval_months = every
+  }
+  if (flags.includeIntervalUnit) {
+    base.interval_unit = unit
   }
   if (flags.includeStarts) {
     base.starts_year_month = input.starts_year_month
   }
+  if (flags.includeStartsOn) {
+    base.starts_on = input.starts_on
+  }
   if (flags.includeEnds) {
     base.ends_year_month = input.ends_year_month
+  }
+  if (flags.includeVariableAmount) {
+    base.variable_amount = input.variable_amount === true
   }
   if (!flags.includeTypeColumns) return base
   return {
@@ -776,17 +1012,26 @@ function validateRecurringInput(input: NewRecurringBillInput): void {
   if (input.due_day < 1 || input.due_day > 31) {
     throw new Error('Due day must be between 1 and 31')
   }
-  const interval = clampIntervalMonths(input.interval_months)
+  const unit = input.interval_unit === 'week' ? 'week' : 'month'
+  const every = clampIntervalEvery(unit, input.interval_months)
   if (
-    input.interval_months < MIN_INTERVAL_MONTHS ||
-    input.interval_months > MAX_INTERVAL_MONTHS ||
-    !Number.isFinite(Number(input.interval_months))
+    !Number.isFinite(Number(input.interval_months)) ||
+    (unit === 'week' && (every < 1 || every > MAX_INTERVAL_WEEKS)) ||
+    (unit === 'month' &&
+      (input.interval_months < MIN_INTERVAL_MONTHS ||
+        input.interval_months > MAX_INTERVAL_MONTHS))
   ) {
     throw new Error(
-      `Every must be between ${MIN_INTERVAL_MONTHS} month and 10 years`,
+      unit === 'week'
+        ? 'Every must be 1 week or 2 weeks'
+        : `Every must be between ${MIN_INTERVAL_MONTHS} month and 10 years`,
     )
   }
-  if (interval > 1 && !input.starts_year_month) {
+  if (unit === 'week') {
+    if (!input.starts_on || !/^\d{4}-\d{2}-\d{2}$/.test(input.starts_on)) {
+      throw new Error('Starts date is required when Every is weekly')
+    }
+  } else if (every > 1 && !input.starts_year_month) {
     throw new Error('Starts month is required when Every is more than 1 month')
   }
   if (
@@ -829,65 +1074,111 @@ async function insertRecurringBill(
   data: Record<string, unknown> | null
   error: { message: string } | null
 }> {
+  const isWeek = input.interval_unit === 'week'
   const attempts: InsertFlags[] = [
     {
       includeTypeColumns: true,
       includeDueDay: true,
       includeIntervalMonths: true,
+      includeIntervalUnit: true,
       includeStarts: true,
+      includeStartsOn: true,
       includeEnds: true,
       includeOwner: true,
+      includeVariableAmount: true,
     },
     {
       includeTypeColumns: true,
       includeDueDay: true,
-      includeIntervalMonths: false,
+      includeIntervalMonths: true,
+      includeIntervalUnit: true,
       includeStarts: true,
+      includeStartsOn: true,
       includeEnds: true,
       includeOwner: true,
+      includeVariableAmount: false,
+    },
+    {
+      includeTypeColumns: true,
+      includeDueDay: true,
+      includeIntervalMonths: true,
+      includeIntervalUnit: false,
+      includeStarts: true,
+      includeStartsOn: false,
+      includeEnds: true,
+      includeOwner: true,
+      includeVariableAmount: false,
     },
     {
       includeTypeColumns: true,
       includeDueDay: true,
       includeIntervalMonths: false,
-      includeStarts: false,
+      includeIntervalUnit: false,
+      includeStarts: true,
+      includeStartsOn: false,
       includeEnds: true,
       includeOwner: true,
+      includeVariableAmount: false,
     },
     {
       includeTypeColumns: true,
       includeDueDay: true,
       includeIntervalMonths: false,
+      includeIntervalUnit: false,
       includeStarts: false,
+      includeStartsOn: false,
+      includeEnds: true,
+      includeOwner: true,
+      includeVariableAmount: false,
+    },
+    {
+      includeTypeColumns: true,
+      includeDueDay: true,
+      includeIntervalMonths: false,
+      includeIntervalUnit: false,
+      includeStarts: false,
+      includeStartsOn: false,
       includeEnds: false,
       includeOwner: true,
+      includeVariableAmount: false,
     },
     {
       includeTypeColumns: true,
       includeDueDay: false,
       includeIntervalMonths: false,
+      includeIntervalUnit: false,
       includeStarts: false,
+      includeStartsOn: false,
       includeEnds: false,
       includeOwner: true,
+      includeVariableAmount: false,
     },
     {
       includeTypeColumns: false,
       includeDueDay: false,
       includeIntervalMonths: false,
+      includeIntervalUnit: false,
       includeStarts: false,
+      includeStartsOn: false,
       includeEnds: false,
       includeOwner: true,
+      includeVariableAmount: false,
     },
   ]
 
   let lastError: { message: string } | null = null
-  const needsInterval = clampIntervalMonths(input.interval_months) > 1
+  const needsInterval =
+    isWeek || clampIntervalMonths(input.interval_months) > 1
 
   for (const flags of attempts) {
     if (input.type !== 'expense' && !flags.includeTypeColumns) continue
     if (input.starts_year_month && !flags.includeStarts) continue
     if (input.ends_year_month && !flags.includeEnds) continue
     if (needsInterval && !flags.includeIntervalMonths) continue
+    if (isWeek && (!flags.includeIntervalUnit || !flags.includeStartsOn)) {
+      continue
+    }
+    if (input.variable_amount && !flags.includeVariableAmount) continue
 
     const result = await supabase
       .from('recurring_bills')
@@ -903,6 +1194,20 @@ async function insertRecurringBill(
     const message = result.error.message
 
     if (flags.includeOwner && isMissingOwnerColumn(message)) break
+    if (
+      flags.includeVariableAmount &&
+      isMissingVariableAmountColumn(message)
+    ) {
+      if (input.variable_amount) break
+      continue
+    }
+    if (
+      (flags.includeIntervalUnit && isMissingIntervalUnitColumn(message)) ||
+      (flags.includeStartsOn && isMissingStartsOnColumn(message))
+    ) {
+      if (isWeek) break
+      continue
+    }
     if (flags.includeIntervalMonths && isMissingIntervalMonthsColumn(message)) {
       continue
     }
@@ -948,6 +1253,21 @@ export async function createRecurringBill(
         'Run migrate_recurring_due_day.sql in Supabase to enable due day',
       )
     }
+    if (
+      isMissingIntervalUnitColumn(result.error.message) ||
+      isMissingStartsOnColumn(result.error.message) ||
+      (input.interval_unit === 'week' &&
+        isMissingIntervalMonthsColumn(result.error.message))
+    ) {
+      throw new Error(
+        'Run migrate_recurring_interval_weeks.sql in Supabase to enable weekly Every',
+      )
+    }
+    if (isMissingVariableAmountColumn(result.error.message)) {
+      throw new Error(
+        'Run migrate_recurring_variable_amount.sql in Supabase to enable variable amount',
+      )
+    }
     if (isMissingIntervalMonthsColumn(result.error.message)) {
       throw new Error(
         'Run migrate_recurring_interval_months.sql in Supabase to enable Every N months',
@@ -985,17 +1305,28 @@ export async function updateRecurringBill(
     circle: Circle
     owner: Owner
     due_day: number
+    interval_unit: RecurringIntervalUnit
     interval_months: number
     starts_year_month: string | null
     ends_year_month: string | null
+    starts_on: string | null
+    variable_amount: boolean
     icon: string
     is_active: boolean
   }>,
 ): Promise<RecurringBill> {
   const nextPatch = { ...patch }
+  const unit = nextPatch.interval_unit ?? 'month'
   if (nextPatch.interval_months != null) {
-    nextPatch.interval_months = clampIntervalMonths(nextPatch.interval_months)
-    if (
+    nextPatch.interval_months = clampIntervalEvery(
+      unit,
+      nextPatch.interval_months,
+    )
+    if (unit === 'week') {
+      if ('starts_on' in nextPatch && !nextPatch.starts_on) {
+        throw new Error('Starts date is required when Every is weekly')
+      }
+    } else if (
       nextPatch.interval_months > 1 &&
       'starts_year_month' in nextPatch &&
       !nextPatch.starts_year_month
@@ -1014,6 +1345,23 @@ export async function updateRecurringBill(
     if (isMissingOwnerColumn(error.message) && 'owner' in nextPatch) {
       throw new Error(
         'Run migrate_recurring_owner.sql in Supabase to enable profile',
+      )
+    }
+    if (
+      (isMissingIntervalUnitColumn(error.message) &&
+        'interval_unit' in nextPatch) ||
+      (isMissingStartsOnColumn(error.message) && 'starts_on' in nextPatch)
+    ) {
+      throw new Error(
+        'Run migrate_recurring_interval_weeks.sql in Supabase to enable weekly Every',
+      )
+    }
+    if (
+      isMissingVariableAmountColumn(error.message) &&
+      'variable_amount' in nextPatch
+    ) {
+      throw new Error(
+        'Run migrate_recurring_variable_amount.sql in Supabase to enable variable amount',
       )
     }
     if (
@@ -1040,23 +1388,34 @@ export async function deleteRecurringBill(id: string): Promise<void> {
 export async function markBillPaid(input: {
   billId: string
   yearMonth: string
+  occurredOn: string
   transactionId: string
 }): Promise<RecurringBillLog> {
-  const { data, error } = await supabase
+  const withOccurred = await supabase
     .from('recurring_bill_logs')
     .upsert(
       {
         bill_id: input.billId,
         year_month: input.yearMonth,
+        occurred_on: input.occurredOn,
         transaction_id: input.transactionId,
         completed_at: new Date().toISOString(),
       },
-      { onConflict: 'bill_id,year_month' },
+      { onConflict: 'bill_id,occurred_on' },
     )
     .select('*')
     .single()
-  if (error) throw new Error(error.message)
-  const log = mapLog(data as Record<string, unknown>)
+
+  if (
+    withOccurred.error &&
+    isMissingOccurredOnColumn(withOccurred.error.message)
+  ) {
+    throw new Error(
+      'Run migrate_recurring_interval_weeks.sql in Supabase to enable weekly checklist logs',
+    )
+  }
+  if (withOccurred.error) throw new Error(withOccurred.error.message)
+  const log = mapLog(withOccurred.data as Record<string, unknown>)
   notifyRecurringBillsChanged()
   return log
 }
@@ -1064,20 +1423,42 @@ export async function markBillPaid(input: {
 export async function unmarkBillPaid(
   billId: string,
   yearMonth: string,
+  occurredOn: string,
 ): Promise<{ transactionId: string | null }> {
   const { data: existing, error: fetchError } = await supabase
     .from('recurring_bill_logs')
     .select('transaction_id')
     .eq('bill_id', billId)
-    .eq('year_month', yearMonth)
+    .eq('occurred_on', occurredOn)
     .maybeSingle()
+
+  if (fetchError && isMissingOccurredOnColumn(fetchError.message)) {
+    // Pre-migration fallback: one log per month.
+    const legacy = await supabase
+      .from('recurring_bill_logs')
+      .select('transaction_id')
+      .eq('bill_id', billId)
+      .eq('year_month', yearMonth)
+      .maybeSingle()
+    if (legacy.error) throw new Error(legacy.error.message)
+    const { error } = await supabase
+      .from('recurring_bill_logs')
+      .delete()
+      .eq('bill_id', billId)
+      .eq('year_month', yearMonth)
+    if (error) throw new Error(error.message)
+    notifyRecurringBillsChanged()
+    return {
+      transactionId: (legacy.data?.transaction_id as string | null) ?? null,
+    }
+  }
   if (fetchError) throw new Error(fetchError.message)
 
   const { error } = await supabase
     .from('recurring_bill_logs')
     .delete()
     .eq('bill_id', billId)
-    .eq('year_month', yearMonth)
+    .eq('occurred_on', occurredOn)
   if (error) throw new Error(error.message)
 
   notifyRecurringBillsChanged()

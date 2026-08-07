@@ -83,6 +83,9 @@ export function CategoryManagePanel({
   const [editBudgetGroup, setEditBudgetGroup] = useState<BudgetGroup | null>(
     null,
   )
+  /** Set when editing a subcategory — current/new parent id (`null` = promote to main). */
+  const [editParentId, setEditParentId] = useState<string | null>(null)
+  const [editingIsSubcategory, setEditingIsSubcategory] = useState(false)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set())
   const [deleteTarget, setDeleteTarget] = useState<Category | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -281,6 +284,9 @@ export function CategoryManagePanel({
             : 'needs')
         : null,
     )
+    const isSub = Boolean(cat.parent_id)
+    setEditingIsSubcategory(isSub)
+    setEditParentId(cat.parent_id)
   }
 
   async function saveEdit() {
@@ -289,6 +295,8 @@ export function CategoryManagePanel({
     try {
       const parent = orderedTree.find((p) => p.id === editingId)
       const isParentWithChildren = Boolean(parent && parent.children.length > 0)
+
+      const nextParentId = editingIsSubcategory ? editParentId : undefined
 
       await renameCategory(editingId, {
         name: editName.trim(),
@@ -300,9 +308,16 @@ export function CategoryManagePanel({
                 : (editBudgetGroup ?? 'needs'),
             }
           : {}),
+        ...(nextParentId !== undefined ? { parent_id: nextParentId } : {}),
       })
 
+      if (nextParentId) {
+        setExpandedIds((prev) => new Set(prev).add(nextParentId))
+      }
+
       setEditingId(null)
+      setEditingIsSubcategory(false)
+      setEditParentId(null)
       showAppToast(`Updated ${ActionEmoji.edit}`)
       await refresh()
     } catch (err) {
@@ -310,6 +325,12 @@ export function CategoryManagePanel({
     } finally {
       setSaving(false)
     }
+  }
+
+  function cancelEdit() {
+    setEditingId(null)
+    setEditingIsSubcategory(false)
+    setEditParentId(null)
   }
 
   async function handleParentDragEnd(event: DragEndEvent) {
@@ -379,7 +400,7 @@ export function CategoryManagePanel({
                   type="button"
                   onClick={() => {
                     onTypeChange?.(t)
-                    setEditingId(null)
+                    cancelEdit()
                   }}
                   className={`rounded-lg py-2 text-sm font-semibold transition-colors ${
                     type === t
@@ -427,6 +448,9 @@ export function CategoryManagePanel({
                         editIcon={editIcon}
                         editName={editName}
                         editBudgetGroup={editBudgetGroup}
+                        editParentId={editParentId}
+                        editingIsSubcategory={editingIsSubcategory}
+                        parentOptions={parentOptions}
                         editLeaf={cat.children.length === 0}
                         saving={saving}
                         onToggleExpand={() => toggleExpand(cat.id)}
@@ -435,8 +459,9 @@ export function CategoryManagePanel({
                         onEditIconChange={setEditIcon}
                         onEditNameChange={setEditName}
                         onEditBudgetGroupChange={setEditBudgetGroup}
+                        onEditParentChange={setEditParentId}
                         onSaveEdit={saveEdit}
-                        onCancelEdit={() => setEditingId(null)}
+                        onCancelEdit={cancelEdit}
                         onChildDragEnd={(event) =>
                           handleChildDragEnd(cat.id, event)
                         }
@@ -566,6 +591,9 @@ function SortableParentRow({
   editIcon,
   editName,
   editBudgetGroup,
+  editParentId,
+  editingIsSubcategory,
+  parentOptions,
   editLeaf,
   saving,
   onToggleExpand,
@@ -574,6 +602,7 @@ function SortableParentRow({
   onEditIconChange,
   onEditNameChange,
   onEditBudgetGroupChange,
+  onEditParentChange,
   onSaveEdit,
   onCancelEdit,
   onChildDragEnd,
@@ -585,6 +614,9 @@ function SortableParentRow({
   editIcon: string
   editName: string
   editBudgetGroup: BudgetGroup | null
+  editParentId: string | null
+  editingIsSubcategory: boolean
+  parentOptions: Category[]
   editLeaf: boolean
   saving: boolean
   onToggleExpand: () => void
@@ -593,6 +625,7 @@ function SortableParentRow({
   onEditIconChange: (v: string) => void
   onEditNameChange: (v: string) => void
   onEditBudgetGroupChange: (v: BudgetGroup) => void
+  onEditParentChange: (parentId: string | null) => void
   onSaveEdit: () => void
   onCancelEdit: () => void
   onChildDragEnd: (event: DragEndEvent) => void
@@ -725,10 +758,16 @@ function SortableParentRow({
                       name={editName}
                       budgetGroup={editBudgetGroup}
                       showBudgetGroup={categoryType === 'expense'}
+                      showParentSelect={editingIsSubcategory}
+                      parentId={editParentId}
+                      parentOptions={parentOptions.filter(
+                        (p) => p.id !== child.id,
+                      )}
                       saving={saving}
                       onIconChange={onEditIconChange}
                       onNameChange={onEditNameChange}
                       onBudgetGroupChange={onEditBudgetGroupChange}
+                      onParentChange={onEditParentChange}
                       onSave={onSaveEdit}
                       onCancel={onCancelEdit}
                     />
@@ -845,10 +884,14 @@ function EditRow({
   name,
   budgetGroup,
   showBudgetGroup = false,
+  showParentSelect = false,
+  parentId = null,
+  parentOptions = [],
   saving,
   onIconChange,
   onNameChange,
   onBudgetGroupChange,
+  onParentChange,
   onSave,
   onCancel,
 }: {
@@ -856,10 +899,14 @@ function EditRow({
   name: string
   budgetGroup: BudgetGroup | null
   showBudgetGroup?: boolean
+  showParentSelect?: boolean
+  parentId?: string | null
+  parentOptions?: Category[]
   saving: boolean
   onIconChange: (v: string) => void
   onNameChange: (v: string) => void
   onBudgetGroupChange: (v: BudgetGroup) => void
+  onParentChange?: (parentId: string | null) => void
   onSave: () => void
   onCancel: () => void
 }) {
@@ -898,6 +945,24 @@ function EditRow({
           {ActionEmoji.cancel}
         </button>
       </div>
+      {showParentSelect && onParentChange ? (
+        <select
+          value={parentId ?? '__main__'}
+          onChange={(e) => {
+            const next = e.target.value
+            onParentChange(next === '__main__' ? null : next)
+          }}
+          className="w-full rounded-lg bg-neutral-100 px-2 py-1.5 text-sm dark:bg-neutral-700 dark:text-neutral-100"
+          aria-label="Parent category"
+        >
+          <option value="__main__">Main category</option>
+          {parentOptions.map((p) => (
+            <option key={p.id} value={p.id}>
+              Sub of: {p.icon} {p.name}
+            </option>
+          ))}
+        </select>
+      ) : null}
       {showBudgetGroup && (
         <select
           value={budgetGroup ?? 'needs'}

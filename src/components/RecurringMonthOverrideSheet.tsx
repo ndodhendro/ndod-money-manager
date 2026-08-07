@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useOverlayBack } from '../hooks/useBackButton'
 import { ActionEmoji } from '../lib/actionEmoji'
 import { formatNumber } from '../lib/format'
@@ -14,6 +14,8 @@ interface RecurringMonthOverrideSheetProps {
   /** Effective due day currently shown for this month. */
   initialDueDay: number
   busy?: boolean
+  /** Focus the amount field when the sheet opens. */
+  autoFocusAmount?: boolean
   onClose: () => void
   onSave: (input: { amount: number; dueDay: number }) => void
 }
@@ -25,12 +27,14 @@ export function RecurringMonthOverrideSheet({
   initialAmount,
   initialDueDay,
   busy = false,
+  autoFocusAmount = false,
   onClose,
   onSave,
 }: RecurringMonthOverrideSheetProps) {
   const maxDay = daysInMonth(cursor.year, cursor.month)
   const [amountDigits, setAmountDigits] = useState('')
   const [dueDay, setDueDay] = useState(1)
+  const amountInputRef = useRef<HTMLInputElement>(null)
 
   useOverlayBack(open, () => {
     if (busy) return false
@@ -43,6 +47,15 @@ export function RecurringMonthOverrideSheet({
     setAmountDigits(String(Math.round(initialAmount)))
     setDueDay(Math.min(Math.max(1, initialDueDay), maxDay))
   }, [open, bill, initialAmount, initialDueDay, maxDay])
+
+  useEffect(() => {
+    if (!open || !autoFocusAmount) return
+    const t = window.setTimeout(() => {
+      amountInputRef.current?.focus()
+      amountInputRef.current?.select()
+    }, 50)
+    return () => window.clearTimeout(t)
+  }, [open, autoFocusAmount, bill?.id])
 
   if (!open || !bill) return null
 
@@ -100,6 +113,7 @@ export function RecurringMonthOverrideSheet({
             <div className="flex items-center gap-2 rounded-xl bg-neutral-50 px-4 py-3 dark:bg-neutral-900">
               <span className="text-sm font-medium text-neutral-400">Rp</span>
               <input
+                ref={amountInputRef}
                 type="text"
                 inputMode="numeric"
                 pattern="[0-9]*"
@@ -132,22 +146,14 @@ export function RecurringMonthOverrideSheet({
             </select>
           </label>
 
-          <div className="grid grid-cols-2 gap-2 pb-[env(safe-area-inset-bottom)]">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={onClose}
-              className="rounded-xl bg-neutral-100 py-3 text-sm font-semibold text-neutral-700 active:bg-neutral-200 disabled:opacity-60 dark:bg-neutral-800 dark:text-neutral-200"
-            >
-              {ActionEmoji.cancel} Cancel
-            </button>
+          <div className="pb-[env(safe-area-inset-bottom)]">
             <button
               type="button"
               disabled={!canSave}
               onClick={handleSave}
-              className="rounded-xl bg-emerald-500 py-3 text-sm font-semibold text-white active:bg-emerald-600 disabled:opacity-60"
+              className="w-full rounded-xl bg-emerald-500 py-3.5 text-base font-semibold text-white active:bg-emerald-600 disabled:opacity-60"
             >
-              {busy ? 'Saving…' : `${ActionEmoji.save} Save`}
+              {busy ? 'Updating…' : 'Update'}
             </button>
           </div>
         </div>

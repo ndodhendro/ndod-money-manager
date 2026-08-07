@@ -22,6 +22,8 @@ interface RecurringBillRowContentProps {
   showMeta?: boolean
   /** When set (Plan checklist), meta shows the date in that month. */
   monthCursor?: MonthCursor
+  /** Specific occurrence date for weekly (and monthly) checklist rows. */
+  occurredOn?: string
   /** Calendar current month already logged — drives "X months left". */
   currentMonthDone?: boolean
 }
@@ -34,6 +36,7 @@ export function RecurringBillRowContent({
   inactive = false,
   showMeta = true,
   monthCursor,
+  occurredOn,
   currentMonthDone = false,
 }: RecurringBillRowContentProps) {
   const noteText = note ?? (bill.name.trim() || null)
@@ -111,7 +114,10 @@ export function RecurringBillRowContent({
         </div>
         {showMeta && (
           <p className="text-xs leading-tight text-neutral-400">
-            {formatRecurringMeta(bill, monthCursor, { currentMonthDone })}
+            {formatRecurringMeta(bill, monthCursor, {
+              currentMonthDone,
+              occurredOn,
+            })}
           </p>
         )}
       </div>

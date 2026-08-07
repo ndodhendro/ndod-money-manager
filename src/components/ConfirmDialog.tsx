@@ -6,6 +6,12 @@ interface ConfirmDialogProps {
   message: string
   confirmLabel?: string
   cancelLabel?: string
+  /**
+   * Optional left-button action distinct from dismiss (backdrop / Back).
+   * When set, left button calls onAlternate; backdrop still calls onCancel.
+   */
+  alternateLabel?: string
+  onAlternate?: () => void
   /** Shown on the confirm button while busy. Defaults to "Deleting…". */
   busyLabel?: string
   danger?: boolean
@@ -20,6 +26,8 @@ export function ConfirmDialog({
   message,
   confirmLabel = 'Delete',
   cancelLabel = 'Cancel',
+  alternateLabel,
+  onAlternate,
   busyLabel = 'Deleting…',
   danger = true,
   busy = false,
@@ -33,6 +41,10 @@ export function ConfirmDialog({
   })
 
   if (!open) return null
+
+  const leftLabel = alternateLabel ?? cancelLabel
+  const leftAction =
+    alternateLabel && onAlternate ? onAlternate : onCancel
 
   return (
     <div
@@ -66,10 +78,10 @@ export function ConfirmDialog({
           <button
             type="button"
             disabled={busy}
-            onClick={onCancel}
+            onClick={leftAction}
             className="rounded-xl bg-neutral-100 py-3 text-sm font-semibold text-neutral-700 active:bg-neutral-200 disabled:opacity-60 dark:bg-neutral-800 dark:text-neutral-200 dark:active:bg-neutral-700"
           >
-            {cancelLabel}
+            {leftLabel}
           </button>
           <button
             type="button"

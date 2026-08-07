@@ -80,3 +80,36 @@ export function recurringOccurredOn(
   const clamped = Math.min(Math.max(1, dueDay), daysInMonth(cursor.year, cursor.month))
   return `${cursor.year}-${String(cursor.month + 1).padStart(2, '0')}-${String(clamped).padStart(2, '0')}`
 }
+
+export function addDaysIso(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00`)
+  d.setDate(d.getDate() + days)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+export function daysBetweenIso(from: string, to: string): number {
+  const a = new Date(`${from}T00:00:00`).getTime()
+  const b = new Date(`${to}T00:00:00`).getTime()
+  return Math.round((b - a) / 86_400_000)
+}
+
+export function yearMonthFromIso(iso: string): string {
+  return iso.slice(0, 7)
+}
+
+export function lastDayOfYearMonth(yearMonth: string): string | null {
+  if (!/^\d{4}-\d{2}$/.test(yearMonth)) return null
+  const year = Number(yearMonth.slice(0, 4))
+  const monthIndex = Number(yearMonth.slice(5, 7)) - 1
+  if (!Number.isFinite(year) || monthIndex < 0 || monthIndex > 11) return null
+  const last = daysInMonth(year, monthIndex)
+  return `${yearMonth}-${String(last).padStart(2, '0')}`
+}
+
+export function cursorFromYearMonth(yearMonth: string): MonthCursor | null {
+  if (!/^\d{4}-\d{2}$/.test(yearMonth)) return null
+  const year = Number(yearMonth.slice(0, 4))
+  const month = Number(yearMonth.slice(5, 7)) - 1
+  if (!Number.isFinite(year) || month < 0 || month > 11) return null
+  return { year, month }
+}

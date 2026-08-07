@@ -14,7 +14,7 @@ interface NotesInputProps {
   value: string
   onChange: (value: string) => void
   categoryId: string | null
-  owner: Owner
+  owner: Owner | null
   inputRef?: Ref<HTMLInputElement>
   onFocus?: () => void
   onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void
@@ -40,7 +40,7 @@ export function NotesInput({
   const [activeIndex, setActiveIndex] = useState(-1)
 
   useEffect(() => {
-    if (!categoryId) {
+    if (!categoryId || !owner) {
       setSuggestions([])
       return
     }

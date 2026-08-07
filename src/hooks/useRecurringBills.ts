@@ -6,6 +6,9 @@ import {
   fetchRecurringBills,
   isMissingRecurringSchema,
   isRecurringActiveInMonth,
+  isRecurringSkipped,
+  occurrenceLogKey,
+  occurrencesInMonth,
   type RecurringBill,
   type RecurringBillLog,
   type RecurringBillMonthOverride,
@@ -70,6 +73,15 @@ export function useRecurringBills(yearMonth: string) {
     })
   }, [reload])
 
+  const logByOccurrenceKey = useMemo(() => {
+    const map = new Map<string, RecurringBillLog>()
+    for (const log of logs) {
+      map.set(occurrenceLogKey(log.bill_id, log.occurred_on), log)
+    }
+    return map
+  }, [logs])
+
+  /** @deprecated Prefer logByOccurrenceKey — last log wins per bill. */
   const logByBillId = useMemo(() => {
     const map = new Map<string, RecurringBillLog>()
     for (const log of logs) map.set(log.bill_id, log)
@@ -88,22 +100,53 @@ export function useRecurringBills(yearMonth: string) {
     return set
   }, [currentMonthLogs])
 
-  const unpaidCount = useMemo(
-    () =>
-      bills.filter((b) => {
-        if (logByBillId.has(b.id)) return false
-        if (overrideByBillId.get(b.id)?.skipped) return false
-        return true
-      }).length,
-    [bills, logByBillId, overrideByBillId],
-  )
+  const occurrenceTotal = useMemo(() => {
+    let total = 0
+    for (const bill of bills) {
+      const override = overrideByBillId.get(bill.id)
+      if (isRecurringSkipped(override)) continue
+      total += occurrencesInMonth(bill, yearMonth, override).length
+    }
+    return total
+  }, [bills, overrideByBillId, yearMonth])
+
+  const occurrenceDoneCount = useMemo(() => {
+    let done = 0
+    for (const bill of bills) {
+      const override = overrideByBillId.get(bill.id)
+      if (isRecurringSkipped(override)) continue
+      for (const occurredOn of occurrencesInMonth(bill, yearMonth, override)) {
+        if (logByOccurrenceKey.has(occurrenceLogKey(bill.id, occurredOn))) {
+          done += 1
+        }
+      }
+    }
+    return done
+  }, [bills, logByOccurrenceKey, overrideByBillId, yearMonth])
+
+  const unpaidCount = useMemo(() => {
+    let count = 0
+    for (const bill of bills) {
+      const override = overrideByBillId.get(bill.id)
+      if (isRecurringSkipped(override)) continue
+      for (const occurredOn of occurrencesInMonth(bill, yearMonth, override)) {
+        if (!logByOccurrenceKey.has(occurrenceLogKey(bill.id, occurredOn))) {
+          count += 1
+        }
+      }
+    }
+    return count
+  }, [bills, logByOccurrenceKey, overrideByBillId, yearMonth])
 
   return {
     bills,
     logs,
     logByBillId,
+    logByOccurrenceKey,
     overrideByBillId,
     currentMonthDoneByBillId,
+    occurrenceTotal,
+    occurrenceDoneCount,
     unpaidCount,
     loading,
     available,

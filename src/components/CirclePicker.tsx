@@ -71,7 +71,7 @@ export function CirclePicker({
                 : 'text-neutral-400'
             }`}
           >
-            {value ? CIRCLE_LABELS[value] : 'Select circle'}
+            {value ? CIRCLE_LABELS[value] : 'Select One'}
           </p>
         </div>
         {!locked && (
@@ -90,7 +90,7 @@ export function CirclePicker({
           <div className="relative flex max-h-[50vh] flex-col rounded-t-2xl bg-neutral-100 shadow-2xl dark:bg-neutral-900">
             <div className="flex items-center justify-between gap-3 border-b border-neutral-200 px-4 py-3 dark:border-neutral-800">
               <p className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
-                Select circle
+                Select One
               </p>
               <button
                 type="button"

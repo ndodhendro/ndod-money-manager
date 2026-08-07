@@ -29,7 +29,7 @@ export function PlanRecurring() {
   const yearMonth = monthCursorKey(cursor)
   const {
     bills,
-    logByBillId,
+    logByOccurrenceKey,
     overrideByBillId,
     currentMonthDoneByBillId,
     loading: billsLoading,
@@ -61,7 +61,7 @@ export function PlanRecurring() {
           <DueThisMonthChecklist
             cursor={cursor}
             bills={bills}
-            logByBillId={logByBillId}
+            logByOccurrenceKey={logByOccurrenceKey}
             overrideByBillId={overrideByBillId}
             currentMonthDoneByBillId={currentMonthDoneByBillId}
             loading={billsLoading}

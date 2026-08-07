@@ -168,9 +168,36 @@ export function sortRecurringBillsForSettings(
   })
 }
 
+export type RecurringChecklistOccurrence = {
+  bill: RecurringBill
+  occurredOn: string
+  key: string
+}
+
 /**
  * Plan checklist: unchecked first, then occurred-on descending,
  * then the same within-day order (applies inside unchecked and checked).
+ */
+export function sortRecurringOccurrencesForChecklist(
+  items: RecurringChecklistOccurrence[],
+  logByOccurrenceKey: Map<string, RecurringBillLog>,
+  byId: Map<string, Category>,
+): RecurringChecklistOccurrence[] {
+  return [...items].sort((a, b) => {
+    const aDone = logByOccurrenceKey.has(a.key)
+    const bDone = logByOccurrenceKey.has(b.key)
+    if (aDone !== bDone) return aDone ? 1 : -1
+
+    if (a.occurredOn !== b.occurredOn) {
+      return b.occurredOn.localeCompare(a.occurredOn)
+    }
+
+    return compareRecurringBillsWithinDay(a.bill, b.bill, byId)
+  })
+}
+
+/**
+ * @deprecated Prefer sortRecurringOccurrencesForChecklist.
  */
 export function sortRecurringBillsForChecklist(
   bills: RecurringBill[],

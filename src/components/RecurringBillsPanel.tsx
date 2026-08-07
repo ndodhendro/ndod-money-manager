@@ -23,7 +23,10 @@ import {
   deleteRecurringBill,
   fetchRecurringBillLogs,
   fetchRecurringBills,
+  formatIntervalMonthsLabel,
+  formatRecurringSettingsDescription,
   isMissingRecurringSchema,
+  RECURRING_EVERY_OPTIONS,
   updateRecurringBill,
   type RecurringBill,
 } from '../lib/recurringBillsApi'
@@ -67,22 +70,13 @@ function parseYearMonth(value: string): { year: number; month: number } | null {
 
 function buildYearOptions(): number[] {
   const nowYear = new Date().getFullYear()
+  const minYear = 2026
   const years: number[] = []
-  // Long range for recurring installments/plans.
-  for (let year = nowYear - 30; year <= nowYear + 80; year++) {
+  // Starts/Ends: from 2026 through a long forward range for installments/plans.
+  for (let year = minYear; year <= Math.max(nowYear, minYear) + 80; year++) {
     years.push(year)
   }
   return years
-}
-
-function formatRecurringPoint(day: number, yearMonth: string): string {
-  const parsed = parseYearMonth(yearMonth)
-  if (!parsed) return `${day}`
-  const monthLabel = new Date(parsed.year, parsed.month - 1, 1).toLocaleString(
-    'en-US',
-    { month: 'short' },
-  )
-  return `${day} ${monthLabel} ${parsed.year}`
 }
 
 function currentYearMonthValue(): string {
@@ -117,7 +111,6 @@ export function RecurringBillsPanel({
       })),
     [],
   )
-  const yearOptions = useMemo(() => buildYearOptions(), [])
   const [type, setType] = useState<TransactionType>('expense')
   const categoryType = type === 'transfer' ? undefined : type
   const { treeByUsage, byId, loading: catsLoading, reload } =
@@ -152,6 +145,17 @@ export function RecurringBillsPanel({
     currentYearMonthValue(),
   )
   const [endsYearMonth, setEndsYearMonth] = useState('')
+  const yearOptions = useMemo(() => {
+    const base = buildYearOptions()
+    const minYear = base[0] ?? 2026
+    const extras = new Set<number>()
+    const starts = parseYearMonth(startsYearMonth)
+    const ends = endsYearMonth ? parseYearMonth(endsYearMonth) : null
+    if (starts && starts.year < minYear) extras.add(starts.year)
+    if (ends && ends.year < minYear) extras.add(ends.year)
+    if (extras.size === 0) return base
+    return [...extras, ...base].sort((a, b) => a - b)
+  }, [startsYearMonth, endsYearMonth])
   const [ownerOpen, setOwnerOpen] = useState(false)
   const [circleOpen, setCircleOpen] = useState(false)
   const [categoryOpen, setCategoryOpen] = useState(false)
@@ -278,8 +282,8 @@ export function RecurringBillsPanel({
     setDayGroupsExpanded(areAllCollapseOpen(dayPersistKeys, true))
   }, [dayPersistKeys, dayGroupsVersion])
 
-  async function reloadBills() {
-    setLoading(true)
+  async function reloadBills(options?: { silent?: boolean }) {
+    if (!options?.silent) setLoading(true)
     try {
       const currentYm = monthCursorKey(currentMonthCursor())
       const [rows, currentLogs] = await Promise.all([
@@ -299,7 +303,7 @@ export function RecurringBillsPanel({
         showAppToast(message || 'Failed to load')
       }
     } finally {
-      setLoading(false)
+      if (!options?.silent) setLoading(false)
     }
   }
 
@@ -764,12 +768,13 @@ export function RecurringBillsPanel({
       await deleteRecurringBill(deleteTarget.id)
       setDeleteTarget(null)
       setOpenSwipeId(null)
+      setHighlightId(null)
       if (editingId === deletedId) {
         resetForm()
         setView('list')
       }
       showAppToast('Deleted')
-      await reloadBills()
+      await reloadBills({ silent: true })
     } catch (err) {
       showAppToast(err instanceof Error ? err.message : 'Failed to delete')
     } finally {
@@ -787,17 +792,12 @@ export function RecurringBillsPanel({
   }
 
   const displayAmount = amountDigits ? formatNumber(Number(amountDigits)) : ''
-  const startsPoint = formatRecurringPoint(dueDay, startsYearMonth)
-  const endsPoint =
-    endsYearMonth && endsParts
-      ? formatRecurringPoint(dueDay, endsYearMonth)
-      : null
-  const intervalLabel =
-    intervalMonths === 1 ? 'month' : `${intervalMonths} months`
-  const cadenceLabel =
-    intervalMonths === 1
-      ? `Runs monthly on day ${dueDay}`
-      : `Runs every ${intervalLabel} on day ${dueDay}`
+  const settingsDescription = formatRecurringSettingsDescription({
+    intervalMonths,
+    dueDay,
+    startsYearMonth: startsYearMonth || null,
+    endsYearMonth: endsYearMonth || null,
+  })
   const deleteLabel =
     deleteTarget?.name.trim() ||
     (deleteTarget
@@ -1107,9 +1107,9 @@ export function RecurringBillsPanel({
               onKeyDown={handleIntervalKeyDown}
               className="w-full rounded-xl bg-white px-3 py-3 text-sm shadow-sm dark:bg-neutral-800 dark:text-neutral-100"
             >
-              {Array.from({ length: 12 }, (_, i) => i + 1).map((n) => (
+              {RECURRING_EVERY_OPTIONS.map((n) => (
                 <option key={n} value={n}>
-                  {n} {n === 1 ? 'month' : 'months'}
+                  {formatIntervalMonthsLabel(n)}
                 </option>
               ))}
             </select>
@@ -1246,11 +1246,7 @@ export function RecurringBillsPanel({
             </div>
           </label>
         </div>
-        <p className="text-[11px] text-neutral-400">
-          {endsPoint
-            ? `${cadenceLabel}. Starts from ${startsPoint} until ${endsPoint}.`
-            : `${cadenceLabel}. Starts from ${startsPoint} with no end date.`}
-        </p>
+        <p className="text-[11px] text-neutral-400">{settingsDescription}</p>
 
         <button
           type="button"

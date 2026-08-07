@@ -19,6 +19,13 @@ Different purpose → different icon/behavior is allowed (and preferred).
 - Nav and domain icons (History, Summary, Settings, etc.) stay single-sourced where defined (e.g. `BottomNav` tab map); reuse that source if the same destination appears elsewhere.
 - Do not swap icons for the same action for “variety” or screen-specific styling.
 
+## List row actions
+
+- Every **action control on a list row** (edit, delete, drag, show/hide, add-adjacent, etc.) must use the matching **emoji** from `ActionEmoji` — **never a text label** like "Edit", "Delete", "Save", or "Remove".
+- Use `aria-label` / `title` for accessibility when the visible control is emoji-only; do not replace the emoji with visible text for the same purpose.
+- Row content (name, amount, date, status) may still use text; this rule applies only to **action affordances** on the row.
+- If a new row action has no `ActionEmoji` entry yet, add it there first, then use that constant everywhere.
+
 ## Behavior
 
 - Reuse shared components for the same job: e.g. `ConfirmDialog` for destructive confirms, `SwipeDeleteRow` for swipe-to-delete, `CategoryPicker` / `CirclePicker` for pickers, toasts for non-blocking success.
@@ -35,5 +42,7 @@ Different purpose → different icon/behavior is allowed (and preferred).
 
 - ✅ Delete in History and category manage both use `ActionEmoji.delete` + the same confirm pattern.
 - ✅ Edit affordance everywhere uses `ActionEmoji.edit`, not a mix of ✏️ / 🖊️ / “Edit” text-only.
+- ✅ List row actions are emoji-only (`ActionEmoji.edit`, `ActionEmoji.delete`, …), with `aria-label` for screen readers — never a visible "Edit" / "Delete" button text on the row.
+- ❌ A settings list row shows a text "Edit" link while History uses ✏️ for the same edit intent.
 - ❌ History uses swipe-delete with confirm while Settings list deletes instantly with a different trash glyph for the same “remove this row” intent.
 - ❌ One screen’s “close overlay” is ❌ and another’s identical close is ✕ or “X” text with different dismiss semantics.

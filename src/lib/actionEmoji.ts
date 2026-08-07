@@ -10,4 +10,5 @@ export const ActionEmoji = {
   drag: '☰',
   add: '➕',
   delete: '🗑️',
+  restore: '♻️',
 } as const

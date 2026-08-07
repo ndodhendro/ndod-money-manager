@@ -287,6 +287,7 @@ export function BucketManagePanel({
         setView('list')
       }
       showAppToast('Deleted')
+      setHighlightId(null)
       await refresh()
     } catch (err) {
       showAppToast(err instanceof Error ? err.message : 'Failed to delete')

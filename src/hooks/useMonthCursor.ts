@@ -40,7 +40,7 @@ function writeStoredCursor(cursor: MonthCursor): void {
 
 export function useMonthCursor() {
   const [cursor, setCursorState] = useState<MonthCursor>(readStoredCursor)
-  const touchStartX = useRef<number | null>(null)
+  const touchStart = useRef<{ x: number; y: number } | null>(null)
 
   const setCursor = useCallback(
     (updater: MonthCursor | ((prev: MonthCursor) => MonthCursor)) => {
@@ -71,17 +71,21 @@ export function useMonthCursor() {
   }, [setCursor])
 
   function handleTouchStart(e: TouchEvent) {
-    touchStartX.current = e.changedTouches[0]?.clientX ?? null
+    const t = e.changedTouches[0]
+    touchStart.current = t ? { x: t.clientX, y: t.clientY } : null
   }
 
   function handleTouchEnd(e: TouchEvent) {
-    const start = touchStartX.current
-    touchStartX.current = null
-    if (start == null) return
-    const end = e.changedTouches[0]?.clientX
-    if (end == null) return
-    const dx = end - start
+    const start = touchStart.current
+    touchStart.current = null
+    if (!start) return
+    const end = e.changedTouches[0]
+    if (!end) return
+    const dx = end.clientX - start.x
+    const dy = end.clientY - start.y
     if (Math.abs(dx) < 56) return
+    // Vertical list scroll often has horizontal drift — ignore non-horizontal swipes.
+    if (Math.abs(dy) >= Math.abs(dx)) return
     if (dx > 0) goPrevMonth()
     else if (canGoNext) goNextMonth()
   }

@@ -4,6 +4,7 @@ import { CircleBadge } from '../components/CircleBadge'
 import { GroupedListFrame } from '../components/GroupedListFrame'
 import { CollapsibleDayGroup } from '../components/CollapsibleDayGroup'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { MonthPager } from '../components/MonthPager'
 import { OwnerBadge } from '../components/OwnerBadge'
 import { PageTitle } from '../components/PageTitle'
 import { NavIcon } from '../lib/navTabs'
@@ -72,7 +73,7 @@ export function History() {
   const [subcategoryFilter, setSubcategoryFilter] = useState<
     string | AllFilter
   >('all')
-  const touchStartX = useRef<number | null>(null)
+  const touchStart = useRef<{ x: number; y: number } | null>(null)
   const highlightRef = useRef<HTMLDivElement | null>(null)
   const [openSwipeId, setOpenSwipeId] = useState<string | null>(null)
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
@@ -87,13 +88,19 @@ export function History() {
     (location.state as HistoryLocationState | null)?.highlightTxId ?? null
   const [highlightId, setHighlightId] = useState<string | null>(navHighlightId)
 
+  // Clear nav state separately from the highlight timer — clearing state must
+  // not cancel the timeout (that left highlightId stuck and re-glowed on remount).
   useEffect(() => {
     if (!navHighlightId) return
-    // Hapus state navigasi agar refresh / back tidak mengulang highlight.
+    setHighlightId(navHighlightId)
     navigate('.', { replace: true, state: null })
+  }, [navHighlightId, navigate])
+
+  useEffect(() => {
+    if (!highlightId) return
     const t = window.setTimeout(() => setHighlightId(null), 1800)
     return () => window.clearTimeout(t)
-  }, [navHighlightId, navigate])
+  }, [highlightId])
 
   const range = useMemo(
     () => monthRange(cursor.year, cursor.month),
@@ -153,17 +160,21 @@ export function History() {
   }
 
   function handleTouchStart(e: TouchEvent) {
-    touchStartX.current = e.changedTouches[0]?.clientX ?? null
+    const t = e.changedTouches[0]
+    touchStart.current = t ? { x: t.clientX, y: t.clientY } : null
   }
 
   function handleTouchEnd(e: TouchEvent) {
-    const start = touchStartX.current
-    touchStartX.current = null
-    if (start == null) return
-    const end = e.changedTouches[0]?.clientX
-    if (end == null) return
-    const dx = end - start
+    const start = touchStart.current
+    touchStart.current = null
+    if (!start) return
+    const end = e.changedTouches[0]
+    if (!end) return
+    const dx = end.clientX - start.x
+    const dy = end.clientY - start.y
     if (Math.abs(dx) < 56) return
+    // Vertical list scroll often has horizontal drift — ignore non-horizontal swipes.
+    if (Math.abs(dy) >= Math.abs(dx)) return
     if (dx > 0) goPrevMonth()
     else goNextMonth()
   }
@@ -180,8 +191,9 @@ export function History() {
       await deleteTransaction(pendingDeleteId)
       setPendingDeleteId(null)
       setOpenSwipeId(null)
+      setHighlightId(null)
       showAppToast(`Deleted ${ActionEmoji.delete}`)
-      await reload()
+      await reload({ silent: true })
     } catch (err) {
       showAppToast(err instanceof Error ? err.message : 'Failed to delete')
     } finally {
@@ -249,28 +261,12 @@ export function History() {
     >
       <PageTitle icon={NavIcon.history}>History</PageTitle>
 
-      <div className="mt-2 flex items-center justify-between gap-2">
-        <button
-          type="button"
-          onClick={goPrevMonth}
-          className="flex h-10 w-10 items-center justify-center rounded-xl text-2xl leading-none text-neutral-700 active:bg-neutral-100 dark:text-neutral-200 dark:active:bg-neutral-800"
-          aria-label="Previous month"
-        >
-          ◀️
-        </button>
-        <p className="text-sm font-medium capitalize text-neutral-700 dark:text-neutral-200">
-          {monthLabel}
-        </p>
-        <button
-          type="button"
-          onClick={goNextMonth}
-          disabled={!canGoNext}
-          className="flex h-10 w-10 items-center justify-center rounded-xl text-2xl leading-none text-neutral-700 enabled:active:bg-neutral-100 disabled:opacity-25 dark:text-neutral-200 dark:enabled:active:bg-neutral-800"
-          aria-label="Next month"
-        >
-          ▶️
-        </button>
-      </div>
+      <MonthPager
+        monthLabel={monthLabel}
+        canGoNext={canGoNext}
+        onPrev={goPrevMonth}
+        onNext={goNextMonth}
+      />
 
       <div className="mt-3 grid grid-cols-3 gap-1.5">
         <label className="block min-w-0">

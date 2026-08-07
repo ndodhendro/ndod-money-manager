@@ -6,6 +6,8 @@ interface ConfirmDialogProps {
   message: string
   confirmLabel?: string
   cancelLabel?: string
+  /** Shown on the confirm button while busy. Defaults to "Deleting…". */
+  busyLabel?: string
   danger?: boolean
   busy?: boolean
   onConfirm: () => void
@@ -18,6 +20,7 @@ export function ConfirmDialog({
   message,
   confirmLabel = 'Delete',
   cancelLabel = 'Cancel',
+  busyLabel = 'Deleting…',
   danger = true,
   busy = false,
   onConfirm,
@@ -78,7 +81,7 @@ export function ConfirmDialog({
                 : 'bg-emerald-500 text-white active:bg-emerald-600'
             }`}
           >
-            {busy ? 'Deleting…' : confirmLabel}
+            {busy ? busyLabel : confirmLabel}
           </button>
         </div>
       </div>

@@ -14,7 +14,7 @@ export interface RecurringBill {
   circle: Circle
   owner: Owner
   due_day: number
-  /** Every N months (1–12). Grid anchored on starts_year_month. */
+  /** Every N months (1–12, or 24–120 for 2–10 years). Grid anchored on starts_year_month. */
   interval_months: number
   /** First YYYY-MM on checklist; null = no lower bound */
   starts_year_month: string | null
@@ -27,7 +27,14 @@ export interface RecurringBill {
 }
 
 const MIN_INTERVAL_MONTHS = 1
-const MAX_INTERVAL_MONTHS = 12
+/** 10 years — dropdown offers 1–12 months plus 2–10 years. */
+const MAX_INTERVAL_MONTHS = 120
+
+/** Settings Every dropdown: 1–12 months, then 2–10 years. */
+export const RECURRING_EVERY_OPTIONS: number[] = [
+  ...Array.from({ length: 12 }, (_, i) => i + 1),
+  ...Array.from({ length: 9 }, (_, i) => (i + 2) * 12),
+]
 
 function clampIntervalMonths(value: unknown): number {
   const n = Number(value ?? MIN_INTERVAL_MONTHS)
@@ -36,6 +43,17 @@ function clampIntervalMonths(value: unknown): number {
     MAX_INTERVAL_MONTHS,
     Math.max(MIN_INTERVAL_MONTHS, Math.round(n)),
   )
+}
+
+/** "1 month" / "6 months" / "2 years" for Every labels and cadence copy. */
+export function formatIntervalMonthsLabel(intervalMonths: number): string {
+  const interval = clampIntervalMonths(intervalMonths)
+  if (interval === 1) return '1 month'
+  if (interval % 12 === 0 && interval >= 24) {
+    const years = interval / 12
+    return `${years} years`
+  }
+  return `${interval} months`
 }
 
 /** Month index for YYYY-MM arithmetic (Jan 0000 = 0). */
@@ -81,13 +99,21 @@ export interface RecurringBillLog {
   completed_at: string
 }
 
-/** Per-month amount / due_day override (null field = use template). */
+/** Per-month amount / due_day / skip override (null field = use template). */
 export interface RecurringBillMonthOverride {
   id: string
   bill_id: string
   year_month: string
   amount: number | null
   due_day: number | null
+  /** Soft-skip for this month only; revive by setting false. */
+  skipped: boolean
+}
+
+export function isRecurringSkipped(
+  override?: RecurringBillMonthOverride | null,
+): boolean {
+  return override?.skipped === true
 }
 
 export function effectiveAmount(
@@ -196,6 +222,7 @@ function mapOverride(row: Record<string, unknown>): RecurringBillMonthOverride {
     year_month: String(row.year_month),
     amount: parsedAmount,
     due_day,
+    skipped: Boolean(row.skipped),
   }
 }
 
@@ -209,7 +236,9 @@ export function countDueOrOverdueUnchecked(
 ): number {
   return bills.filter((bill) => {
     if (logByBillId.has(bill.id)) return false
-    const dueDay = effectiveDueDay(bill, overrideByBillId?.get(bill.id))
+    const override = overrideByBillId?.get(bill.id)
+    if (isRecurringSkipped(override)) return false
+    const dueDay = effectiveDueDay(bill, override)
     return recurringOccurredOn(cursor, dueDay) <= today
   }).length
 }
@@ -242,26 +271,56 @@ export function formatRecurringDueDate(
   }).format(new Date(`${iso}T00:00:00`))
 }
 
-function formatIntervalCadence(intervalMonths: number, dueDay: number): string {
-  const interval = clampIntervalMonths(intervalMonths)
-  if (interval === 1) return `Every month on day ${dueDay}`
-  return `Every ${interval} months on day ${dueDay}`
-}
-
-/** YYYY-MM → "Nov 2026" for compact list meta. */
-function formatYearMonthShort(yearMonth: string): string | null {
+/** Anchor date for settings copy, e.g. "1 Jan 2026". */
+export function formatRecurringAnchorDate(
+  dueDay: number,
+  yearMonth: string,
+): string | null {
   const idx = yearMonthIndex(yearMonth)
   if (idx == null) return null
   const year = Math.floor(idx / 12)
   const monthIndex = idx % 12
-  return new Intl.DateTimeFormat('en-US', {
+  const lastDay = new Date(year, monthIndex + 1, 0).getDate()
+  const day = Math.min(Math.max(1, Math.round(dueDay)), lastDay)
+  const monthLabel = new Date(year, monthIndex, 1).toLocaleString('en-US', {
     month: 'short',
-    year: 'numeric',
-  }).format(new Date(year, monthIndex, 1))
+  })
+  return `${day} ${monthLabel} ${year}`
 }
 
 /**
- * Settings list: "Every 12 months on day 3 · From Nov 2026 · Ongoing"
+ * Settings list/form cadence, e.g.
+ * "Every 12 months, starts from 1 Jan 2026 to 1 Jan 2030"
+ */
+export function formatRecurringSettingsDescription(input: {
+  intervalMonths: number
+  dueDay: number
+  startsYearMonth: string | null | undefined
+  endsYearMonth: string | null | undefined
+}): string {
+  const interval = clampIntervalMonths(input.intervalMonths)
+  const cadence =
+    interval === 1
+      ? 'Every month'
+      : `Every ${formatIntervalMonthsLabel(interval)}`
+
+  const starts = input.startsYearMonth
+    ? formatRecurringAnchorDate(input.dueDay, input.startsYearMonth)
+    : null
+  const ends = input.endsYearMonth
+    ? formatRecurringAnchorDate(input.dueDay, input.endsYearMonth)
+    : null
+
+  if (starts && ends) {
+    return `${cadence}, starts from ${starts} to ${ends}`
+  }
+  if (starts) return `${cadence}, starts from ${starts}`
+  if (ends) return `${cadence}, until ${ends}`
+  return cadence
+}
+
+/**
+ * Settings list: "Every 12 months, starts from 1 Jan 2026 to 1 Jan 2030"
  * Plan checklist (with cursor): "Tue, 15 Aug 2026 · Ongoing"
  *
  * "X months left" counts remaining on-grid occurrences through ends_year_month
@@ -292,32 +351,14 @@ export function formatRecurringMeta(
     return `${dueLabel} · Ongoing`
   }
 
-  const parts: string[] = [
-    formatIntervalCadence(bill.interval_months, bill.due_day),
-  ]
-
-  const startsLabel = bill.starts_year_month
-    ? formatYearMonthShort(bill.starts_year_month)
-    : null
-  const endsLabel = bill.ends_year_month
-    ? formatYearMonthShort(bill.ends_year_month)
-    : null
-
-  if (startsLabel && endsLabel) {
-    parts.push(`${startsLabel} – ${endsLabel}`)
-  } else if (startsLabel) {
-    parts.push(`From ${startsLabel}`)
-  } else if (endsLabel) {
-    parts.push(`Until ${endsLabel}`)
-  }
-
-  if (left) {
-    parts.push(left)
-  } else if (!bill.ends_year_month) {
-    parts.push('Ongoing')
-  }
-
-  return parts.join(' · ')
+  const description = formatRecurringSettingsDescription({
+    intervalMonths: bill.interval_months,
+    dueDay: bill.due_day,
+    startsYearMonth: bill.starts_year_month,
+    endsYearMonth: bill.ends_year_month,
+  })
+  if (left) return `${description} · ${left}`
+  return description
 }
 
 /** Inclusive remaining on-grid months from now (or start) through end; skip current if done. */
@@ -460,6 +501,25 @@ export async function fetchRecurringBillMonthOverrides(
   )
 }
 
+/** Overrides for YYYY-MM from `startYearMonth` through `endYearMonth` inclusive. */
+export async function fetchRecurringBillMonthOverridesInRange(
+  startYearMonth: string,
+  endYearMonth: string,
+): Promise<RecurringBillMonthOverride[]> {
+  const { data, error } = await supabase
+    .from('recurring_bill_month_overrides')
+    .select('*')
+    .gte('year_month', startYearMonth)
+    .lte('year_month', endYearMonth)
+  if (error) {
+    if (isMissingMonthOverridesSchema(error.message)) return []
+    throw new Error(error.message)
+  }
+  return (data ?? []).map((row) =>
+    mapOverride(row as Record<string, unknown>),
+  )
+}
+
 export type UpsertMonthOverrideInput = {
   billId: string
   yearMonth: string
@@ -470,8 +530,71 @@ export type UpsertMonthOverrideInput = {
   templateDueDay: number
 }
 
+async function fetchMonthOverrideRow(
+  billId: string,
+  yearMonth: string,
+): Promise<RecurringBillMonthOverride | null> {
+  const { data, error } = await supabase
+    .from('recurring_bill_month_overrides')
+    .select('*')
+    .eq('bill_id', billId)
+    .eq('year_month', yearMonth)
+    .maybeSingle()
+  if (error) {
+    if (isMissingMonthOverridesSchema(error.message)) return null
+    throw new Error(error.message)
+  }
+  if (!data) return null
+  return mapOverride(data as Record<string, unknown>)
+}
+
+function throwMonthOverrideMigrateHint(message: string): never {
+  if (isMissingMonthOverridesSchema(message)) {
+    throw new Error(
+      'Run migrate_recurring_month_overrides.sql in Supabase to enable this-month edits',
+    )
+  }
+  if (isMissingSkippedColumn(message)) {
+    throw new Error(
+      'Run migrate_recurring_month_skipped.sql in Supabase to enable skip for this month',
+    )
+  }
+  throw new Error(message)
+}
+
+function isMissingSkippedColumn(message: string): boolean {
+  const lower = message.toLowerCase()
+  return lower.includes('skipped') && lower.includes('column')
+}
+
+async function upsertMonthOverrideRow(
+  row: Record<string, unknown>,
+  options?: { requireSkipped?: boolean },
+): Promise<RecurringBillMonthOverride> {
+  const attempt = async (payload: Record<string, unknown>) =>
+    supabase
+      .from('recurring_bill_month_overrides')
+      .upsert(payload, { onConflict: 'bill_id,year_month' })
+      .select('*')
+      .single()
+
+  let { data, error } = await attempt(row)
+  if (
+    error &&
+    'skipped' in row &&
+    !options?.requireSkipped &&
+    isMissingSkippedColumn(error.message)
+  ) {
+    const { skipped: _skipped, ...withoutSkipped } = row
+    ;({ data, error } = await attempt(withoutSkipped))
+  }
+  if (error) throwMonthOverrideMigrateHint(error.message)
+  return mapOverride(data as Record<string, unknown>)
+}
+
 /**
- * Upsert this-month amount/due_day. Clears the row when both match the template.
+ * Upsert this-month amount/due_day. Clears the row when both match the template
+ * and the item is not skipped.
  */
 export async function upsertRecurringBillMonthOverride(
   input: UpsertMonthOverrideInput,
@@ -487,36 +610,86 @@ export async function upsertRecurringBillMonthOverride(
   const amountMatches =
     Math.round(input.amount) === Math.round(input.templateAmount)
   const dueMatches = input.dueDay === input.templateDueDay
+  const existing = await fetchMonthOverrideRow(input.billId, input.yearMonth)
+  const skipped = existing?.skipped === true
 
   if (amountMatches && dueMatches) {
-    await clearRecurringBillMonthOverride(input.billId, input.yearMonth)
-    return null
+    if (!skipped) {
+      await clearRecurringBillMonthOverride(input.billId, input.yearMonth)
+      return null
+    }
+    const mapped = await upsertMonthOverrideRow(
+      {
+        bill_id: input.billId,
+        year_month: input.yearMonth,
+        amount: null,
+        due_day: null,
+        skipped: true,
+      },
+      { requireSkipped: true },
+    )
+    notifyRecurringBillsChanged()
+    return mapped
   }
 
-  const row = {
+  const mapped = await upsertMonthOverrideRow({
     bill_id: input.billId,
     year_month: input.yearMonth,
     amount: amountMatches ? null : Math.round(input.amount),
     due_day: dueMatches ? null : input.dueDay,
-  }
-
-  const { data, error } = await supabase
-    .from('recurring_bill_month_overrides')
-    .upsert(row, { onConflict: 'bill_id,year_month' })
-    .select('*')
-    .single()
-
-  if (error) {
-    if (isMissingMonthOverridesSchema(error.message)) {
-      throw new Error(
-        'Run migrate_recurring_month_overrides.sql in Supabase to enable this-month edits',
-      )
-    }
-    throw new Error(error.message)
-  }
-
+    skipped,
+  })
   notifyRecurringBillsChanged()
-  return mapOverride(data as Record<string, unknown>)
+  return mapped
+}
+
+/**
+ * Soft-skip (or revive) a checklist item for one month only.
+ * Does not create or delete transactions.
+ */
+export async function setRecurringBillMonthSkipped(
+  billId: string,
+  yearMonth: string,
+  skipped: boolean,
+): Promise<RecurringBillMonthOverride | null> {
+  if (!/^\d{4}-\d{2}$/.test(yearMonth)) {
+    throw new Error('Month is invalid')
+  }
+
+  const existing = await fetchMonthOverrideRow(billId, yearMonth)
+
+  if (!skipped) {
+    if (!existing) return null
+    if (existing.amount == null && existing.due_day == null) {
+      await clearRecurringBillMonthOverride(billId, yearMonth)
+      return null
+    }
+    const mapped = await upsertMonthOverrideRow(
+      {
+        bill_id: billId,
+        year_month: yearMonth,
+        amount: existing.amount,
+        due_day: existing.due_day,
+        skipped: false,
+      },
+      { requireSkipped: true },
+    )
+    notifyRecurringBillsChanged()
+    return mapped
+  }
+
+  const mapped = await upsertMonthOverrideRow(
+    {
+      bill_id: billId,
+      year_month: yearMonth,
+      amount: existing?.amount ?? null,
+      due_day: existing?.due_day ?? null,
+      skipped: true,
+    },
+    { requireSkipped: true },
+  )
+  notifyRecurringBillsChanged()
+  return mapped
 }
 
 export async function clearRecurringBillMonthOverride(
@@ -610,7 +783,7 @@ function validateRecurringInput(input: NewRecurringBillInput): void {
     !Number.isFinite(Number(input.interval_months))
   ) {
     throw new Error(
-      `Every must be between ${MIN_INTERVAL_MONTHS} and ${MAX_INTERVAL_MONTHS} months`,
+      `Every must be between ${MIN_INTERVAL_MONTHS} month and 10 years`,
     )
   }
   if (interval > 1 && !input.starts_year_month) {

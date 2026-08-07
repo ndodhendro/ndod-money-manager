@@ -158,7 +158,7 @@ create table if not exists recurring_bills (
   circle circle_type not null default 'hd_family',
   owner owner_type not null default 'suami',
   due_day smallint not null default 1 check (due_day >= 1 and due_day <= 31),
-  interval_months smallint not null default 1 check (interval_months >= 1 and interval_months <= 12),
+  interval_months smallint not null default 1 check (interval_months >= 1 and interval_months <= 120),
   starts_year_month text,
   ends_year_month text,
   icon text not null default '📌',

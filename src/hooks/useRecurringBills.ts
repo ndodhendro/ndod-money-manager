@@ -89,8 +89,13 @@ export function useRecurringBills(yearMonth: string) {
   }, [currentMonthLogs])
 
   const unpaidCount = useMemo(
-    () => bills.filter((b) => !logByBillId.has(b.id)).length,
-    [bills, logByBillId],
+    () =>
+      bills.filter((b) => {
+        if (logByBillId.has(b.id)) return false
+        if (overrideByBillId.get(b.id)?.skipped) return false
+        return true
+      }).length,
+    [bills, logByBillId, overrideByBillId],
   )
 
   return {

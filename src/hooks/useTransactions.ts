@@ -10,21 +10,26 @@ export function useTransactions(range: { start: string; end: string }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const data = await fetchTransactions(range)
-      setTransactions(data)
-      setError(null)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load transactions')
-    } finally {
-      setLoading(false)
-    }
-  }, [range.start, range.end])
+  const load = useCallback(
+    async (options?: { silent?: boolean }) => {
+      if (!options?.silent) setLoading(true)
+      try {
+        const data = await fetchTransactions(range)
+        setTransactions(data)
+        setError(null)
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : 'Failed to load transactions',
+        )
+      } finally {
+        if (!options?.silent) setLoading(false)
+      }
+    },
+    [range.start, range.end],
+  )
 
   useEffect(() => {
-    load()
+    void load()
   }, [load])
 
   // Realtime: kalau pasangan input transaksi baru dari device lain, layar ini auto-refresh.
@@ -35,7 +40,7 @@ export function useTransactions(range: { start: string; end: string }) {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'transactions' },
         () => {
-          load()
+          void load({ silent: true })
         },
       )
       .subscribe()

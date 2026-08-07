@@ -8,19 +8,17 @@ import { MonthPager } from '../../components/MonthPager'
 import { PlanSubPage } from '../../components/PlanSubPage'
 import { useMonthCursor } from '../../hooks/useMonthCursor'
 import { useRecurringBills } from '../../hooks/useRecurringBills'
-import { useTransactions } from '../../hooks/useTransactions'
 import {
   currentMonthCursor,
   monthCursorKey,
 } from '../../lib/monthCursor'
-import { PlanIcon } from '../../lib/planSections'
+import { PlanIcon, PlanTitle } from '../../lib/planSections'
 
 export function PlanRecurring() {
   const location = useLocation()
   const {
     cursor,
     setCursor,
-    range,
     monthLabel,
     canGoNext,
     goPrevMonth,
@@ -29,7 +27,6 @@ export function PlanRecurring() {
     handleTouchEnd,
   } = useMonthCursor()
   const yearMonth = monthCursorKey(cursor)
-  const { reload: reloadTx } = useTransactions(range)
   const {
     bills,
     logByBillId,
@@ -50,7 +47,7 @@ export function PlanRecurring() {
   return (
     <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
       <PlanSubPage
-        title="Recurring Checklist"
+        title={PlanTitle.recurring}
         icon={PlanIcon.recurring}
         description=""
       >
@@ -71,8 +68,8 @@ export function PlanRecurring() {
             available={billsAvailable}
             embedded
             onChanged={() => {
-              void reloadBills()
-              void reloadTx()
+              // Keep list mounted — non-silent reload flashes "Loading…".
+              void reloadBills({ silent: true })
             }}
           />
         </div>

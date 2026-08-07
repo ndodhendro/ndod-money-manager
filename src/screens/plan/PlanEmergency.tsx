@@ -11,7 +11,7 @@ import {
   makeMoneyPlanBucket,
   type MoneyPlanBucket,
 } from '../../lib/moneyPlan'
-import { PlanIcon } from '../../lib/planSections'
+import { PlanIcon, PlanTitle } from '../../lib/planSections'
 import {
   BUCKET_KIND_LABELS,
   type BucketKind,
@@ -78,7 +78,7 @@ export function PlanEmergency() {
 
   return (
     <PlanSubPage
-      title="Savings Goals"
+      title={PlanTitle.emergency}
       icon={PlanIcon.emergency}
       description=""
     >

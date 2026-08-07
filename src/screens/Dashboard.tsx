@@ -128,7 +128,12 @@ export function Dashboard() {
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
-      <PageTitle icon={NavIcon.dashboard}>Dashboard</PageTitle>
+      <PageTitle
+        icon={NavIcon.dashboard}
+        description="See where your money went."
+      >
+        Dashboard
+      </PageTitle>
       <MonthPager
         monthLabel={monthLabel}
         canGoNext={canGoNext}
@@ -186,7 +191,7 @@ export function Dashboard() {
           {needsWantsSlices.length > 0 && (
             <section className="mt-4 rounded-xl bg-white p-4 shadow-sm dark:bg-neutral-800">
               <p className="mb-3 text-sm font-medium text-neutral-600 dark:text-neutral-300">
-                Needs vs Wants
+                Spending Split
               </p>
               <DonutChart slices={needsWantsSlices} />
             </section>
@@ -194,7 +199,7 @@ export function Dashboard() {
 
           <section className="mt-4 rounded-xl bg-white p-4 shadow-sm dark:bg-neutral-800">
             <p className="mb-3 text-sm font-medium text-neutral-600 dark:text-neutral-300">
-              Top categories
+              Top Categories
             </p>
             <HorizontalBars slices={topBars} />
           </section>

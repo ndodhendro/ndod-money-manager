@@ -16,7 +16,7 @@ import {
   sumSavingsActuals,
   type MoneyPlanBucket,
 } from '../../lib/moneyPlan'
-import { PlanIcon } from '../../lib/planSections'
+import { PlanIcon, PlanTitle } from '../../lib/planSections'
 import {
   BUCKET_KIND_LABELS,
   type BucketKind,
@@ -132,7 +132,7 @@ export function PlanPayYourselfFirst() {
   return (
     <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
       <PlanSubPage
-        title="Pay Yourself First"
+        title={PlanTitle.payYourselfFirst}
         icon={PlanIcon.payYourselfFirst}
         description=""
       >

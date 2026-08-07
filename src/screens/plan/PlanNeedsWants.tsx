@@ -1,19 +1,38 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { MonthPager } from '../../components/MonthPager'
 import { PlanBudgetRow } from '../../components/PlanBudgetRow'
 import { PlanSubPage } from '../../components/PlanSubPage'
+import { useCategories } from '../../hooks/useCategories'
 import { useMonthCursor } from '../../hooks/useMonthCursor'
 import { usePyfSettings } from '../../hooks/usePyfSettings'
 import { useTransactions } from '../../hooks/useTransactions'
+import { formatRupiah, todayIso } from '../../lib/format'
+import {
+  buildFreeWantsPace,
+  freeWantsLookbackMonths,
+  groupOverridesByMonth,
+  isFreeWantsExpense,
+  mondayOf,
+  sumCommittedWants,
+} from '../../lib/freeWants'
 import {
   buildMoneyPlan,
   budgetGroupOfTx,
+  makeMoneyPlanBucket,
 } from '../../lib/moneyPlan'
-import { PlanIcon } from '../../lib/planSections'
+import { monthCursorKey, monthCursorRange } from '../../lib/monthCursor'
+import { PlanIcon, PlanTitle } from '../../lib/planSections'
+import {
+  fetchRecurringBillMonthOverridesInRange,
+  fetchRecurringBills,
+  isMissingRecurringSchema,
+  type RecurringBill,
+  type RecurringBillMonthOverride,
+} from '../../lib/recurringBillsApi'
 
 export function PlanNeedsWants() {
   const {
-    range,
+    cursor,
     monthLabel,
     canGoNext,
     goPrevMonth,
@@ -21,21 +40,95 @@ export function PlanNeedsWants() {
     handleTouchStart,
     handleTouchEnd,
   } = useMonthCursor()
-  const { transactions, loading, error } = useTransactions(range)
+  const lookbackMonths = useMemo(() => freeWantsLookbackMonths(cursor), [cursor])
+  const lookbackRange = useMemo(() => {
+    const start = monthCursorRange(lookbackMonths[0])
+    const end = monthCursorRange(cursor)
+    return { start: start.start, end: end.end }
+  }, [lookbackMonths, cursor])
+
+  const { transactions, loading, error } = useTransactions(lookbackRange)
   const {
     settings,
     loading: planLoading,
     error: planError,
   } = usePyfSettings()
+  const {
+    byId: categoriesById,
+    loading: categoriesLoading,
+    error: categoriesError,
+  } = useCategories('expense', { includeInactive: true })
 
-  const totalIncome = transactions
+  const [bills, setBills] = useState<RecurringBill[]>([])
+  const [overrides, setOverrides] = useState<RecurringBillMonthOverride[]>([])
+  const [recurringLoading, setRecurringLoading] = useState(true)
+  const [recurringError, setRecurringError] = useState<string | null>(null)
+
+  const lookbackStartYm = monthCursorKey(lookbackMonths[0])
+  const lookbackEndYm = monthCursorKey(cursor)
+
+  useEffect(() => {
+    let cancelled = false
+    setRecurringLoading(true)
+    setRecurringError(null)
+    void (async () => {
+      try {
+        const [billRows, overrideRows] = await Promise.all([
+          fetchRecurringBills({ includeInactive: true }),
+          fetchRecurringBillMonthOverridesInRange(
+            lookbackStartYm,
+            lookbackEndYm,
+          ),
+        ])
+        if (cancelled) return
+        setBills(billRows)
+        setOverrides(overrideRows)
+      } catch (err) {
+        if (cancelled) return
+        const message =
+          err instanceof Error ? err.message : 'Failed to load recurring'
+        if (isMissingRecurringSchema(message)) {
+          setBills([])
+          setOverrides([])
+          setRecurringError(null)
+        } else {
+          setRecurringError(message)
+        }
+      } finally {
+        if (!cancelled) setRecurringLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [lookbackStartYm, lookbackEndYm])
+
+  const viewYm = monthCursorKey(cursor)
+  const monthTx = useMemo(
+    () =>
+      transactions.filter((t) => {
+        const key = t.occurred_on.slice(0, 7)
+        return key === viewYm
+      }),
+    [transactions, viewYm],
+  )
+
+  const totalIncome = monthTx
     .filter((t) => t.type === 'income')
     .reduce((sum, t) => sum + t.amount, 0)
-  const needsTotal = transactions
+  const needsTotal = monthTx
     .filter((t) => t.type === 'expense' && budgetGroupOfTx(t) === 'needs')
     .reduce((sum, t) => sum + t.amount, 0)
-  const wantsTotal = transactions
+  const wantsTotal = monthTx
     .filter((t) => t.type === 'expense' && budgetGroupOfTx(t) === 'wants')
+    .reduce((sum, t) => sum + t.amount, 0)
+  const committedPaid = monthTx
+    .filter(
+      (t) =>
+        t.type === 'expense' &&
+        t.is_recurring &&
+        budgetGroupOfTx(t) === 'wants',
+    )
     .reduce((sum, t) => sum + t.amount, 0)
 
   const moneyPlan = useMemo(() => {
@@ -52,13 +145,85 @@ export function PlanNeedsWants() {
     })
   }, [settings, totalIncome, needsTotal, wantsTotal])
 
-  const pageLoading = loading || planLoading
+  const freeWants = useMemo(() => {
+    if (!settings) return null
+    const overridesByMonth = groupOverridesByMonth(overrides)
+    const incomeByMonth = new Map<string, number>()
+    const committedByMonth = new Map<string, number>()
+
+    for (const m of lookbackMonths) {
+      const ym = monthCursorKey(m)
+      incomeByMonth.set(ym, 0)
+      const byBill = overridesByMonth.get(ym) ?? new Map()
+      committedByMonth.set(
+        ym,
+        sumCommittedWants(bills, byBill, categoriesById, ym),
+      )
+    }
+    for (const tx of transactions) {
+      if (tx.type !== 'income') continue
+      const ym = tx.occurred_on.slice(0, 7)
+      if (!incomeByMonth.has(ym)) continue
+      incomeByMonth.set(ym, (incomeByMonth.get(ym) ?? 0) + tx.amount)
+    }
+
+    return buildFreeWantsPace({
+      months: lookbackMonths,
+      incomeByMonth,
+      committedByMonth,
+      freeSpendTxs: transactions.filter(isFreeWantsExpense),
+      emergencyPct: settings.emergency_fund_pct,
+      investmentPct: settings.investment_pct,
+      plannedNeeds: settings.planned_needs_amount,
+      viewMonth: cursor,
+      today: todayIso(),
+    })
+  }, [
+    settings,
+    overrides,
+    lookbackMonths,
+    bills,
+    categoriesById,
+    transactions,
+    cursor,
+  ])
+
+  const pageLoading =
+    loading || planLoading || recurringLoading || categoriesLoading
   const hasSplit = needsTotal > 0 || wantsTotal > 0
+
+  const committedBucket = freeWants
+    ? makeMoneyPlanBucket(
+        'Committed Wants',
+        freeWants.committed,
+        committedPaid,
+        'floor',
+      )
+    : null
+  const freeBucket = freeWants
+    ? makeMoneyPlanBucket(
+        'Free Wants',
+        freeWants.freeBudget,
+        freeWants.freeSpent,
+        'ceiling',
+      )
+    : null
+  const weekBucket =
+    freeWants?.focusWeek != null
+      ? makeMoneyPlanBucket(
+          isCurrentWeekLabel(freeWants.focusWeek.weekMonday, cursor)
+            ? 'This Week'
+            : 'Week Pace',
+          Math.max(0, freeWants.focusWeek.available),
+          freeWants.focusWeek.spent,
+          'ceiling',
+        )
+      : null
 
   return (
     <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
       <PlanSubPage
-        title="Needs vs Wants"
+        title={PlanTitle.needsWants}
         icon={PlanIcon.needsWants}
         description=""
       >
@@ -77,6 +242,16 @@ export function PlanNeedsWants() {
         )}
         {planError && (
           <p className="mt-2 text-center text-sm text-red-500">{planError}</p>
+        )}
+        {recurringError && (
+          <p className="mt-2 text-center text-sm text-red-500">
+            {recurringError}
+          </p>
+        )}
+        {categoriesError && (
+          <p className="mt-2 text-center text-sm text-red-500">
+            {categoriesError}
+          </p>
         )}
 
         {!pageLoading && !moneyPlan && (
@@ -112,9 +287,93 @@ export function PlanNeedsWants() {
                 budget.
               </p>
             )}
+
+            {committedBucket && freeBucket && (
+              <>
+                <p className="pt-2 text-[11px] font-medium uppercase tracking-wide text-neutral-400">
+                  Free Wants Pace
+                </p>
+                <PlanBudgetRow
+                  bucket={committedBucket}
+                  hint="Recurring wants reserved this month"
+                  barClass="bg-violet-400"
+                  mode="floor"
+                />
+                <PlanBudgetRow
+                  bucket={freeBucket}
+                  hint="Reward money after committed wants"
+                  barClass="bg-emerald-500"
+                  mode="ceiling"
+                />
+                {weekBucket && freeWants?.focusWeek && (
+                  <>
+                    <PlanBudgetRow
+                      bucket={weekBucket}
+                      hint={weekHint(freeWants.focusWeek)}
+                      barClass="bg-teal-500"
+                      mode="ceiling"
+                    />
+                    {freeWants.focusWeek.available < 0 && (
+                      <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-200">
+                        Carry debt{' '}
+                        {formatRupiah(
+                          Math.abs(freeWants.focusWeek.available),
+                        )}{' '}
+                        from prior weeks — this week&apos;s base is already used
+                        up.
+                      </p>
+                    )}
+                    {freeWants.focusWeek.available >= 0 &&
+                      freeWants.focusWeek.spent >
+                        freeWants.focusWeek.available && (
+                        <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                          Over this week&apos;s pace — the shortfall carries to
+                          next week.
+                        </p>
+                      )}
+                  </>
+                )}
+              </>
+            )}
           </div>
         )}
       </PlanSubPage>
     </div>
   )
+}
+
+function isCurrentWeekLabel(
+  weekMonday: string,
+  viewCursor: { year: number; month: number },
+): boolean {
+  const today = todayIso()
+  const now = new Date()
+  const isCurrentMonth =
+    now.getFullYear() === viewCursor.year &&
+    now.getMonth() === viewCursor.month
+  if (!isCurrentMonth) return false
+  return mondayOf(today) === weekMonday
+}
+
+function weekHint(week: {
+  weekMonday: string
+  weekSunday: string
+  base: number
+  carryIn: number
+  available: number
+}): string {
+  const range = `${formatShortDay(week.weekMonday)}–${formatShortDay(week.weekSunday)}`
+  if (week.carryIn === 0) {
+    return `${range} · Mon–Sun · carry rolls over`
+  }
+  const carryLabel =
+    week.carryIn > 0
+      ? `+${formatRupiah(week.carryIn)} carry`
+      : `${formatRupiah(week.carryIn)} carry`
+  return `${range} · ${carryLabel}`
+}
+
+function formatShortDay(iso: string): string {
+  const date = new Date(`${iso}T00:00:00`)
+  return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
 }

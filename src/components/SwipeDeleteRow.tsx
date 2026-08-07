@@ -20,6 +20,12 @@ interface SwipeDeleteRowProps {
   contentRef?: Ref<HTMLDivElement>
   highlighted?: boolean
   onContentClick: () => void
+  deleteAriaLabel?: string
+  /**
+   * Trailing controls that slide with the row (e.g. edit).
+   * Stay to the left of the revealed delete action.
+   */
+  trailing?: ReactNode
 }
 
 export function SwipeDeleteRow({
@@ -30,6 +36,8 @@ export function SwipeDeleteRow({
   contentRef,
   highlighted = false,
   onContentClick,
+  deleteAriaLabel = 'Delete',
+  trailing,
 }: SwipeDeleteRowProps) {
   const [offset, setOffset] = useState(0)
   const startX = useRef(0)
@@ -128,38 +136,56 @@ export function SwipeDeleteRow({
             onDelete()
           }}
           className="flex w-full items-center justify-center bg-red-50 text-xl text-red-600 active:bg-red-100 dark:bg-red-950 dark:text-red-400 dark:active:bg-red-900"
-          aria-label="Delete transaction"
+          aria-label={deleteAriaLabel}
         >
           {ActionEmoji.delete}
         </button>
       </div>
 
       <div
-        ref={contentRef}
-        role="button"
-        tabIndex={0}
-        onClick={handleContentClick}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault()
-            handleContentClick()
-          }
+        style={{
+          transform: `translateX(${highlighted ? 0 : offset}px)`,
+          transition: dragging.current ? 'none' : 'transform 180ms ease-out',
         }}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
         onTouchCancel={handleTouchEnd}
-        style={{
-          transform: `translateX(${highlighted ? 0 : offset}px)`,
-          transition: dragging.current ? 'none' : 'transform 180ms ease-out',
-        }}
-        className={`relative z-10 flex w-full items-start gap-3 px-3 py-2.5 text-left shadow-sm ${
+        className={`relative z-10 flex w-full items-center shadow-sm ${
           highlighted
             ? 'tx-row-highlight'
             : 'bg-white dark:bg-neutral-800'
         }`}
       >
-        {children}
+        <div
+          ref={contentRef}
+          role="button"
+          tabIndex={0}
+          onClick={handleContentClick}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              handleContentClick()
+            }
+          }}
+          className="flex min-w-0 flex-1 items-start gap-3 px-3 py-2.5 text-left"
+        >
+          {children}
+        </div>
+        {trailing != null ? (
+          <div
+            className="shrink-0 pr-2"
+            onClick={(e) => {
+              // Keep trailing actions from toggling the row.
+              e.stopPropagation()
+              if (moved.current) {
+                moved.current = false
+              }
+            }}
+          >
+            {trailing}
+          </div>
+        ) : null}
       </div>
     </div>
   )

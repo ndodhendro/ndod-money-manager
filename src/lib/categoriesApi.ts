@@ -114,13 +114,6 @@ export async function addCategory(input: AddCategoryInput): Promise<void> {
     if (!parent.is_active) {
       await showCategory(parent_id)
     }
-    if (input.type === 'expense' && parent.budget_group != null) {
-      const { error: clearParentBudgetError } = await supabase
-        .from('categories')
-        .update({ budget_group: null })
-        .eq('id', parent_id)
-      if (clearParentBudgetError) throw clearParentBudgetError
-    }
   }
 
   const matches = await findInactiveCategoryMatches({
@@ -158,11 +151,20 @@ export async function addCategory(input: AddCategoryInput): Promise<void> {
 
 /** Soft delete — row stays for history mapping. */
 export async function deleteCategory(id: string): Promise<void> {
+  const { data: current, error: currentError } = await supabase
+    .from('categories')
+    .select('parent_id')
+    .eq('id', id)
+    .maybeSingle()
+  if (currentError) throw currentError
+
   const { error } = await supabase
     .from('categories')
     .update({ is_active: false })
     .eq('id', id)
   if (error) throw error
+
+  await ensureLeafParentBudgetGroup(current?.parent_id)
 }
 
 /** @deprecated use deleteCategory */
@@ -245,16 +247,6 @@ export async function renameCategory(
       if (!parent.is_active) {
         await showCategory(nextParentId)
       }
-      if (
-        current.type === 'expense' &&
-        parent.budget_group != null
-      ) {
-        const { error: clearParentBudgetError } = await supabase
-          .from('categories')
-          .update({ budget_group: null })
-          .eq('id', nextParentId)
-        if (clearParentBudgetError) throw clearParentBudgetError
-      }
     }
 
     if (nextParentId !== current.parent_id) {
@@ -264,6 +256,11 @@ export async function renameCategory(
   }
 
   if (Object.keys(update).length === 0) return
+
+  const previousParentId = (current.parent_id as string | null) ?? null
+  const parentMoved =
+    patch.parent_id !== undefined &&
+    patch.parent_id !== current.parent_id
 
   const { error } = await supabase
     .from('categories')
@@ -275,6 +272,46 @@ export async function renameCategory(
     }
     throw error
   }
+
+  if (parentMoved) {
+    await ensureLeafParentBudgetGroup(previousParentId)
+  }
+}
+
+/**
+ * Keep Needs/Wants/Savings visible on an expense main category once it has
+ * no active children. Preserves an existing budget_group; only fills null.
+ */
+async function ensureLeafParentBudgetGroup(
+  parentId: string | null | undefined,
+): Promise<void> {
+  if (!parentId) return
+
+  const { data: parent, error } = await supabase
+    .from('categories')
+    .select('id, type, parent_id, budget_group')
+    .eq('id', parentId)
+    .maybeSingle()
+  if (error) throw error
+  if (!parent || parent.parent_id) return
+  if (parent.type !== 'expense') return
+
+  const { count, error: countError } = await supabase
+    .from('categories')
+    .select('id', { count: 'exact', head: true })
+    .eq('parent_id', parentId)
+    .eq('is_active', true)
+  if (countError) throw countError
+  if ((count ?? 0) > 0) return
+
+  // Already has a group — list UI will show it now that there are no children.
+  if (parent.budget_group != null) return
+
+  const { error: updateError } = await supabase
+    .from('categories')
+    .update({ budget_group: 'needs' })
+    .eq('id', parentId)
+  if (updateError) throw updateError
 }
 
 async function nextSortOrderUnderParent(

@@ -301,12 +301,9 @@ export function CategoryManagePanel({
       await renameCategory(editingId, {
         name: editName.trim(),
         icon: editIcon || '🏷️',
-        ...(type === 'expense'
-          ? {
-              budget_group: isParentWithChildren
-                ? null
-                : (editBudgetGroup ?? 'needs'),
-            }
+        // Parents with children hide budget in the list; never wipe stored group.
+        ...(type === 'expense' && !isParentWithChildren
+          ? { budget_group: editBudgetGroup ?? 'needs' }
           : {}),
         ...(nextParentId !== undefined ? { parent_id: nextParentId } : {}),
       })

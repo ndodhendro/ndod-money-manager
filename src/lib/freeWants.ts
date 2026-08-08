@@ -1,5 +1,6 @@
 import {
   effectiveAmount,
+  isOccurrenceSkipped,
   isRecurringSkipped,
   occurrencesInMonth,
   type RecurringBill,
@@ -95,6 +96,7 @@ export function sumCommittedWants(
   overridesByBillId: Map<string, RecurringBillMonthOverride>,
   categoriesById: Map<string, Category>,
   yearMonth: string,
+  skippedOccurrenceKeys?: Set<string>,
 ): number {
   let sum = 0
   for (const bill of bills) {
@@ -105,7 +107,20 @@ export function sumCommittedWants(
     if (budgetGroupOfCategory(bill.category_id, categoriesById) !== 'wants') {
       continue
     }
-    const count = occurrencesInMonth(bill, yearMonth, override).length
+    let count = 0
+    for (const occurredOn of occurrencesInMonth(bill, yearMonth, override)) {
+      if (
+        isOccurrenceSkipped(
+          bill.id,
+          occurredOn,
+          skippedOccurrenceKeys,
+          override,
+        )
+      ) {
+        continue
+      }
+      count += 1
+    }
     if (count === 0) continue
     sum += effectiveAmount(bill, override) * count
   }
@@ -114,6 +129,7 @@ export function sumCommittedWants(
 
 export function isFreeWantsExpense(tx: TransactionWithCategory): boolean {
   if (tx.type !== 'expense') return false
+  if (tx.complete_later) return false
   if (tx.is_recurring) return false
   return budgetGroupOfTx(tx) === 'wants'
 }

@@ -30,11 +30,12 @@ function attachCategoryParents(
     return {
       ...(row as Omit<
         TransactionWithCategory,
-        'category' | 'from_bucket' | 'to_bucket'
+        'category' | 'from_bucket' | 'to_bucket' | 'complete_later'
       >),
       category_id: (row.category_id as string | null) ?? null,
       from_bucket_id: (row.from_bucket_id as string | null) ?? null,
       to_bucket_id: (row.to_bucket_id as string | null) ?? null,
+      complete_later: row.complete_later === true,
       category: withParent,
       from_bucket: fromBucket,
       to_bucket: toBucket,
@@ -124,6 +125,22 @@ function isMissingBucketsSchema(message: string): boolean {
 }
 
 function validateInput(input: NewTransactionInput): void {
+  if (input.complete_later) {
+    if (!input.description.trim()) {
+      throw new Error('Note is required for Complete Later')
+    }
+    if (input.amount < 0) throw new Error('Amount cannot be negative')
+    if (
+      input.type === 'transfer' &&
+      input.from_bucket_id != null &&
+      input.to_bucket_id != null &&
+      input.from_bucket_id === input.to_bucket_id
+    ) {
+      throw new Error('Pick different from and to')
+    }
+    return
+  }
+
   if (input.amount <= 0) throw new Error('Amount must be greater than 0')
 
   if (input.type === 'transfer') {
@@ -152,6 +169,7 @@ function toBaseRow(input: NewTransactionInput): Record<string, unknown> {
       circle: input.circle,
       occurred_on: input.occurred_on,
       is_recurring: input.is_recurring,
+      complete_later: input.complete_later,
     }
   }
   return {
@@ -163,6 +181,7 @@ function toBaseRow(input: NewTransactionInput): Record<string, unknown> {
     circle: input.circle,
     occurred_on: input.occurred_on,
     is_recurring: input.is_recurring,
+    complete_later: input.complete_later,
   }
 }
 

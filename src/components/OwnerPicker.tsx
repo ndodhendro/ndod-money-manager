@@ -17,6 +17,8 @@ interface OwnerPickerProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   highlighted?: boolean
+  /** Field label above the selected name. */
+  label?: string
 }
 
 export function OwnerPicker({
@@ -25,6 +27,7 @@ export function OwnerPicker({
   open,
   onOpenChange,
   highlighted = false,
+  label = 'Profile',
 }: OwnerPickerProps) {
   useOverlayBack(open, () => {
     onOpenChange(false)
@@ -52,7 +55,7 @@ export function OwnerPicker({
         </span>
         <div className="min-w-0 flex-1">
           <p className="truncate text-[11px] font-medium text-neutral-400">
-            Profile
+            {label}
           </p>
           <p
             className={`truncate text-sm font-medium ${

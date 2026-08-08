@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type TouchEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { CircleBadge } from '../components/CircleBadge'
+import { DueThisMonthChecklist } from '../components/DueThisMonthChecklist'
 import { GroupedListFrame } from '../components/GroupedListFrame'
 import { CollapsibleDayGroup } from '../components/CollapsibleDayGroup'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -10,9 +11,11 @@ import { PageTitle } from '../components/PageTitle'
 import { NavIcon } from '../lib/navTabs'
 import { SwipeDeleteRow } from '../components/SwipeDeleteRow'
 import { useCategories } from '../hooks/useCategories'
+import { useRecurringBills } from '../hooks/useRecurringBills'
 import { useTransactions } from '../hooks/useTransactions'
 import { showAppToast } from '../lib/appToast'
 import { ActionEmoji } from '../lib/actionEmoji'
+import { areAllCollapseOpen } from '../lib/collapseState'
 import {
   AMOUNT_IN_CLASS,
   AMOUNT_OUT_CLASS,
@@ -21,9 +24,19 @@ import {
   formatMonthLabel,
   formatRupiah,
   monthRange,
+  todayIso,
 } from '../lib/format'
 import { requestAmountFocus } from '../lib/keyboardFocus'
-import { areAllCollapseOpen } from '../lib/collapseState'
+import {
+  currentMonthCursor,
+  monthCursorKey,
+} from '../lib/monthCursor'
+import {
+  countDueOrOverdueUnchecked,
+  isOccurrenceSkipped,
+  occurrenceLogKey,
+  occurrencesInMonth,
+} from '../lib/recurringBillsApi'
 import { deleteTransaction } from '../lib/transactionsApi'
 import {
   CIRCLE_LABELS,
@@ -32,10 +45,11 @@ import {
   formatTransferLabel,
   isCircle,
   type Circle,
+  type TransactionWithCategory,
 } from '../lib/types'
 
 type MonthCursor = { year: number; month: number }
-type HistoryLocationState = { highlightTxId?: string }
+type HistoryLocationState = { highlightTxId?: string; focusDue?: boolean }
 type AllFilter = 'all'
 
 const SELECT_CLASS =
@@ -78,8 +92,21 @@ export function History() {
   const [openSwipeId, setOpenSwipeId] = useState<string | null>(null)
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
-  const [dayGroupsExpanded, setDayGroupsExpanded] = useState(true)
-  const [dayGroupsVersion, setDayGroupsVersion] = useState(0)
+  const [collapseTick, setCollapseTick] = useState(0)
+  const [allExpanded, setAllExpanded] = useState(true)
+  const [completeLaterForce, setCompleteLaterForce] = useState({
+    expanded: true,
+    version: 0,
+  })
+  const [historyForce, setHistoryForce] = useState({
+    expanded: true,
+    version: 0,
+  })
+  /** Bumps when outer Transactions frame expand/collapses Due days. */
+  const [dueExpandAll, setDueExpandAll] = useState({
+    expanded: true,
+    version: 0,
+  })
 
   const { parents, childrenByParent, byId } = useCategories()
 
@@ -88,8 +115,16 @@ export function History() {
     (location.state as HistoryLocationState | null)?.highlightTxId ?? null
   const [highlightId, setHighlightId] = useState<string | null>(navHighlightId)
 
+  // FAB opens current-month dues — snap month pager if user was browsing elsewhere.
+  useEffect(() => {
+    const focusDue = (location.state as HistoryLocationState | null)?.focusDue
+    if (!focusDue) return
+    setCursor(currentMonthCursor())
+  }, [location.state])
+
   // Clear nav state separately from the highlight timer — clearing state must
   // not cancel the timeout (that left highlightId stuck and re-glowed on remount).
+  // focusDue is cleared by DueThisMonthChecklist after scroll.
   useEffect(() => {
     if (!navHighlightId) return
     setHighlightId(navHighlightId)
@@ -111,6 +146,38 @@ export function History() {
     [cursor.year, cursor.month],
   )
   const { transactions, loading, error, reload } = useTransactions(range)
+  const yearMonth = monthCursorKey(cursor)
+  const {
+    bills,
+    logByOccurrenceKey,
+    overrideByBillId,
+    skippedOccurrenceKeys,
+    currentMonthDoneByBillId,
+    loading: billsLoading,
+    available: billsAvailable,
+    reload: reloadBills,
+  } = useRecurringBills(yearMonth)
+
+  const dueCount = useMemo(
+    () =>
+      countDueOrOverdueUnchecked(
+        bills,
+        logByOccurrenceKey,
+        cursor,
+        todayIso(),
+        yearMonth,
+        overrideByBillId,
+        skippedOccurrenceKeys,
+      ),
+    [
+      bills,
+      logByOccurrenceKey,
+      cursor,
+      yearMonth,
+      overrideByBillId,
+      skippedOccurrenceKeys,
+    ],
+  )
 
   useEffect(() => {
     if (!highlightId || loading) return
@@ -227,31 +294,301 @@ export function History() {
   })
 
   const monthIncome = filtered
-    .filter((tx) => tx.type === 'income')
+    .filter((tx) => tx.type === 'income' && !tx.complete_later)
     .reduce((sum, tx) => sum + tx.amount, 0)
   const monthExpense = filtered
-    .filter((tx) => tx.type === 'expense')
+    .filter((tx) => tx.type === 'expense' && !tx.complete_later)
     .reduce((sum, tx) => sum + tx.amount, 0)
   const monthNet = monthIncome - monthExpense
 
-  const grouped = filtered.reduce<Record<string, typeof filtered>>(
-    (acc, tx) => {
-      acc[tx.occurred_on] = acc[tx.occurred_on] ?? []
-      acc[tx.occurred_on].push(tx)
-      return acc
-    },
-    {},
+  const completeLaterTxs = filtered.filter((tx) => tx.complete_later)
+  const historyTxs = filtered.filter((tx) => !tx.complete_later)
+
+  function groupByDate(items: TransactionWithCategory[]) {
+    const grouped = items.reduce<Record<string, TransactionWithCategory[]>>(
+      (acc, tx) => {
+        acc[tx.occurred_on] = acc[tx.occurred_on] ?? []
+        acc[tx.occurred_on].push(tx)
+        return acc
+      },
+      {},
+    )
+    const dates = Object.keys(grouped).sort((a, b) => (a < b ? 1 : -1))
+    return { grouped, dates }
+  }
+
+  const completeLaterGrouped = groupByDate(completeLaterTxs)
+  const historyGrouped = groupByDate(historyTxs)
+
+  const completeLaterPersistKeys = useMemo(
+    () =>
+      completeLaterGrouped.dates.map(
+        (date) => `history:complete-later:day:${date}`,
+      ),
+    [completeLaterGrouped.dates],
   )
-  const dates = Object.keys(grouped).sort((a, b) => (a < b ? 1 : -1))
-  const dayPersistKeys = useMemo(
-    () => dates.map((date) => `history:day:${date}`),
-    [dates],
+  const historyPersistKeys = useMemo(
+    () => historyGrouped.dates.map((date) => `history:day:${date}`),
+    [historyGrouped.dates],
+  )
+  const duePersistKeys = useMemo(() => {
+    const today = todayIso()
+    const dates = new Set<string>()
+    for (const bill of bills) {
+      const override = overrideByBillId.get(bill.id)
+      for (const occurredOn of occurrencesInMonth(bill, yearMonth, override)) {
+        if (
+          isOccurrenceSkipped(
+            bill.id,
+            occurredOn,
+            skippedOccurrenceKeys,
+            override,
+          )
+        ) {
+          continue
+        }
+        if (logByOccurrenceKey.has(occurrenceLogKey(bill.id, occurredOn))) {
+          continue
+        }
+        if (occurredOn > today) continue
+        dates.add(occurredOn)
+      }
+    }
+    return [...dates]
+      .sort((a, b) => (a < b ? -1 : 1))
+      .map((date) => `transactions:due:day:${date}`)
+  }, [
+    bills,
+    yearMonth,
+    overrideByBillId,
+    skippedOccurrenceKeys,
+    logByOccurrenceKey,
+  ])
+
+  const allPersistKeys = useMemo(
+    () => [
+      ...completeLaterPersistKeys,
+      ...duePersistKeys,
+      ...historyPersistKeys,
+    ],
+    [completeLaterPersistKeys, duePersistKeys, historyPersistKeys],
   )
 
+  const sectionForceKey = `${completeLaterForce.version}:${historyForce.version}:${dueExpandAll.version}`
+
+  // Keep section / outer chevrons aligned with persisted day open state.
   useEffect(() => {
-    if (dayGroupsVersion > 0) return
-    setDayGroupsExpanded(areAllCollapseOpen(dayPersistKeys, true))
-  }, [dayPersistKeys, dayGroupsVersion])
+    setCompleteLaterForce((prev) => {
+      const expanded = areAllCollapseOpen(completeLaterPersistKeys, true)
+      return prev.expanded === expanded ? prev : { ...prev, expanded }
+    })
+    setHistoryForce((prev) => {
+      const expanded = areAllCollapseOpen(historyPersistKeys, true)
+      return prev.expanded === expanded ? prev : { ...prev, expanded }
+    })
+    setAllExpanded(areAllCollapseOpen(allPersistKeys, true))
+  }, [
+    completeLaterPersistKeys,
+    historyPersistKeys,
+    allPersistKeys,
+    sectionForceKey,
+    collapseTick,
+  ])
+
+  const focusDuePending = Boolean(
+    (location.state as HistoryLocationState | null)?.focusDue,
+  )
+  const hasListContent =
+    completeLaterTxs.length > 0 ||
+    historyTxs.length > 0 ||
+    dueCount > 0 ||
+    (billsAvailable && billsLoading) ||
+    focusDuePending
+
+  function toggleCompleteLater(expanded: boolean) {
+    setCompleteLaterForce((prev) => ({
+      expanded,
+      version: prev.version + 1,
+    }))
+  }
+
+  function toggleHistory(expanded: boolean) {
+    setHistoryForce((prev) => ({
+      expanded,
+      version: prev.version + 1,
+    }))
+  }
+
+  function toggleAllExpanded(expanded: boolean) {
+    setAllExpanded(expanded)
+    setCompleteLaterForce((prev) => ({
+      expanded,
+      version: prev.version + 1,
+    }))
+    setHistoryForce((prev) => ({
+      expanded,
+      version: prev.version + 1,
+    }))
+    setDueExpandAll((prev) => ({
+      expanded,
+      version: prev.version + 1,
+    }))
+  }
+
+  function renderDayGroups(
+    dates: string[],
+    grouped: Record<string, TransactionWithCategory[]>,
+    persistPrefix: string,
+    forceOpen: boolean | undefined,
+    forceVersion: number,
+  ) {
+    return dates.map((date) => {
+      const items = grouped[date]!
+      const dayTotal = items.reduce((sum, tx) => {
+        if (tx.complete_later) return sum
+        if (tx.type === 'expense') return sum - tx.amount
+        if (tx.type === 'income') return sum + tx.amount
+        return sum
+      }, 0)
+      const showDayTotal = items.some((tx) => !tx.complete_later)
+      return (
+        <CollapsibleDayGroup
+          key={`${persistPrefix}:${date}`}
+          title={formatDateLabel(date)}
+          persistKey={`${persistPrefix}:${date}`}
+          forceOpen={forceOpen}
+          forceVersion={forceVersion}
+          onOpenChange={() => setCollapseTick((n) => n + 1)}
+          trailing={
+            showDayTotal ? (
+              <p
+                className={`text-xs font-medium ${amountToneClass(dayTotal >= 0)}`}
+              >
+                {dayTotal < 0 ? '-' : '+'}
+                {formatRupiah(Math.abs(dayTotal))}
+              </p>
+            ) : undefined
+          }
+        >
+          <div className="space-y-2">
+            {items.map((tx) => {
+              const isTransfer = tx.type === 'transfer'
+              const { parentIcon, parentName, childIcon, childName } =
+                isTransfer
+                  ? {
+                      parentIcon: '🔄',
+                      parentName: formatTransferLabel(
+                        tx.from_bucket,
+                        tx.to_bucket,
+                      ),
+                      childIcon: null as string | null,
+                      childName: null as string | null,
+                    }
+                  : categoryDisplayParts(tx.category)
+              const note = tx.description?.trim() || null
+              const isHighlighted = highlightId === tx.id
+              const amountLabel =
+                tx.amount > 0
+                  ? `${
+                      tx.type === 'expense'
+                        ? '-'
+                        : tx.type === 'income'
+                          ? '+'
+                          : ''
+                    }${formatRupiah(tx.amount)}`
+                  : '—'
+
+              return (
+                <SwipeDeleteRow
+                  key={tx.id}
+                  open={openSwipeId === tx.id}
+                  onOpenChange={(open) =>
+                    setOpenSwipeId(open ? tx.id : null)
+                  }
+                  onDelete={() => {
+                    setOpenSwipeId(tx.id)
+                    setPendingDeleteId(tx.id)
+                  }}
+                  contentRef={isHighlighted ? highlightRef : undefined}
+                  highlighted={isHighlighted}
+                  completeLater={tx.complete_later}
+                  onContentClick={() =>
+                    navigate(`/transaksi/${tx.id}`, { replace: true })
+                  }
+                >
+                  <span className="text-xl leading-none" aria-hidden>
+                    {parentIcon}
+                  </span>
+                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
+                      <p className="truncate text-xs font-semibold leading-none text-neutral-800 dark:text-white">
+                        {parentName}
+                      </p>
+                      <OwnerBadge owner={tx.owner} size="inline" />
+                    </div>
+
+                    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
+                      {childName ? (
+                        <p className="flex min-w-0 items-center gap-1 truncate text-xs leading-none text-neutral-400">
+                          <span aria-hidden>{childIcon}</span>
+                          <span className="truncate">{childName}</span>
+                        </p>
+                      ) : isTransfer ? (
+                        <p className="truncate text-xs leading-none text-neutral-400">
+                          Transfer
+                        </p>
+                      ) : (
+                        <span className="invisible truncate text-xs leading-none">
+                          .
+                        </span>
+                      )}
+                      {!isTransfer ? (
+                        <CircleBadge
+                          circle={
+                            isCircle(tx.circle) ? tx.circle : 'hd_family'
+                          }
+                          size="inline"
+                        />
+                      ) : (
+                        <span className="invisible text-xs leading-none">
+                          .
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
+                      {note ? (
+                        <p className="truncate text-xs leading-none text-neutral-500 dark:text-neutral-400">
+                          {note}
+                        </p>
+                      ) : (
+                        <span className="invisible truncate text-xs leading-none">
+                          .
+                        </span>
+                      )}
+                      <p
+                        className={`truncate text-xs font-semibold leading-none whitespace-nowrap ${
+                          tx.amount <= 0
+                            ? 'text-neutral-400'
+                            : tx.type === 'expense'
+                              ? AMOUNT_OUT_CLASS
+                              : tx.type === 'income'
+                                ? AMOUNT_IN_CLASS
+                                : 'text-violet-600 dark:text-violet-300'
+                        }`}
+                      >
+                        {amountLabel}
+                      </p>
+                    </div>
+                  </div>
+                </SwipeDeleteRow>
+              )
+            })}
+          </div>
+        </CollapsibleDayGroup>
+      )
+    })
+  }
 
   return (
     <div
@@ -259,7 +596,7 @@ export function History() {
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
-      <PageTitle icon={NavIcon.history}>History</PageTitle>
+      <PageTitle icon={NavIcon.history}>Transactions</PageTitle>
 
       <MonthPager
         monthLabel={monthLabel}
@@ -369,162 +706,81 @@ export function History() {
       {error && (
         <p className="mt-6 text-center text-sm text-red-500">{error}</p>
       )}
-      {!loading && filtered.length === 0 && (
+      {!loading && !hasListContent && (
         <p className="mt-10 text-center text-sm text-neutral-400">
           No transactions this month.
         </p>
       )}
 
-      {!loading && filtered.length > 0 && (
-        <GroupedListFrame
-          className="mt-4"
-          label="History"
-          expanded={dayGroupsExpanded}
-          onToggle={(expanded) => {
-            setDayGroupsExpanded(expanded)
-            setDayGroupsVersion((v) => v + 1)
-          }}
-        >
-          <div className="space-y-5">
-            {dates.map((date) => {
-          const items = grouped[date]!
-          const dayTotal = items.reduce((sum, tx) => {
-            if (tx.type === 'expense') return sum - tx.amount
-            if (tx.type === 'income') return sum + tx.amount
-            return sum
-          }, 0)
-          return (
-            <CollapsibleDayGroup
-              key={date}
-              title={formatDateLabel(date)}
-              persistKey={`history:day:${date}`}
-              forceOpen={dayGroupsVersion > 0 ? dayGroupsExpanded : undefined}
-              forceVersion={dayGroupsVersion}
-              trailing={
-                <p
-                  className={`text-xs font-medium ${amountToneClass(dayTotal >= 0)}`}
+      {!loading && hasListContent && (
+        <div className="mt-4">
+          <GroupedListFrame
+            label="Transactions"
+            expanded={allExpanded}
+            onToggle={toggleAllExpanded}
+          >
+            <div className="space-y-5">
+              {completeLaterTxs.length > 0 && (
+                <GroupedListFrame
+                  label="Complete Later"
+                  expanded={completeLaterForce.expanded}
+                  onToggle={toggleCompleteLater}
                 >
-                  {dayTotal < 0 ? '-' : '+'}
-                  {formatRupiah(Math.abs(dayTotal))}
-                </p>
-              }
-            >
-              <div className="space-y-2">
-                {items.map((tx) => {
-                  const isTransfer = tx.type === 'transfer'
-                  const {
-                    parentIcon,
-                    parentName,
-                    childIcon,
-                    childName,
-                  } = isTransfer
-                    ? {
-                        parentIcon: '🔄',
-                        parentName: formatTransferLabel(
-                          tx.from_bucket,
-                          tx.to_bucket,
-                        ),
-                        childIcon: null as string | null,
-                        childName: null as string | null,
-                      }
-                    : categoryDisplayParts(tx.category)
-                  const note = tx.description?.trim() || null
-                  const isHighlighted = highlightId === tx.id
+                  <div className="space-y-5">
+                    {renderDayGroups(
+                      completeLaterGrouped.dates,
+                      completeLaterGrouped.grouped,
+                      'history:complete-later:day',
+                      completeLaterForce.version > 0
+                        ? completeLaterForce.expanded
+                        : undefined,
+                      completeLaterForce.version,
+                    )}
+                  </div>
+                </GroupedListFrame>
+              )}
 
-                  return (
-                    <SwipeDeleteRow
-                      key={tx.id}
-                      open={openSwipeId === tx.id}
-                      onOpenChange={(open) =>
-                        setOpenSwipeId(open ? tx.id : null)
-                      }
-                      onDelete={() => {
-                        setOpenSwipeId(tx.id)
-                        setPendingDeleteId(tx.id)
-                      }}
-                      contentRef={isHighlighted ? highlightRef : undefined}
-                      highlighted={isHighlighted}
-                      onContentClick={() =>
-                        navigate(`/transaksi/${tx.id}`, { replace: true })
-                      }
-                    >
-                      <span className="text-xl leading-none" aria-hidden>
-                        {parentIcon}
-                      </span>
-                      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
-                          <p className="truncate text-xs font-semibold leading-none text-neutral-800 dark:text-white">
-                            {parentName}
-                          </p>
-                          <OwnerBadge owner={tx.owner} size="inline" />
-                        </div>
+              <DueThisMonthChecklist
+                cursor={cursor}
+                bills={bills}
+                logByOccurrenceKey={logByOccurrenceKey}
+                overrideByBillId={overrideByBillId}
+                skippedOccurrenceKeys={skippedOccurrenceKeys}
+                currentMonthDoneByBillId={currentMonthDoneByBillId}
+                loading={billsLoading}
+                available={billsAvailable}
+                embedded
+                variant="dueInbox"
+                expandAll={dueExpandAll}
+                onDayOpenChange={() => setCollapseTick((n) => n + 1)}
+                onChanged={() => {
+                  void reloadBills({ silent: true })
+                  void reload({ silent: true })
+                }}
+              />
 
-                        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
-                          {childName ? (
-                            <p className="flex min-w-0 items-center gap-1 truncate text-xs leading-none text-neutral-400">
-                              <span aria-hidden>{childIcon}</span>
-                              <span className="truncate">{childName}</span>
-                            </p>
-                          ) : isTransfer ? (
-                            <p className="truncate text-xs leading-none text-neutral-400">
-                              Transfer
-                            </p>
-                          ) : (
-                            <span className="invisible truncate text-xs leading-none">
-                              .
-                            </span>
-                          )}
-                          {!isTransfer ? (
-                            <CircleBadge
-                              circle={
-                                isCircle(tx.circle) ? tx.circle : 'hd_family'
-                              }
-                              size="inline"
-                            />
-                          ) : (
-                            <span className="invisible text-xs leading-none">
-                              .
-                            </span>
-                          )}
-                        </div>
-
-                        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
-                          {note ? (
-                            <p className="truncate text-xs leading-none text-neutral-500 dark:text-neutral-400">
-                              {note}
-                            </p>
-                          ) : (
-                            <span className="invisible truncate text-xs leading-none">
-                              .
-                            </span>
-                          )}
-                          <p
-                            className={`truncate text-xs font-semibold leading-none whitespace-nowrap ${
-                              tx.type === 'expense'
-                                ? AMOUNT_OUT_CLASS
-                                : tx.type === 'income'
-                                  ? AMOUNT_IN_CLASS
-                                  : 'text-violet-600 dark:text-violet-300'
-                            }`}
-                          >
-                            {tx.type === 'expense'
-                              ? '-'
-                              : tx.type === 'income'
-                                ? '+'
-                                : ''}
-                            {formatRupiah(tx.amount)}
-                          </p>
-                        </div>
-                      </div>
-                    </SwipeDeleteRow>
-                  )
-                })}
-              </div>
-            </CollapsibleDayGroup>
-          )
-        })}
-          </div>
-        </GroupedListFrame>
+              {historyTxs.length > 0 && (
+                <GroupedListFrame
+                  label="History"
+                  expanded={historyForce.expanded}
+                  onToggle={toggleHistory}
+                >
+                  <div className="space-y-5">
+                    {renderDayGroups(
+                      historyGrouped.dates,
+                      historyGrouped.grouped,
+                      'history:day',
+                      historyForce.version > 0
+                        ? historyForce.expanded
+                        : undefined,
+                      historyForce.version,
+                    )}
+                  </div>
+                </GroupedListFrame>
+              )}
+            </div>
+          </GroupedListFrame>
+        </div>
       )}
 
       <ConfirmDialog
@@ -544,14 +800,17 @@ export function History() {
       <button
         type="button"
         onPointerDown={(e) => {
-          // Cegah tombol mencuri fokus dari ghost — kalau tidak, numpad
-          // open → close → open lagi saat claim ke field nominal.
+          // Cegah tombol mencuri fokus dari ghost/amount saat gesture selesai.
+          // Jangan buka numpad di sini — hold masih di History, layar Tambah
+          // belum terlihat; buka di click (release) bersama navigate.
           e.preventDefault()
-          requestAmountFocus()
         }}
-        onClick={() =>
+        onClick={() => {
+          // Masih dalam user gesture → IME boleh muncul; ghost ditahan sampai
+          // Quick Add visible lalu di-claim ke field nominal.
+          requestAmountFocus()
           navigate({ pathname: '/tambah', search: '' }, { replace: true })
-        }
+        }}
         className="fixed right-4 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-20 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500 text-3xl leading-none text-white shadow-lg active:scale-95 active:bg-emerald-600"
         aria-label="Add transaction"
       >

@@ -7,6 +7,7 @@ import {
 import { recurringOccurredOn, type MonthCursor } from './monthCursor'
 import {
   effectiveDueDay,
+  RECURRING_EVERY_OPTIONS,
   type RecurringBill,
   type RecurringBillLog,
   type RecurringBillMonthOverride,
@@ -118,14 +119,35 @@ function compareAmount(a: number, b: number): number {
 }
 
 /**
+ * Index in RECURRING_EVERY_OPTIONS: 1 week → 2 weeks → 1–12 months → 2–10 years.
+ * Unknown combos sort after known options, then by unit then every.
+ */
+function intervalSortRank(bill: RecurringBill): number {
+  const unit = bill.interval_unit ?? 'month'
+  const every = bill.interval_months
+  const idx = RECURRING_EVERY_OPTIONS.findIndex(
+    (o) => o.unit === unit && o.every === every,
+  )
+  if (idx >= 0) return idx
+  // Fallback: weeks after known weeks, months/years after known months.
+  const weekCount = RECURRING_EVERY_OPTIONS.filter((o) => o.unit === 'week')
+    .length
+  if (unit === 'week') return weekCount + every
+  return RECURRING_EVERY_OPTIONS.length + every
+}
+
+/**
  * Shared within-day order (Settings list + Plan checklist):
- * type → category order → subcategory order → amount → circle → owner → note.
+ * interval → type → category order → subcategory order → amount → circle → owner → note.
  */
 export function compareRecurringBillsWithinDay(
   a: RecurringBill,
   b: RecurringBill,
   byId: Map<string, Category>,
 ): number {
+  const byInterval = intervalSortRank(a) - intervalSortRank(b)
+  if (byInterval !== 0) return byInterval
+
   const byType = typeSortRank(a.type) - typeSortRank(b.type)
   if (byType !== 0) return byType
 

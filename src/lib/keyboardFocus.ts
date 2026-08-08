@@ -111,8 +111,10 @@ function focusAmount(el: HTMLInputElement): void {
 }
 
 /**
- * Dipanggil dari pointerdown FAB Tambah (masih dalam user gesture).
- * Caller sebaiknya e.preventDefault() agar tombol tidak mencuri fokus dari ghost.
+ * Dipanggil dari click FAB Tambah (masih dalam user gesture, setelah release).
+ * Jangan panggil di pointerdown — numpad akan muncul di atas History sebelum
+ * layar Tambah terlihat. Caller sebaiknya e.preventDefault() di pointerdown
+ * agar tombol tidak mencuri fokus dari ghost.
  */
 export function requestAmountFocus(): void {
   if (amountInput && isElementVisible(amountInput)) {

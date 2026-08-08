@@ -34,10 +34,12 @@ function monthInflowByBucketId(
     type: string
     amount: number
     to_bucket_id?: string | null
+    complete_later?: boolean
   }>,
 ): Map<string, number> {
   const map = new Map<string, number>()
   for (const tx of transactions) {
+    if (tx.complete_later) continue
     if (tx.type !== 'transfer' || !tx.to_bucket_id) continue
     map.set(tx.to_bucket_id, (map.get(tx.to_bucket_id) ?? 0) + tx.amount)
   }
@@ -94,7 +96,7 @@ export function PlanPayYourselfFirst() {
   const [kindGroupsVersion, setKindGroupsVersion] = useState(0)
 
   const totalIncome = transactions
-    .filter((t) => t.type === 'income')
+    .filter((t) => t.type === 'income' && !t.complete_later)
     .reduce((sum, t) => sum + t.amount, 0)
 
   const savingsActuals = useMemo(

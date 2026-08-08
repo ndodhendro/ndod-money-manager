@@ -38,10 +38,10 @@ export function MoneyPlanScreen() {
   } = useRecurringBills(yearMonth)
 
   const totalIncome = transactions
-    .filter((t) => t.type === 'income')
+    .filter((t) => t.type === 'income' && !t.complete_later)
     .reduce((sum, t) => sum + t.amount, 0)
   const totalExpense = transactions
-    .filter((t) => t.type === 'expense')
+    .filter((t) => t.type === 'expense' && !t.complete_later)
     .reduce((sum, t) => sum + t.amount, 0)
   const net = totalIncome - totalExpense
 

@@ -24,10 +24,13 @@ import { monthCursorKey, monthCursorRange } from '../../lib/monthCursor'
 import { PlanIcon, PlanTitle } from '../../lib/planSections'
 import {
   fetchRecurringBillMonthOverridesInRange,
+  fetchRecurringBillOccurrenceSkipsInRange,
   fetchRecurringBills,
   isMissingRecurringSchema,
+  occurrenceLogKey,
   type RecurringBill,
   type RecurringBillMonthOverride,
+  type RecurringBillOccurrenceSkip,
 } from '../../lib/recurringBillsApi'
 
 export function PlanNeedsWants() {
@@ -61,6 +64,9 @@ export function PlanNeedsWants() {
 
   const [bills, setBills] = useState<RecurringBill[]>([])
   const [overrides, setOverrides] = useState<RecurringBillMonthOverride[]>([])
+  const [occurrenceSkips, setOccurrenceSkips] = useState<
+    RecurringBillOccurrenceSkip[]
+  >([])
   const [recurringLoading, setRecurringLoading] = useState(true)
   const [recurringError, setRecurringError] = useState<string | null>(null)
 
@@ -73,9 +79,13 @@ export function PlanNeedsWants() {
     setRecurringError(null)
     void (async () => {
       try {
-        const [billRows, overrideRows] = await Promise.all([
+        const [billRows, overrideRows, skipRows] = await Promise.all([
           fetchRecurringBills({ includeInactive: true }),
           fetchRecurringBillMonthOverridesInRange(
+            lookbackStartYm,
+            lookbackEndYm,
+          ),
+          fetchRecurringBillOccurrenceSkipsInRange(
             lookbackStartYm,
             lookbackEndYm,
           ),
@@ -83,6 +93,7 @@ export function PlanNeedsWants() {
         if (cancelled) return
         setBills(billRows)
         setOverrides(overrideRows)
+        setOccurrenceSkips(skipRows)
       } catch (err) {
         if (cancelled) return
         const message =
@@ -90,6 +101,7 @@ export function PlanNeedsWants() {
         if (isMissingRecurringSchema(message)) {
           setBills([])
           setOverrides([])
+          setOccurrenceSkips([])
           setRecurringError(null)
         } else {
           setRecurringError(message)
@@ -114,18 +126,29 @@ export function PlanNeedsWants() {
   )
 
   const totalIncome = monthTx
-    .filter((t) => t.type === 'income')
+    .filter((t) => t.type === 'income' && !t.complete_later)
     .reduce((sum, t) => sum + t.amount, 0)
   const needsTotal = monthTx
-    .filter((t) => t.type === 'expense' && budgetGroupOfTx(t) === 'needs')
+    .filter(
+      (t) =>
+        t.type === 'expense' &&
+        !t.complete_later &&
+        budgetGroupOfTx(t) === 'needs',
+    )
     .reduce((sum, t) => sum + t.amount, 0)
   const wantsTotal = monthTx
-    .filter((t) => t.type === 'expense' && budgetGroupOfTx(t) === 'wants')
+    .filter(
+      (t) =>
+        t.type === 'expense' &&
+        !t.complete_later &&
+        budgetGroupOfTx(t) === 'wants',
+    )
     .reduce((sum, t) => sum + t.amount, 0)
   const committedPaid = monthTx
     .filter(
       (t) =>
         t.type === 'expense' &&
+        !t.complete_later &&
         t.is_recurring &&
         budgetGroupOfTx(t) === 'wants',
     )
@@ -148,6 +171,12 @@ export function PlanNeedsWants() {
   const freeWants = useMemo(() => {
     if (!settings) return null
     const overridesByMonth = groupOverridesByMonth(overrides)
+    const skipsByMonth = new Map<string, Set<string>>()
+    for (const row of occurrenceSkips) {
+      const set = skipsByMonth.get(row.year_month) ?? new Set<string>()
+      set.add(occurrenceLogKey(row.bill_id, row.occurred_on))
+      skipsByMonth.set(row.year_month, set)
+    }
     const incomeByMonth = new Map<string, number>()
     const committedByMonth = new Map<string, number>()
 
@@ -157,11 +186,17 @@ export function PlanNeedsWants() {
       const byBill = overridesByMonth.get(ym) ?? new Map()
       committedByMonth.set(
         ym,
-        sumCommittedWants(bills, byBill, categoriesById, ym),
+        sumCommittedWants(
+          bills,
+          byBill,
+          categoriesById,
+          ym,
+          skipsByMonth.get(ym),
+        ),
       )
     }
     for (const tx of transactions) {
-      if (tx.type !== 'income') continue
+      if (tx.type !== 'income' || tx.complete_later) continue
       const ym = tx.occurred_on.slice(0, 7)
       if (!incomeByMonth.has(ym)) continue
       incomeByMonth.set(ym, (incomeByMonth.get(ym) ?? 0) + tx.amount)
@@ -181,6 +216,7 @@ export function PlanNeedsWants() {
   }, [
     settings,
     overrides,
+    occurrenceSkips,
     lookbackMonths,
     bills,
     categoriesById,

@@ -5,7 +5,7 @@ export const PLAN_ACTION_SECTIONS = [
     to: '/rencana/recurring',
     icon: '📆',
     title: 'Recurring Checklist',
-    subtitle: 'Check off dues as you pay them',
+    subtitle: 'Upcoming, checked, and skipped this month',
   },
 ] as const
 

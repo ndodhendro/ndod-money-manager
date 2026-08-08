@@ -208,14 +208,37 @@ export interface RecurringBillMonthOverride {
   year_month: string
   amount: number | null
   due_day: number | null
-  /** Soft-skip for this month only; revive by setting false. */
+  /** Soft-skip for this month only (legacy whole-bill); prefer occurrence skips. */
   skipped: boolean
+}
+
+export interface RecurringBillOccurrenceSkip {
+  id: string
+  bill_id: string
+  year_month: string
+  occurred_on: string
 }
 
 export function isRecurringSkipped(
   override?: RecurringBillMonthOverride | null,
 ): boolean {
   return override?.skipped === true
+}
+
+/** True when this occurrence is skipped (per-date or legacy whole-month). */
+export function isOccurrenceSkipped(
+  billId: string,
+  occurredOn: string,
+  skippedOccurrenceKeys?: Set<string> | Map<string, boolean> | null,
+  override?: RecurringBillMonthOverride | null,
+): boolean {
+  if (isRecurringSkipped(override)) return true
+  if (!skippedOccurrenceKeys) return false
+  const key = occurrenceLogKey(billId, occurredOn)
+  if (skippedOccurrenceKeys instanceof Map) {
+    return skippedOccurrenceKeys.get(key) === true
+  }
+  return skippedOccurrenceKeys.has(key)
 }
 
 export function effectiveAmount(
@@ -400,12 +423,22 @@ export function countDueOrOverdueUnchecked(
   today: string,
   yearMonth: string,
   overrideByBillId?: Map<string, RecurringBillMonthOverride>,
+  skippedOccurrenceKeys?: Set<string>,
 ): number {
   let count = 0
   for (const bill of bills) {
     const override = overrideByBillId?.get(bill.id)
-    if (isRecurringSkipped(override)) continue
     for (const occurredOn of occurrencesInMonth(bill, yearMonth, override)) {
+      if (
+        isOccurrenceSkipped(
+          bill.id,
+          occurredOn,
+          skippedOccurrenceKeys,
+          override,
+        )
+      ) {
+        continue
+      }
       if (occurredOn > today) continue
       if (logByOccurrenceKey.has(occurrenceLogKey(bill.id, occurredOn))) {
         continue
@@ -863,7 +896,8 @@ export async function upsertRecurringBillMonthOverride(
 }
 
 /**
- * Soft-skip (or revive) a checklist item for one month only.
+ * Soft-skip (or revive) a checklist item for one month only (legacy whole-bill).
+ * Prefer setRecurringBillOccurrenceSkipped for weekly multi-occurrence bills.
  * Does not create or delete transactions.
  */
 export async function setRecurringBillMonthSkipped(
@@ -909,6 +943,164 @@ export async function setRecurringBillMonthSkipped(
   )
   notifyRecurringBillsChanged()
   return mapped
+}
+
+function isMissingOccurrenceSkipsSchema(message: string): boolean {
+  const lower = message.toLowerCase()
+  return (
+    lower.includes('recurring_bill_occurrence_skips') ||
+    (lower.includes('occurrence_skips') && lower.includes('does not exist')) ||
+    (lower.includes('could not find') && lower.includes('occurrence_skips'))
+  )
+}
+
+function mapOccurrenceSkip(
+  row: Record<string, unknown>,
+): RecurringBillOccurrenceSkip {
+  return {
+    id: String(row.id),
+    bill_id: String(row.bill_id),
+    year_month: String(row.year_month),
+    occurred_on: String(row.occurred_on).slice(0, 10),
+  }
+}
+
+export async function fetchRecurringBillOccurrenceSkips(
+  yearMonth: string,
+): Promise<RecurringBillOccurrenceSkip[]> {
+  const { data, error } = await supabase
+    .from('recurring_bill_occurrence_skips')
+    .select('*')
+    .eq('year_month', yearMonth)
+  if (error) {
+    if (isMissingOccurrenceSkipsSchema(error.message)) return []
+    throw new Error(error.message)
+  }
+  return (data ?? []).map((row) =>
+    mapOccurrenceSkip(row as Record<string, unknown>),
+  )
+}
+
+export async function fetchRecurringBillOccurrenceSkipsInRange(
+  startYearMonth: string,
+  endYearMonth: string,
+): Promise<RecurringBillOccurrenceSkip[]> {
+  const { data, error } = await supabase
+    .from('recurring_bill_occurrence_skips')
+    .select('*')
+    .gte('year_month', startYearMonth)
+    .lte('year_month', endYearMonth)
+  if (error) {
+    if (isMissingOccurrenceSkipsSchema(error.message)) return []
+    throw new Error(error.message)
+  }
+  return (data ?? []).map((row) =>
+    mapOccurrenceSkip(row as Record<string, unknown>),
+  )
+}
+
+/**
+ * Soft-skip (or restore) a single checklist occurrence.
+ * Weekly bills: only that date moves to Skipped.
+ * If a legacy whole-month skip is set, restore expands it to the other dates.
+ */
+export async function setRecurringBillOccurrenceSkipped(
+  billId: string,
+  yearMonth: string,
+  occurredOn: string,
+  skipped: boolean,
+  monthOccurrenceDates: string[],
+): Promise<void> {
+  if (!/^\d{4}-\d{2}$/.test(yearMonth)) {
+    throw new Error('Month is invalid')
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(occurredOn)) {
+    throw new Error('Date is invalid')
+  }
+
+  const existing = await fetchMonthOverrideRow(billId, yearMonth)
+  const legacyMonthSkip = existing?.skipped === true
+
+  if (skipped) {
+    if (legacyMonthSkip) {
+      // Already whole-month skipped — nothing to add.
+      return
+    }
+    const { error } = await supabase.from('recurring_bill_occurrence_skips').upsert(
+      {
+        bill_id: billId,
+        year_month: yearMonth,
+        occurred_on: occurredOn,
+      },
+      { onConflict: 'bill_id,occurred_on' },
+    )
+    if (error) {
+      if (isMissingOccurrenceSkipsSchema(error.message)) {
+        throw new Error(
+          'Run migrate_recurring_occurrence_skips.sql in Supabase to enable skip per occurrence',
+        )
+      }
+      throw new Error(error.message)
+    }
+    notifyRecurringBillsChanged()
+    return
+  }
+
+  // Restore this occurrence.
+  if (legacyMonthSkip) {
+    const others = monthOccurrenceDates.filter((d) => d !== occurredOn)
+    if (others.length > 0) {
+      const { error: insertError } = await supabase
+        .from('recurring_bill_occurrence_skips')
+        .upsert(
+          others.map((d) => ({
+            bill_id: billId,
+            year_month: yearMonth,
+            occurred_on: d,
+          })),
+          { onConflict: 'bill_id,occurred_on' },
+        )
+      if (insertError) {
+        if (isMissingOccurrenceSkipsSchema(insertError.message)) {
+          throw new Error(
+            'Run migrate_recurring_occurrence_skips.sql in Supabase to enable skip per occurrence',
+          )
+        }
+        throw new Error(insertError.message)
+      }
+    }
+    if (existing.amount == null && existing.due_day == null) {
+      await clearRecurringBillMonthOverride(billId, yearMonth)
+    } else {
+      await upsertMonthOverrideRow(
+        {
+          bill_id: billId,
+          year_month: yearMonth,
+          amount: existing.amount,
+          due_day: existing.due_day,
+          skipped: false,
+        },
+        { requireSkipped: true },
+      )
+    }
+    notifyRecurringBillsChanged()
+    return
+  }
+
+  const { error } = await supabase
+    .from('recurring_bill_occurrence_skips')
+    .delete()
+    .eq('bill_id', billId)
+    .eq('occurred_on', occurredOn)
+  if (error) {
+    if (isMissingOccurrenceSkipsSchema(error.message)) {
+      throw new Error(
+        'Run migrate_recurring_occurrence_skips.sql in Supabase to enable skip per occurrence',
+      )
+    }
+    throw new Error(error.message)
+  }
+  notifyRecurringBillsChanged()
 }
 
 export async function clearRecurringBillMonthOverride(

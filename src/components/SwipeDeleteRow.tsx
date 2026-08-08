@@ -19,6 +19,8 @@ interface SwipeDeleteRowProps {
   /** Ref ke konten depan (opsional, untuk highlight scroll). */
   contentRef?: Ref<HTMLDivElement>
   highlighted?: boolean
+  /** Persistent gold glow (Complete Later placeholders). */
+  completeLater?: boolean
   onContentClick: () => void
   deleteAriaLabel?: string
   /**
@@ -35,6 +37,7 @@ export function SwipeDeleteRow({
   onDelete,
   contentRef,
   highlighted = false,
+  completeLater = false,
   onContentClick,
   deleteAriaLabel = 'Delete',
   trailing,
@@ -121,7 +124,13 @@ export function SwipeDeleteRow({
   const actionVisible = !highlighted && (open || offset < -1)
 
   return (
-    <div className="relative overflow-hidden rounded-xl">
+    <div
+      className={`relative overflow-hidden rounded-xl ${
+        !highlighted && completeLater
+          ? 'border-2 recurring-variable-highlight'
+          : ''
+      }`}
+    >
       <div
         className={`absolute inset-y-0 right-0 flex w-[76px] transition-opacity duration-150 ${
           actionVisible ? 'opacity-100' : 'pointer-events-none opacity-0'

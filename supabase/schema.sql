@@ -38,14 +38,24 @@ create table if not exists categories (
   created_at timestamptz not null default now()
 );
 
--- Satu nama aktif per type + sibling (inactive boleh duplikat; revive on add).
-create unique index if not exists categories_name_parent_active_uidx
+-- Satu nama aktif per type + sibling + budget_group (inactive boleh duplikat; revive on add).
+-- Expense: unique includes Needs/Wants/Savings. Income uses the null-budget partial index.
+create unique index if not exists categories_name_parent_budget_active_uidx
+  on categories (
+    type,
+    name,
+    (coalesce(parent_id, '00000000-0000-0000-0000-000000000000'::uuid)),
+    budget_group
+  )
+  where is_active = true and budget_group is not null;
+
+create unique index if not exists categories_name_parent_active_null_budget_uidx
   on categories (
     type,
     name,
     (coalesce(parent_id, '00000000-0000-0000-0000-000000000000'::uuid))
   )
-  where is_active = true;
+  where is_active = true and budget_group is null;
 
 create index if not exists categories_parent_id_idx on categories (parent_id);
 create index if not exists categories_type_active_idx on categories (type, is_active);
@@ -82,14 +92,16 @@ create table if not exists transactions (
   category_id uuid references categories(id) on delete set null,
   from_bucket_id uuid references buckets(id) on delete restrict,
   to_bucket_id uuid references buckets(id) on delete restrict,
-  amount numeric(14, 2) not null check (amount > 0),
+  amount numeric(14, 2) not null,
   description text,
   owner owner_type not null,
   circle circle_type not null default 'hd_family',
   occurred_on date not null default current_date,
   is_recurring boolean not null default false,
+  complete_later boolean not null default false,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  constraint transactions_amount_check check (amount > 0 or complete_later = true)
 );
 
 create index if not exists transactions_occurred_on_idx on transactions (occurred_on desc);
@@ -97,6 +109,9 @@ create index if not exists transactions_category_id_idx on transactions (categor
 create index if not exists transactions_circle_idx on transactions (circle);
 create index if not exists transactions_from_bucket_idx on transactions (from_bucket_id);
 create index if not exists transactions_to_bucket_idx on transactions (to_bucket_id);
+create index if not exists transactions_complete_later_idx
+  on transactions (complete_later)
+  where complete_later = true;
 
 create or replace function set_updated_at()
 returns trigger as $$
@@ -210,6 +225,18 @@ create table if not exists recurring_bill_month_overrides (
 create index if not exists recurring_bill_month_overrides_month_idx
   on recurring_bill_month_overrides (year_month);
 
+-- Per-occurrence soft-skip (weekly: skip one date without skipping the month).
+create table if not exists recurring_bill_occurrence_skips (
+  id uuid primary key default gen_random_uuid(),
+  bill_id uuid not null references recurring_bills(id) on delete cascade,
+  year_month text not null,
+  occurred_on date not null,
+  unique (bill_id, occurred_on)
+);
+
+create index if not exists recurring_bill_occurrence_skips_month_idx
+  on recurring_bill_occurrence_skips (year_month);
+
 -- ============================================================
 -- Row Level Security
 -- Tidak ada login/auth di app ini (lihat catatan desain). Akses pakai anon
@@ -226,6 +253,7 @@ alter table debts enable row level security;
 alter table recurring_bills enable row level security;
 alter table recurring_bill_logs enable row level security;
 alter table recurring_bill_month_overrides enable row level security;
+alter table recurring_bill_occurrence_skips enable row level security;
 
 drop policy if exists "categories_anon_all" on categories;
 create policy "categories_anon_all" on categories for all to anon using (true) with check (true);
@@ -255,6 +283,10 @@ create policy "recurring_bill_logs_anon_all" on recurring_bill_logs
 
 drop policy if exists "recurring_bill_month_overrides_anon_all" on recurring_bill_month_overrides;
 create policy "recurring_bill_month_overrides_anon_all" on recurring_bill_month_overrides
+  for all to anon using (true) with check (true);
+
+drop policy if exists "recurring_bill_occurrence_skips_anon_all" on recurring_bill_occurrence_skips;
+create policy "recurring_bill_occurrence_skips_anon_all" on recurring_bill_occurrence_skips
   for all to anon using (true) with check (true);
 
 -- ============================================================

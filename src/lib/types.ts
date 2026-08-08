@@ -115,6 +115,8 @@ export interface Transaction {
   circle: Circle
   occurred_on: string
   is_recurring: boolean
+  /** Placeholder to finish later; note required, other fields optional. */
+  complete_later: boolean
   created_at: string
   updated_at: string
 }
@@ -136,6 +138,19 @@ export interface NewTransactionInput {
   circle: Circle
   occurred_on: string
   is_recurring: boolean
+  complete_later: boolean
+}
+
+/** True when input meets normal (non–Complete Later) required fields. */
+export function isTransactionFullySpecified(input: NewTransactionInput): boolean {
+  if (input.amount <= 0) return false
+  if (input.type === 'transfer') {
+    if (input.from_bucket_id === input.to_bucket_id) return false
+    if (!input.from_bucket_id && !input.to_bucket_id) return false
+    return true
+  }
+  if (!input.category_id) return false
+  return true
 }
 
 export function formatTransferLabel(

@@ -35,8 +35,17 @@ function isDuplicateActiveError(message: string): boolean {
   return (
     lower.includes('duplicate') ||
     lower.includes('unique') ||
-    lower.includes('categories_name_parent_active')
+    lower.includes('categories_name_parent_active') ||
+    lower.includes('categories_name_parent_budget_active') ||
+    lower.includes('categories_name_parent_active_null_budget')
   )
+}
+
+function duplicateActiveNameError(
+  parentId: string | null | undefined,
+): Error {
+  const kind = parentId ? 'subcategory' : 'category'
+  return new Error(`An active ${kind} with this name already exists`)
 }
 
 async function nextCategorySortOrder(): Promise<number> {
@@ -143,7 +152,7 @@ export async function addCategory(input: AddCategoryInput): Promise<void> {
   })
   if (error) {
     if (isDuplicateActiveError(error.message)) {
-      throw new Error('An active category with this name already exists')
+      throw duplicateActiveNameError(parent_id)
     }
     throw error
   }
@@ -268,7 +277,11 @@ export async function renameCategory(
     .eq('id', id)
   if (error) {
     if (isDuplicateActiveError(error.message)) {
-      throw new Error('An active category with this name already exists')
+      const effectiveParentId =
+        patch.parent_id !== undefined
+          ? patch.parent_id
+          : ((current.parent_id as string | null) ?? null)
+      throw duplicateActiveNameError(effectiveParentId)
     }
     throw error
   }

@@ -17,7 +17,7 @@ export function RecurringChecklistFab() {
   const navigate = useNavigate()
   const location = useLocation()
   const yearMonth = monthCursorKey(currentMonthCursor())
-  const { bills, logByOccurrenceKey, overrideByBillId, loading, available, reload } =
+  const { bills, logByOccurrenceKey, overrideByBillId, skippedOccurrenceKeys, loading, available, reload } =
     useRecurringBills(yearMonth)
   const skipPathReload = useRef(true)
 
@@ -38,14 +38,14 @@ export function RecurringChecklistFab() {
         todayIso(),
         yearMonth,
         overrideByBillId,
+        skippedOccurrenceKeys,
       ),
-    [bills, logByOccurrenceKey, overrideByBillId, yearMonth],
+    [bills, logByOccurrenceKey, overrideByBillId, skippedOccurrenceKeys, yearMonth],
   )
 
   const hide =
     location.pathname === '/tambah' ||
-    location.pathname.startsWith('/transaksi/') ||
-    location.pathname === '/rencana/recurring'
+    location.pathname.startsWith('/transaksi/')
 
   if (hide || loading || !available || dueCount === 0) return null
 
@@ -53,7 +53,7 @@ export function RecurringChecklistFab() {
     <button
       type="button"
       onClick={() =>
-        navigate('/rencana/recurring', {
+        navigate('/riwayat', {
           replace: true,
           state: { focusDue: true },
         })
@@ -62,8 +62,8 @@ export function RecurringChecklistFab() {
       style={{
         top: 'calc(0.5rem + env(safe-area-inset-top))',
       }}
-      aria-label={`Recurring checklist, ${dueCount} due`}
-      title="Recurring checklist"
+      aria-label={`Due recurring, ${dueCount} due`}
+      title="Due recurring"
     >
       <span aria-hidden>{RECURRING_SECTION.icon}</span>
       <span className="absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-red-500 px-0.5 text-[8px] font-semibold leading-none text-white">

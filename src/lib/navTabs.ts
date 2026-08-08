@@ -1,6 +1,6 @@
 /** Bottom nav destinations — icons stay single-sourced with page titles. */
 export const NAV_TABS = [
-  { to: '/riwayat', label: 'History', icon: '🧾' },
+  { to: '/riwayat', label: 'Transactions', icon: '🧾' },
   { to: '/dashboard', label: 'Dashboard', icon: '📊' },
   { to: '/rencana', label: 'Plan', icon: '🎯' },
   { to: '/pengaturan', label: 'Settings', icon: '⚙️' },

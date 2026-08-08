@@ -17,6 +17,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog'
 import { DatePickerField } from '../components/DatePickerField'
 import { NotesInput } from '../components/NotesInput'
 import { OwnerBadge } from '../components/OwnerBadge'
+import { OwnerPicker } from '../components/OwnerPicker'
 import { PageTitle } from '../components/PageTitle'
 import { useBuckets } from '../hooks/useBuckets'
 import { useCategories } from '../hooks/useCategories'
@@ -44,8 +45,10 @@ import {
 } from '../lib/transactionsApi'
 import {
   isCircle,
+  isTransactionFullySpecified,
   type CategoryType,
   type Circle,
+  type NewTransactionInput,
   type Owner,
   type TransactionType,
 } from '../lib/types'
@@ -76,6 +79,8 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   const [occurredOn, setOccurredOn] = useState(todayIso())
   const [owner, setOwner] = useState<Owner>(profileOwner)
   const [circle, setCircle] = useState<Circle | null>(null)
+  const [completeLater, setCompleteLater] = useState(false)
+  const [ownerOpen, setOwnerOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [loadingExisting, setLoadingExisting] = useState(isEditing)
   const [circleOpen, setCircleOpen] = useState(false)
@@ -87,6 +92,8 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   const amountRef = useRef<HTMLInputElement | null>(null)
   const descriptionRef = useRef<HTMLInputElement>(null)
   const wasActiveRef = useRef(false)
+  /** True if this edit session opened an existing Complete Later placeholder. */
+  const loadedAsCompleteLaterRef = useRef(false)
 
   const amountCallbackRef = useCallback(
     (el: HTMLInputElement | null) => {
@@ -127,7 +134,8 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
       if (cancelled) return
       if (!error && data) {
         setType(data.type as TransactionType)
-        setAmountDigits(String(Math.round(Number(data.amount))))
+        const amt = Number(data.amount)
+        setAmountDigits(amt > 0 ? String(Math.round(amt)) : '')
         setCategoryId(data.category_id)
         setFromBucket(
           data.type === 'transfer'
@@ -142,6 +150,9 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         setDescription(data.description ?? '')
         setOccurredOn(data.occurred_on)
         setOwner(data.owner)
+        const wasCompleteLater = data.complete_later === true
+        loadedAsCompleteLaterRef.current = wasCompleteLater
+        setCompleteLater(wasCompleteLater)
         if ((data.type as TransactionType) === 'income') {
           setCircle('hd_family')
         } else if (isCircle(data.circle)) {
@@ -173,6 +184,9 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     setOccurredOn(todayIso())
     setOwner(getStoredProfile() ?? 'suami')
     setCircle(nextType === 'income' ? 'hd_family' : null)
+    setCompleteLater(false)
+    loadedAsCompleteLaterRef.current = false
+    setOwnerOpen(false)
     setCircleOpen(false)
     setCategoryOpen(false)
     setFromOpen(false)
@@ -224,6 +238,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   function findIncompleteAbove(
     from: 'circle' | 'category' | 'description' | 'save' | 'from' | 'to',
   ): 'amount' | 'circle' | 'category' | 'from' | 'to' | null {
+    if (completeLater) return null
     if (!isAmountFilled()) return 'amount'
     if (type === 'transfer') {
       if (from !== 'circle' && !circle) return 'circle'
@@ -352,6 +367,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   }
 
   function focusNextAfterDate() {
+    if (completeLater) return
     if (!isAmountFilled()) {
       focusAmountField()
       return
@@ -384,6 +400,13 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   function advanceOrFixAbove(
     from: 'amount' | 'circle' | 'category' | 'description' | 'save' | 'from' | 'to',
   ): boolean {
+    if (completeLater) {
+      if (from === 'amount') {
+        focusNextEmptyField('amount')
+        return true
+      }
+      return true
+    }
     if (from === 'amount') {
       if (!isAmountFilled()) {
         focusAmountField('Enter the amount first')
@@ -482,7 +505,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   function handleCircleOpenChange(open: boolean) {
     if (type === 'income') return
     if (open) {
-      if (!isAmountFilled()) {
+      if (!completeLater && !isAmountFilled()) {
         focusAmountField('Enter the amount first')
         return
       }
@@ -498,11 +521,11 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
 
   function handleCategoryOpenChange(open: boolean) {
     if (open) {
-      if (!isAmountFilled()) {
+      if (!completeLater && !isAmountFilled()) {
         focusAmountField('Enter the amount first')
         return
       }
-      if (type !== 'income' && !circle) {
+      if (!completeLater && type !== 'income' && !circle) {
         focusCircleField('Pick a circle first')
         return
       }
@@ -513,11 +536,11 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
 
   function handleFromOpenChange(open: boolean) {
     if (open) {
-      if (!isAmountFilled()) {
+      if (!completeLater && !isAmountFilled()) {
         focusAmountField('Enter the amount first')
         return
       }
-      if (!circle) {
+      if (!completeLater && !circle) {
         focusCircleField('Pick a circle first')
         return
       }
@@ -529,15 +552,15 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
 
   function handleToOpenChange(open: boolean) {
     if (open) {
-      if (!isAmountFilled()) {
+      if (!completeLater && !isAmountFilled()) {
         focusAmountField('Enter the amount first')
         return
       }
-      if (!circle) {
+      if (!completeLater && !circle) {
         focusCircleField('Pick a circle first')
         return
       }
-      if (fromBucket === undefined) {
+      if (!completeLater && fromBucket === undefined) {
         focusFromField('Pick a source first')
         return
       }
@@ -550,7 +573,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   function handleCircleSelect(next: Circle) {
     setCircle(next)
     setCircleOpen(false)
-    if (!isAmountFilled()) {
+    if (!completeLater && !isAmountFilled()) {
       focusAmountField('Enter the amount first')
       return
     }
@@ -573,11 +596,11 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     if (toBucket !== undefined && toBucket === next) {
       setToBucket(undefined)
     }
-    if (!isAmountFilled()) {
+    if (!completeLater && !isAmountFilled()) {
       focusAmountField('Enter the amount first')
       return
     }
-    if (!circle) {
+    if (!completeLater && !circle) {
       focusCircleField('Pick a circle first')
       return
     }
@@ -589,11 +612,11 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   function handleToSelect(next: BucketSelection) {
     setToBucket(next)
     setToOpen(false)
-    if (!isAmountFilled()) {
+    if (!completeLater && !isAmountFilled()) {
       focusAmountField('Enter the amount first')
       return
     }
-    if (!circle) {
+    if (!completeLater && !circle) {
       focusCircleField('Pick a circle first')
       return
     }
@@ -613,20 +636,40 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   function handleCategorySelect(id: string) {
     setCategoryId(id)
     setCategoryOpen(false)
-    if (!isAmountFilled()) {
+    if (!completeLater && !isAmountFilled()) {
       focusAmountField('Enter the amount first')
       return
     }
-    if (type !== 'income' && !circle) {
+    if (!completeLater && type !== 'income' && !circle) {
       focusCircleField('Pick a circle first')
     }
   }
 
   function handleDescriptionFocus() {
+    if (completeLater) return
     const incomplete = findIncompleteAbove('description')
     if (incomplete) {
       descriptionRef.current?.blur()
       focusIncompleteField(incomplete)
+    }
+  }
+
+  function handleCompleteLaterChange(checked: boolean) {
+    setCompleteLater(checked)
+    setCircleOpen(false)
+    setCategoryOpen(false)
+    setFromOpen(false)
+    setToOpen(false)
+    if (checked) {
+      // Default PIC to the other profile (partner being helped).
+      if (!isEditing) {
+        setOwner(profileOwner === 'suami' ? 'istri' : 'suami')
+      }
+      // Open Profile picker so PIC is obvious — don't jump focus to Note.
+      setOwnerOpen(true)
+    } else {
+      setOwnerOpen(false)
+      if (!isEditing) setOwner(profileOwner)
     }
   }
 
@@ -660,70 +703,111 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   }
 
   async function handleSave() {
-    if (!advanceOrFixAbove('save')) return
-
-    const numericAmount = Number(amountDigits)
-
-    if (type === 'transfer') {
-      if (!isTransferReady()) return
-      if (fromBucket === toBucket) {
+    if (completeLater) {
+      if (!description.trim()) {
+        showAppToast('Enter a note first')
+        descriptionRef.current?.focus()
+        return
+      }
+      if (
+        type === 'transfer' &&
+        fromBucket !== undefined &&
+        toBucket !== undefined &&
+        fromBucket === toBucket
+      ) {
         showAppToast('Pick different from and to')
         return
       }
-      if (fromBucket == null && toBucket == null) {
-        showAppToast('Transfer needs at least one bucket')
+    } else {
+      if (!advanceOrFixAbove('save')) return
+
+      if (type === 'transfer') {
+        if (!isTransferReady()) return
+        if (fromBucket === toBucket) {
+          showAppToast('Pick different from and to')
+          return
+        }
+        if (fromBucket == null && toBucket == null) {
+          showAppToast('Transfer needs at least one bucket')
+          return
+        }
+        if (!circle) return
+      } else if (type === 'income') {
+        if (!categoryId) return
+      } else if (!circle || !categoryId) {
         return
       }
-      if (!circle) return
-    } else if (type === 'income') {
-      if (!categoryId) return
-    } else if (!circle || !categoryId) {
-      return
+    }
+
+    const numericAmount = Number(amountDigits) || 0
+    const resolvedCircle: Circle =
+      type === 'income'
+        ? 'hd_family'
+        : (circle ?? getStoredCircle() ?? 'hd_family')
+
+    const resolvedOwner: Owner =
+      isEditing || completeLater ? owner : profileOwner
+
+    const draft: NewTransactionInput =
+      type === 'transfer'
+        ? {
+            type: 'transfer',
+            category_id: null,
+            from_bucket_id: fromBucket ?? null,
+            to_bucket_id: toBucket ?? null,
+            amount: numericAmount,
+            description,
+            owner: resolvedOwner,
+            circle: resolvedCircle,
+            occurred_on: occurredOn,
+            is_recurring: false,
+            complete_later: completeLater,
+          }
+        : {
+            type,
+            category_id: categoryId,
+            from_bucket_id: null,
+            to_bucket_id: null,
+            amount: numericAmount,
+            description,
+            owner: resolvedOwner,
+            circle: resolvedCircle,
+            occurred_on: occurredOn,
+            is_recurring: false,
+            complete_later: completeLater,
+          }
+
+    // Only auto-clear when finishing an existing placeholder — not when the
+    // user newly flags a completed transaction as Complete Later.
+    let autoCompleted = false
+    if (
+      isEditing &&
+      loadedAsCompleteLaterRef.current &&
+      draft.complete_later &&
+      isTransactionFullySpecified(draft)
+    ) {
+      draft.complete_later = false
+      autoCompleted = true
     }
 
     setSaving(true)
     try {
-      const resolvedCircle: Circle =
-        type === 'income' ? 'hd_family' : circle!
-      const input =
-        type === 'transfer'
-          ? {
-              type: 'transfer' as const,
-              category_id: null,
-              from_bucket_id: fromBucket ?? null,
-              to_bucket_id: toBucket ?? null,
-              amount: numericAmount,
-              description,
-              owner: isEditing ? owner : profileOwner,
-              circle: resolvedCircle,
-              occurred_on: occurredOn,
-              is_recurring: false,
-            }
-          : {
-              type,
-              category_id: categoryId!,
-              from_bucket_id: null,
-              to_bucket_id: null,
-              amount: numericAmount,
-              description,
-              owner: isEditing ? owner : profileOwner,
-              circle: resolvedCircle,
-              occurred_on: occurredOn,
-              is_recurring: false,
-            }
-
       if (isEditing && id) {
-        await updateTransaction(id, input)
-        if (input.type !== 'income') setStoredCircle(input.circle)
+        await updateTransaction(id, draft)
+        if (draft.type !== 'income') setStoredCircle(draft.circle)
+        if (autoCompleted) {
+          showAppToast(`Completed ${ActionEmoji.save}`)
+          setCompleteLater(false)
+        }
         dismissNumericKeyboard()
         navigate('/riwayat', {
           replace: true,
           state: { highlightTxId: id },
         })
       } else {
-        const newId = await createTransaction(input)
-        if (input.category_id) bumpCategoryUsage(input.category_id)
-        if (input.type !== 'income') setStoredCircle(input.circle)
+        const newId = await createTransaction(draft)
+        if (draft.category_id) bumpCategoryUsage(draft.category_id)
+        if (draft.type !== 'income') setStoredCircle(draft.circle)
         void reloadBuckets()
         resetForm()
         showAppToast(`Saved ${ActionEmoji.save}`)
@@ -771,7 +855,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
             onPointerDown={() => dismissNumericKeyboard()}
             onClick={goBackToHistory}
             className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xl text-neutral-600 active:bg-neutral-100 dark:text-neutral-300 dark:active:bg-neutral-800"
-            aria-label="Back to History"
+            aria-label="Back to Transactions"
           >
             ←
           </button>
@@ -780,7 +864,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
           </PageTitle>
         </div>
         <OwnerBadge
-          owner={isEditing ? owner : profileOwner}
+          owner={isEditing || completeLater ? owner : profileOwner}
           size="md"
         />
       </div>
@@ -817,9 +901,46 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         />
       </label>
 
-      <label className="mt-5 block">
+      <label className="mt-5 flex cursor-pointer items-center gap-2.5 select-none">
+        <input
+          type="checkbox"
+          checked={completeLater}
+          onChange={(e) => handleCompleteLaterChange(e.target.checked)}
+          className="h-4 w-4 rounded border-neutral-300 text-amber-500 accent-amber-500"
+        />
+        <span className="text-sm font-medium text-neutral-700 dark:text-neutral-200">
+          Complete Later
+        </span>
+      </label>
+
+      {completeLater ? (
+        <div className="mt-3">
+          <OwnerPicker
+            label="Profile"
+            value={owner}
+            onChange={(next) => {
+              setOwner(next)
+              setOwnerOpen(false)
+              window.setTimeout(() => descriptionRef.current?.focus(), 0)
+            }}
+            open={ownerOpen}
+            onOpenChange={(open) => {
+              setOwnerOpen(open)
+              if (open) {
+                setCircleOpen(false)
+                setCategoryOpen(false)
+                setFromOpen(false)
+                setToOpen(false)
+              }
+            }}
+            highlighted={ownerOpen}
+          />
+        </div>
+      ) : null}
+
+      <label className="mt-3 block">
         <span className="mb-1.5 block text-sm font-medium text-neutral-600 dark:text-neutral-300">
-          Amount
+          Amount{completeLater ? ' (optional)' : ''}
         </span>
         <div className="flex items-center gap-2 rounded-xl bg-white px-4 py-3 shadow-sm dark:bg-neutral-800">
           <span className="text-sm font-medium text-neutral-400">Rp</span>
@@ -912,10 +1033,12 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
           value={description}
           onChange={setDescription}
           categoryId={isTransfer ? null : categoryId}
-          owner={isEditing ? owner : profileOwner}
+          owner={isEditing || completeLater ? owner : profileOwner}
           onFocus={handleDescriptionFocus}
           onKeyDown={handleDescriptionKeyDown}
-          placeholder="Note (optional)"
+          placeholder={
+            completeLater ? 'Note (required)' : 'Note (optional)'
+          }
         />
       </div>
 

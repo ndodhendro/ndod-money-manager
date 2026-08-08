@@ -18,11 +18,11 @@ import { getStoredProfile } from '../lib/profile'
 import {
   effectiveAmount,
   effectiveDueDay,
-  isRecurringSkipped,
+  isOccurrenceSkipped,
   markBillPaid,
   occurrenceLogKey,
   occurrencesInMonth,
-  setRecurringBillMonthSkipped,
+  setRecurringBillOccurrenceSkipped,
   unmarkBillPaid,
   upsertRecurringBillMonthOverride,
   type RecurringBill,
@@ -44,8 +44,12 @@ export type RecurringFocusState = { focusDue?: boolean }
 
 const EMPTY_OVERRIDE_BY_BILL_ID = new Map<string, RecurringBillMonthOverride>()
 const EMPTY_LOG_BY_OCCURRENCE = new Map<string, RecurringBillLog>()
+const EMPTY_SKIPPED_OCCURRENCE_KEYS = new Set<string>()
 
-type ChecklistStatus = 'unchecked' | 'checked' | 'skipped'
+type ChecklistStatus = 'due' | 'unchecked' | 'checked' | 'skipped'
+
+/** plan = upcoming/checked/skipped; dueInbox = due/overdue only (Transactions). */
+export type RecurringChecklistVariant = 'plan' | 'dueInbox'
 
 interface DueThisMonthChecklistProps {
   cursor: MonthCursor
@@ -55,15 +59,26 @@ interface DueThisMonthChecklistProps {
   /** @deprecated Prefer logByOccurrenceKey. */
   logByBillId?: Map<string, RecurringBillLog>
   overrideByBillId?: Map<string, RecurringBillMonthOverride>
+  /** Occurrence keys (`billId:occurredOn`) soft-skipped this month. */
+  skippedOccurrenceKeys?: Set<string>
   /** Bills already checked in the calendar current month (for "X left"). */
   currentMonthDoneByBillId?: Set<string>
   loading: boolean
   available: boolean
   onChanged: () => void
   embedded?: boolean
+  variant?: RecurringChecklistVariant
+  /**
+   * Parent expand/collapse-all (Transactions outer frame). Version bump forces
+   * Due section + day groups open/closed together.
+   */
+  expandAll?: { expanded: boolean; version: number }
+  /** Fired when a Due day group is toggled (parent syncs outer chevron). */
+  onDayOpenChange?: () => void
 }
 
 function dayPersistKey(status: ChecklistStatus, date: string): string {
+  if (status === 'due') return `transactions:due:day:${date}`
   return `plan:recurring:${status}:day:${date}`
 }
 
@@ -112,12 +127,12 @@ function ChecklistCheckbox({ checked }: { checked: boolean }) {
 function firstDueUncheckedKey(
   items: RecurringChecklistOccurrence[],
   logByOccurrenceKey: Map<string, RecurringBillLog>,
-  isSkipped: (billId: string) => boolean,
+  isSkipped: (billId: string, occurredOn: string) => boolean,
 ): string | null {
   const today = todayIso()
   for (const item of items) {
     if (logByOccurrenceKey.has(item.key)) continue
-    if (isSkipped(item.bill.id)) continue
+    if (isSkipped(item.bill.id, item.occurredOn)) continue
     if (item.occurredOn <= today) return item.key
   }
   return null
@@ -157,11 +172,15 @@ export function DueThisMonthChecklist({
   logByOccurrenceKey: logByOccurrenceKeyProp,
   logByBillId,
   overrideByBillId: overrideByBillIdProp,
+  skippedOccurrenceKeys: skippedOccurrenceKeysProp,
   currentMonthDoneByBillId,
   loading,
   available,
   onChanged,
   embedded = false,
+  variant = 'plan',
+  expandAll,
+  onDayOpenChange,
 }: DueThisMonthChecklistProps) {
   const location = useLocation()
   const navigate = useNavigate()
@@ -170,10 +189,11 @@ export function DueThisMonthChecklist({
   const [focusOccurrenceKey, setFocusOccurrenceKey] = useState<string | null>(
     null,
   )
-  /** Per-status expand-all for date groups inside Unchecked / Checked / Skipped. */
+  /** Per-status expand-all for date groups inside Due / Unchecked / Checked / Skipped. */
   const [sectionDayForce, setSectionDayForce] = useState<
     Record<ChecklistStatus, { expanded: boolean; version: number }>
   >({
+    due: { expanded: true, version: 0 },
     unchecked: { expanded: true, version: 0 },
     checked: { expanded: true, version: 0 },
     skipped: { expanded: true, version: 0 },
@@ -191,23 +211,28 @@ export function DueThisMonthChecklist({
   } | null>(null)
   const [savingOverride, setSavingOverride] = useState(false)
   const [openSwipeId, setOpenSwipeId] = useState<string | null>(null)
-  const [pendingSkipBill, setPendingSkipBill] = useState<RecurringBill | null>(
-    null,
-  )
-  const [pendingRestoreBill, setPendingRestoreBill] =
-    useState<RecurringBill | null>(null)
+  const [pendingSkip, setPendingSkip] = useState<{
+    bill: RecurringBill
+    occurredOn: string
+  } | null>(null)
+  const [pendingRestore, setPendingRestore] = useState<{
+    bill: RecurringBill
+    occurredOn: string
+  } | null>(null)
   const [skipping, setSkipping] = useState(false)
   const [restoring, setRestoring] = useState(false)
   /** Local check state while the server catch-up reload is in flight. */
   const [pendingDone, setPendingDone] = useState<Map<string, boolean>>(
     () => new Map(),
   )
-  /** Local skip state while reload catches up. */
+  /** Local skip state while reload catches up (occurrence keys). */
   const [pendingSkipped, setPendingSkipped] = useState<Map<string, boolean>>(
     () => new Map(),
   )
   const yearMonth = monthCursorKey(cursor)
   const overrideByBillId = overrideByBillIdProp ?? EMPTY_OVERRIDE_BY_BILL_ID
+  const skippedOccurrenceKeys =
+    skippedOccurrenceKeysProp ?? EMPTY_SKIPPED_OCCURRENCE_KEYS
   const baseLogByOccurrenceKey = useMemo(
     () =>
       resolveLogMap(
@@ -247,15 +272,25 @@ export function DueThisMonthChecklist({
       if (prev.size === 0) return prev
       const next = new Map(prev)
       let changed = false
-      for (const [id, skipped] of prev) {
-        if (isRecurringSkipped(overrideByBillId.get(id)) === skipped) {
-          next.delete(id)
+      for (const [key, skipped] of prev) {
+        const sep = key.indexOf(':')
+        if (sep < 0) continue
+        const billId = key.slice(0, sep)
+        const occurredOn = key.slice(sep + 1)
+        const serverSkipped = isOccurrenceSkipped(
+          billId,
+          occurredOn,
+          skippedOccurrenceKeys,
+          overrideByBillId.get(billId),
+        )
+        if (serverSkipped === skipped) {
+          next.delete(key)
           changed = true
         }
       }
       return changed ? next : prev
     })
-  }, [overrideByBillId])
+  }, [overrideByBillId, skippedOccurrenceKeys])
 
   const effectiveLogByOccurrenceKey = useMemo(() => {
     if (pendingDone.size === 0) return baseLogByOccurrenceKey
@@ -281,9 +316,15 @@ export function DueThisMonthChecklist({
     return map
   }, [baseLogByOccurrenceKey, pendingDone, yearMonth])
 
-  function isSkipped(billId: string): boolean {
-    if (pendingSkipped.has(billId)) return pendingSkipped.get(billId) === true
-    return isRecurringSkipped(overrideByBillId.get(billId))
+  function isSkipped(billId: string, occurredOn: string): boolean {
+    const key = occurrenceLogKey(billId, occurredOn)
+    if (pendingSkipped.has(key)) return pendingSkipped.get(key) === true
+    return isOccurrenceSkipped(
+      billId,
+      occurredOn,
+      skippedOccurrenceKeys,
+      overrideByBillId.get(billId),
+    )
   }
 
   const occurrenceItems = useMemo(() => {
@@ -306,15 +347,21 @@ export function DueThisMonthChecklist({
   }, [bills, yearMonth, overrideByBillId, effectiveLogByOccurrenceKey, byId])
 
   const statusSections = useMemo(() => {
+    const due: RecurringChecklistOccurrence[] = []
     const unchecked: RecurringChecklistOccurrence[] = []
     const checked: RecurringChecklistOccurrence[] = []
     const skipped: RecurringChecklistOccurrence[] = []
+    const today = todayIso()
     for (const item of occurrenceItems) {
-      if (isSkipped(item.bill.id)) {
+      if (isSkipped(item.bill.id, item.occurredOn)) {
         skipped.push(item)
         continue
       }
-      if (effectiveLogByOccurrenceKey.has(item.key)) checked.push(item)
+      if (effectiveLogByOccurrenceKey.has(item.key)) {
+        checked.push(item)
+        continue
+      }
+      if (item.occurredOn <= today) due.push(item)
       else unchecked.push(item)
     }
     const sections: Array<{
@@ -322,6 +369,16 @@ export function DueThisMonthChecklist({
       label: string
       groups: Array<[string, RecurringChecklistOccurrence[]]>
     }> = []
+    if (variant === 'dueInbox') {
+      if (due.length > 0) {
+        sections.push({
+          status: 'due',
+          label: 'Due',
+          groups: groupOccurrencesByDate(due, 'asc'),
+        })
+      }
+      return sections
+    }
     if (unchecked.length > 0) {
       sections.push({
         status: 'unchecked',
@@ -350,10 +407,13 @@ export function DueThisMonthChecklist({
     effectiveLogByOccurrenceKey,
     overrideByBillId,
     pendingSkipped,
+    skippedOccurrenceKeys,
+    variant,
   ])
 
   const dayPersistKeysByStatus = useMemo(() => {
     const map: Record<ChecklistStatus, string[]> = {
+      due: [],
       unchecked: [],
       checked: [],
       skipped: [],
@@ -368,6 +428,7 @@ export function DueThisMonthChecklist({
 
   const dayPersistKeys = useMemo(
     () => [
+      ...dayPersistKeysByStatus.due,
       ...dayPersistKeysByStatus.unchecked,
       ...dayPersistKeysByStatus.checked,
       ...dayPersistKeysByStatus.skipped,
@@ -375,13 +436,18 @@ export function DueThisMonthChecklist({
     [dayPersistKeysByStatus],
   )
 
-  const sectionDayForceKey = `${sectionDayForce.unchecked.version}:${sectionDayForce.checked.version}:${sectionDayForce.skipped.version}`
+  const sectionDayForceKey = `${sectionDayForce.due.version}:${sectionDayForce.unchecked.version}:${sectionDayForce.checked.version}:${sectionDayForce.skipped.version}`
 
   useEffect(() => {
     setSectionDayForce((prev) => {
       let changed = false
       const next = { ...prev }
-      for (const status of ['unchecked', 'checked', 'skipped'] as const) {
+      for (const status of [
+        'due',
+        'unchecked',
+        'checked',
+        'skipped',
+      ] as const) {
         const expanded = areAllCollapseOpen(
           dayPersistKeysByStatus[status],
           true,
@@ -417,14 +483,37 @@ export function DueThisMonthChecklist({
   function toggleAllExpanded(expanded: boolean) {
     setAllExpanded(expanded)
     setSectionDayForce((prev) => ({
+      due: { expanded, version: prev.due.version + 1 },
       unchecked: { expanded, version: prev.unchecked.version + 1 },
       checked: { expanded, version: prev.checked.version + 1 },
       skipped: { expanded, version: prev.skipped.version + 1 },
     }))
   }
 
-  // FAB → scroll to first due/overdue unchecked item (current month only).
+  // Parent Transactions outer frame → expand/collapse Due days.
   useEffect(() => {
+    if (variant !== 'dueInbox') return
+    if (!expandAll || expandAll.version === 0) return
+    setSectionDayForce((prev) => ({
+      ...prev,
+      due: {
+        expanded: expandAll.expanded,
+        version: prev.due.version + 1,
+      },
+    }))
+  }, [variant, expandAll?.version, expandAll?.expanded])
+
+  // After Due section/day force settles, let parent re-sync outer chevron.
+  useEffect(() => {
+    if (variant !== 'dueInbox') return
+    if (sectionDayForce.due.version === 0) return
+    onDayOpenChange?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- version is the intentional trigger
+  }, [variant, sectionDayForce.due.version])
+
+  // FAB → scroll to first due/overdue item (Transactions dueInbox, current month).
+  useEffect(() => {
+    if (variant !== 'dueInbox') return
     const focusDue = (location.state as RecurringFocusState | null)?.focusDue
     if (!focusDue || loading) return
     if (monthCursorKey(cursor) !== monthCursorKey(currentMonthCursor())) return
@@ -439,14 +528,16 @@ export function DueThisMonthChecklist({
 
     const target = occurrenceItems.find((item) => item.key === targetKey)
     if (!target) return
-    setCollapseOpen(dayPersistKey('unchecked', target.occurredOn), true)
+    setCollapseOpen(dayPersistKey('due', target.occurredOn), true)
     setSectionDayForce((prev) => ({
       ...prev,
-      unchecked: { expanded: true, version: prev.unchecked.version + 1 },
+      due: { expanded: true, version: prev.due.version + 1 },
     }))
+    setAllExpanded(true)
     setFocusOccurrenceKey(targetKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- isSkipped via pendingSkipped
   }, [
+    variant,
     location.state,
     loading,
     occurrenceItems,
@@ -471,16 +562,26 @@ export function DueThisMonthChecklist({
     () =>
       occurrenceItems.filter(
         (item) =>
-          effectiveLogByOccurrenceKey.has(item.key) && !isSkipped(item.bill.id),
+          effectiveLogByOccurrenceKey.has(item.key) &&
+          !isSkipped(item.bill.id, item.occurredOn),
       ).length,
     // eslint-disable-next-line react-hooks/exhaustive-deps -- isSkipped via pendingSkipped
-    [occurrenceItems, effectiveLogByOccurrenceKey, pendingSkipped, overrideByBillId],
+    [
+      occurrenceItems,
+      effectiveLogByOccurrenceKey,
+      pendingSkipped,
+      overrideByBillId,
+      skippedOccurrenceKeys,
+    ],
   )
 
   const activeCount = useMemo(
-    () => occurrenceItems.filter((item) => !isSkipped(item.bill.id)).length,
+    () =>
+      occurrenceItems.filter(
+        (item) => !isSkipped(item.bill.id, item.occurredOn),
+      ).length,
     // eslint-disable-next-line react-hooks/exhaustive-deps -- isSkipped via pendingSkipped
-    [occurrenceItems, pendingSkipped, overrideByBillId],
+    [occurrenceItems, pendingSkipped, overrideByBillId, skippedOccurrenceKeys],
   )
 
   async function handleToggle(
@@ -491,7 +592,7 @@ export function DueThisMonthChecklist({
   ) {
     const key = occurrenceLogKey(bill.id, occurredOn)
     if (busyKey) return
-    if (isSkipped(bill.id)) return
+    if (isSkipped(bill.id, occurredOn)) return
     setBusyKey(key)
     setPendingDone((prev) => {
       const next = new Map(prev)
@@ -557,6 +658,7 @@ export function DueThisMonthChecklist({
                 circle,
                 occurred_on: occurredOn,
                 is_recurring: true,
+                complete_later: false,
               }
             : {
                 type: bill.type,
@@ -569,6 +671,7 @@ export function DueThisMonthChecklist({
                 circle,
                 occurred_on: occurredOn,
                 is_recurring: true,
+                complete_later: false,
               },
         )
         await markBillPaid({
@@ -615,24 +718,37 @@ export function DueThisMonthChecklist({
   }
 
   async function confirmSkip() {
-    const bill = pendingSkipBill
-    if (!bill || skipping) return
+    const pending = pendingSkip
+    if (!pending || skipping) return
+    const { bill, occurredOn } = pending
+    const key = occurrenceLogKey(bill.id, occurredOn)
+    const monthDates = occurrencesInMonth(
+      bill,
+      yearMonth,
+      overrideByBillId.get(bill.id),
+    )
     setSkipping(true)
     setPendingSkipped((prev) => {
       const next = new Map(prev)
-      next.set(bill.id, true)
+      next.set(key, true)
       return next
     })
     try {
-      await setRecurringBillMonthSkipped(bill.id, yearMonth, true)
-      setPendingSkipBill(null)
+      await setRecurringBillOccurrenceSkipped(
+        bill.id,
+        yearMonth,
+        occurredOn,
+        true,
+        monthDates,
+      )
+      setPendingSkip(null)
       setOpenSwipeId(null)
       showAppToast(`Skipped ${ActionEmoji.delete}`)
       onChanged()
     } catch (err) {
       setPendingSkipped((prev) => {
         const next = new Map(prev)
-        next.delete(bill.id)
+        next.delete(key)
         return next
       })
       showAppToast(err instanceof Error ? err.message : 'Failed to skip')
@@ -642,23 +758,36 @@ export function DueThisMonthChecklist({
   }
 
   async function confirmRestore() {
-    const bill = pendingRestoreBill
-    if (!bill || restoring) return
+    const pending = pendingRestore
+    if (!pending || restoring) return
+    const { bill, occurredOn } = pending
+    const key = occurrenceLogKey(bill.id, occurredOn)
+    const monthDates = occurrencesInMonth(
+      bill,
+      yearMonth,
+      overrideByBillId.get(bill.id),
+    )
     setRestoring(true)
     setPendingSkipped((prev) => {
       const next = new Map(prev)
-      next.set(bill.id, false)
+      next.set(key, false)
       return next
     })
     try {
-      await setRecurringBillMonthSkipped(bill.id, yearMonth, false)
-      setPendingRestoreBill(null)
+      await setRecurringBillOccurrenceSkipped(
+        bill.id,
+        yearMonth,
+        occurredOn,
+        false,
+        monthDates,
+      )
+      setPendingRestore(null)
       showAppToast(`Restored ${ActionEmoji.restore}`)
       onChanged()
     } catch (err) {
       setPendingSkipped((prev) => {
         const next = new Map(prev)
-        next.delete(bill.id)
+        next.delete(key)
         return next
       })
       showAppToast(err instanceof Error ? err.message : 'Failed to restore')
@@ -703,6 +832,7 @@ export function DueThisMonthChecklist({
   }
 
   if (!available) {
+    if (variant === 'dueInbox') return null
     return (
       <section className={embedded ? '' : 'mt-6'}>
         {!embedded && (
@@ -720,6 +850,7 @@ export function DueThisMonthChecklist({
   }
 
   if (loading && bills.length === 0) {
+    if (variant === 'dueInbox') return null
     return (
       <section className={embedded ? '' : 'mt-6'}>
         <p className="text-sm text-neutral-400">Loading…</p>
@@ -727,17 +858,37 @@ export function DueThisMonthChecklist({
     )
   }
 
-  if (occurrenceItems.length === 0) {
+  if (occurrenceItems.length === 0 || statusSections.length === 0) {
+    if (variant === 'dueInbox') return null
+    if (occurrenceItems.length === 0) {
+      return (
+        <section className={embedded ? '' : 'mt-6'}>
+          {!embedded && (
+            <p className="mb-2 text-sm font-medium text-neutral-600 dark:text-neutral-300">
+              This month
+            </p>
+          )}
+          <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
+            No recurring items yet. Add them in Settings → Recurring.
+          </p>
+        </section>
+      )
+    }
+    // Only dues remain — they live on Transactions.
+    const onlyDuesNote = (
+      <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
+        Nothing upcoming, checked, or skipped. Due bills are on Transactions.
+      </p>
+    )
+    if (embedded) return onlyDuesNote
     return (
-      <section className={embedded ? '' : 'mt-6'}>
+      <section className="mt-6">
         {!embedded && (
           <p className="mb-2 text-sm font-medium text-neutral-600 dark:text-neutral-300">
             This month
           </p>
         )}
-        <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
-          No recurring items yet. Add them in Settings → Recurring.
-        </p>
+        {onlyDuesNote}
       </section>
     )
   }
@@ -746,231 +897,223 @@ export function DueThisMonthChecklist({
     ? overrideByBillId.get(editingBill.id)
     : undefined
 
-  const content = (
-    <>
-      <GroupedListFrame
-        label={embedded ? 'Recurring Checklist' : 'Recurring this month'}
-        expanded={allExpanded}
-        onToggle={toggleAllExpanded}
-      >
-        <div className="space-y-5">
-          {statusSections.map((section) => {
-            const force = sectionDayForce[section.status]
-            return (
-              <GroupedListFrame
-                key={section.status}
-                label={section.label}
-                expanded={force.expanded}
-                onToggle={(expanded) =>
-                  toggleSectionDays(section.status, expanded)
-                }
+  function renderStatusSections() {
+    return statusSections.map((section) => {
+      const force = sectionDayForce[section.status]
+      return (
+        <GroupedListFrame
+          key={section.status}
+          label={section.label}
+          expanded={force.expanded}
+          onToggle={(expanded) => toggleSectionDays(section.status, expanded)}
+        >
+          <div className="space-y-5">
+            {section.groups.map(([date, items]) => (
+              <CollapsibleDayGroup
+                key={`${section.status}-${date}`}
+                title={formatDateLabel(date)}
+                persistKey={dayPersistKey(section.status, date)}
+                forceOpen={force.version > 0 ? force.expanded : undefined}
+                forceVersion={force.version}
+                onOpenChange={() => {
+                  setCollapseTick((n) => n + 1)
+                  onDayOpenChange?.()
+                }}
               >
-                <div className="space-y-5">
-                  {section.groups.map(([date, items]) => (
-                    <CollapsibleDayGroup
-                      key={`${section.status}-${date}`}
-                      title={formatDateLabel(date)}
-                      persistKey={dayPersistKey(section.status, date)}
-                      forceOpen={
-                        force.version > 0 ? force.expanded : undefined
-                      }
-                      forceVersion={force.version}
-                      onOpenChange={() => {
-                        setCollapseTick((n) => n + 1)
-                      }}
-                    >
-                      <div className="space-y-2">
-                        {items.map((item) => {
-                          const { bill, occurredOn, key } = item
-                          const skipped = section.status === 'skipped'
-                          const done =
-                            !skipped && effectiveLogByOccurrenceKey.has(key)
-                          const busy = busyKey === key
-                          const override = overrideByBillId.get(bill.id)
-                          const amount = effectiveAmount(bill, override)
-                          const dueDay = effectiveDueDay(bill, override)
-                          const dueOrOverdue =
-                            section.status === 'unchecked' &&
-                            occurredOn <= todayIso()
-                          const variableDue =
-                            dueOrOverdue && bill.variable_amount === true
-                          const justChecked = justCheckedKey === key
-                          const displayBill = {
-                            ...bill,
-                            amount,
-                            due_day: dueDay,
-                          }
-                          const display = getRecurringBillDisplayParts(
-                            bill,
-                            byId,
-                            bucketsById,
-                          )
-                          const label =
-                            bill.name.trim() ||
-                            display.parentName ||
-                            'recurring item'
-                          const currentMonthDone =
-                            yearMonth === monthCursorKey(currentMonthCursor())
-                              ? done
-                              : (currentMonthDoneByBillId?.has(bill.id) ??
-                                false)
-                          const rowId = `recurring-bill-${key}`
-                          const rowInner = (
-                            <>
-                              {!skipped ? (
-                                <span className="shrink-0">
-                                  <ChecklistCheckbox checked={done} />
-                                </span>
-                              ) : null}
-                              <div className="flex min-w-0 flex-1 items-center gap-3">
-                                <RecurringBillRowContent
-                                  bill={displayBill}
-                                  display={display}
-                                  done={done}
-                                  inactive={skipped}
-                                  monthCursor={cursor}
-                                  occurredOn={occurredOn}
-                                  currentMonthDone={currentMonthDone}
-                                />
-                              </div>
-                            </>
-                          )
+                <div className="space-y-2">
+                  {items.map((item) => {
+                    const { bill, occurredOn, key } = item
+                    const skipped = section.status === 'skipped'
+                    const done =
+                      !skipped && effectiveLogByOccurrenceKey.has(key)
+                    const busy = busyKey === key
+                    const override = overrideByBillId.get(bill.id)
+                    const amount = effectiveAmount(bill, override)
+                    const dueDay = effectiveDueDay(bill, override)
+                    const dueOrOverdue =
+                      (section.status === 'due' ||
+                        section.status === 'unchecked') &&
+                      occurredOn <= todayIso()
+                    const variableDue =
+                      dueOrOverdue && bill.variable_amount === true
+                    const justChecked = justCheckedKey === key
+                    const displayBill = {
+                      ...bill,
+                      amount,
+                      due_day: dueDay,
+                    }
+                    const display = getRecurringBillDisplayParts(
+                      bill,
+                      byId,
+                      bucketsById,
+                    )
+                    const label =
+                      bill.name.trim() ||
+                      display.parentName ||
+                      'recurring item'
+                    const currentMonthDone =
+                      yearMonth === monthCursorKey(currentMonthCursor())
+                        ? done
+                        : (currentMonthDoneByBillId?.has(bill.id) ?? false)
+                    const rowId = `recurring-bill-${key}`
+                    const rowInner = (
+                      <>
+                        {!skipped ? (
+                          <span className="shrink-0">
+                            <ChecklistCheckbox checked={done} />
+                          </span>
+                        ) : null}
+                        <div className="flex min-w-0 flex-1 items-center gap-3">
+                          <RecurringBillRowContent
+                            bill={displayBill}
+                            display={display}
+                            done={done}
+                            inactive={skipped}
+                            monthCursor={cursor}
+                            occurredOn={occurredOn}
+                            currentMonthDone={currentMonthDone}
+                          />
+                        </div>
+                      </>
+                    )
 
-                          if (skipped) {
-                            return (
-                              <div
-                                key={key}
-                                id={rowId}
-                                className="relative flex w-full items-center gap-1 rounded-xl border-2 border-transparent bg-white shadow-sm dark:bg-neutral-800"
-                              >
-                                <div className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5">
-                                  {rowInner}
-                                </div>
-                                <button
-                                  type="button"
-                                  disabled={busy || restoring}
-                                  onClick={() => setPendingRestoreBill(bill)}
-                                  aria-label={`Restore ${label}`}
-                                  title="Restore"
-                                  className="mr-2 shrink-0 rounded-lg px-2 py-2 text-base leading-none disabled:opacity-60"
-                                >
-                                  {ActionEmoji.restore}
-                                </button>
-                              </div>
-                            )
-                          }
+                    if (skipped) {
+                      return (
+                        <div
+                          key={key}
+                          id={rowId}
+                          className="relative flex w-full items-center gap-1 rounded-xl border-2 border-transparent bg-white shadow-sm dark:bg-neutral-800"
+                        >
+                          <div className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5">
+                            {rowInner}
+                          </div>
+                          <button
+                            type="button"
+                            disabled={busy || restoring}
+                            onClick={() =>
+                              setPendingRestore({ bill, occurredOn })
+                            }
+                            aria-label={`Restore ${label}`}
+                            title="Restore"
+                            className="mr-2 shrink-0 rounded-lg px-2 py-2 text-base leading-none disabled:opacity-60"
+                          >
+                            {ActionEmoji.restore}
+                          </button>
+                        </div>
+                      )
+                    }
 
-                          if (section.status === 'unchecked') {
-                            return (
-                              <div
-                                key={key}
-                                id={rowId}
-                                className={`rounded-xl border-2 transition-colors ${
-                                  justChecked
-                                    ? 'border-transparent'
-                                    : variableDue
-                                      ? 'recurring-variable-highlight'
-                                      : dueOrOverdue
-                                        ? 'recurring-due-highlight'
-                                        : 'border-transparent'
-                                }`}
-                              >
-                                <SwipeDeleteRow
-                                  open={openSwipeId === key}
-                                  onOpenChange={(open) =>
-                                    setOpenSwipeId(open ? key : null)
-                                  }
-                                  onDelete={() => {
-                                    setOpenSwipeId(key)
-                                    setPendingSkipBill(bill)
-                                  }}
-                                  deleteAriaLabel={`Skip ${label} for this month`}
-                                  highlighted={justChecked}
-                                  onContentClick={() => {
-                                    if (busy) return
-                                    if (done) {
-                                      void handleToggle(bill, occurredOn, true)
-                                    } else {
-                                      requestCheck(bill, occurredOn)
-                                    }
-                                  }}
-                                  trailing={
-                                    <button
-                                      type="button"
-                                      disabled={busy || savingOverride}
-                                      onClick={() => {
-                                        openAmountEdit(bill, occurredOn, {
-                                          focusAmount: false,
-                                          checkAfterSave: false,
-                                        })
-                                      }}
-                                      aria-label={`Edit ${label} for this month`}
-                                      title="Edit This Month"
-                                      className="rounded-lg px-2 py-2 text-base leading-none disabled:opacity-60"
-                                    >
-                                      {ActionEmoji.edit}
-                                    </button>
-                                  }
-                                >
-                                  {rowInner}
-                                </SwipeDeleteRow>
-                              </div>
-                            )
-                          }
-
-                          return (
-                            <div
-                              key={key}
-                              id={rowId}
-                              className={`relative flex w-full items-center gap-1 rounded-xl border-2 shadow-sm transition-colors ${
-                                justChecked
-                                  ? 'border-transparent tx-row-highlight'
-                                  : 'border-transparent bg-white dark:bg-neutral-800'
-                              }`}
-                            >
+                    if (
+                      section.status === 'unchecked' ||
+                      section.status === 'due'
+                    ) {
+                      return (
+                        <div
+                          key={key}
+                          id={rowId}
+                          className={`rounded-xl border-2 transition-colors ${
+                            justChecked
+                              ? 'border-transparent'
+                              : variableDue
+                                ? 'recurring-variable-highlight'
+                                : dueOrOverdue
+                                  ? 'recurring-due-highlight'
+                                  : 'border-transparent'
+                          }`}
+                        >
+                          <SwipeDeleteRow
+                            open={openSwipeId === key}
+                            onOpenChange={(open) =>
+                              setOpenSwipeId(open ? key : null)
+                            }
+                            onDelete={() => {
+                              setOpenSwipeId(key)
+                              setPendingSkip({ bill, occurredOn })
+                            }}
+                            deleteAriaLabel={`Skip ${label} for this month`}
+                            highlighted={justChecked}
+                            onContentClick={() => {
+                              if (busy) return
+                              if (done) {
+                                void handleToggle(bill, occurredOn, true)
+                              } else {
+                                requestCheck(bill, occurredOn)
+                              }
+                            }}
+                            trailing={
                               <button
                                 type="button"
-                                disabled={busy}
+                                disabled={busy || savingOverride}
                                 onClick={() => {
-                                  if (done) {
-                                    void handleToggle(bill, occurredOn, true)
-                                  } else {
-                                    requestCheck(bill, occurredOn)
-                                  }
+                                  openAmountEdit(bill, occurredOn, {
+                                    focusAmount: false,
+                                    checkAfterSave: false,
+                                  })
                                 }}
-                                aria-label={
-                                  done ? `Uncheck ${label}` : `Check ${label}`
-                                }
-                                className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left disabled:opacity-60"
+                                aria-label={`Edit ${label} for this month`}
+                                title="Edit This Month"
+                                className="rounded-lg px-2 py-2 text-base leading-none disabled:opacity-60"
                               >
-                                {rowInner}
+                                {ActionEmoji.edit}
                               </button>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </CollapsibleDayGroup>
-                  ))}
-                </div>
-              </GroupedListFrame>
-            )
-          })}
-        </div>
-      </GroupedListFrame>
+                            }
+                          >
+                            {rowInner}
+                          </SwipeDeleteRow>
+                        </div>
+                      )
+                    }
 
+                    return (
+                      <div
+                        key={key}
+                        id={rowId}
+                        className={`relative flex w-full items-center gap-1 rounded-xl border-2 shadow-sm transition-colors ${
+                          justChecked
+                            ? 'border-transparent tx-row-highlight'
+                            : 'border-transparent bg-white dark:bg-neutral-800'
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => {
+                            if (done) {
+                              void handleToggle(bill, occurredOn, true)
+                            } else {
+                              requestCheck(bill, occurredOn)
+                            }
+                          }}
+                          aria-label={
+                            done ? `Uncheck ${label}` : `Check ${label}`
+                          }
+                          className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left disabled:opacity-60"
+                        >
+                          {rowInner}
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              </CollapsibleDayGroup>
+            ))}
+          </div>
+        </GroupedListFrame>
+      )
+    })
+  }
+
+  const dialogs = (
+    <>
       <RecurringMonthOverrideSheet
         open={editingBill != null}
         bill={editingBill}
         cursor={cursor}
         initialAmount={
-          editingBill
-            ? effectiveAmount(editingBill, editingOverride)
-            : 0
+          editingBill ? effectiveAmount(editingBill, editingOverride) : 0
         }
         initialDueDay={
-          editingBill
-            ? effectiveDueDay(editingBill, editingOverride)
-            : 1
+          editingBill ? effectiveDueDay(editingBill, editingOverride) : 1
         }
         busy={savingOverride}
         autoFocusAmount={autoFocusAmount}
@@ -1027,24 +1170,24 @@ export function DueThisMonthChecklist({
       />
 
       <ConfirmDialog
-        open={pendingSkipBill != null}
-        title="Skip for This Month?"
-        message="It moves to Skipped. You can restore it anytime this month."
+        open={pendingSkip != null}
+        title="Skip This Occurrence?"
+        message="Only this date moves to Skipped. Other dates for this bill stay on the checklist."
         confirmLabel="Skip"
         cancelLabel="Cancel"
         busyLabel="Skipping…"
         busy={skipping}
         onCancel={() => {
           if (skipping) return
-          setPendingSkipBill(null)
+          setPendingSkip(null)
         }}
         onConfirm={() => void confirmSkip()}
       />
 
       <ConfirmDialog
-        open={pendingRestoreBill != null}
-        title="Restore for This Month?"
-        message="It moves back to Unchecked."
+        open={pendingRestore != null}
+        title="Restore This Occurrence?"
+        message="It returns to Due if already due, otherwise Unchecked."
         confirmLabel="Restore"
         cancelLabel="Cancel"
         busyLabel="Restoring…"
@@ -1052,10 +1195,34 @@ export function DueThisMonthChecklist({
         busy={restoring}
         onCancel={() => {
           if (restoring) return
-          setPendingRestoreBill(null)
+          setPendingRestore(null)
         }}
         onConfirm={() => void confirmRestore()}
       />
+    </>
+  )
+
+  if (variant === 'dueInbox') {
+    if (statusSections.length === 0) return null
+    return (
+      <>
+        {renderStatusSections()}
+        {dialogs}
+      </>
+    )
+  }
+
+  const content = (
+    <>
+      <GroupedListFrame
+        label={embedded ? 'Recurring Checklist' : 'Recurring this month'}
+        expanded={allExpanded}
+        onToggle={toggleAllExpanded}
+      >
+        <div className="space-y-5">{renderStatusSections()}</div>
+      </GroupedListFrame>
+
+      {dialogs}
     </>
   )
 

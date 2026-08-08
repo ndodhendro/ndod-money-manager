@@ -36,6 +36,7 @@ export function Dashboard() {
   const filtered = useMemo(
     () =>
       transactions.filter((t) => {
+        if (t.complete_later) return false
         const circle = isCircle(t.circle) ? t.circle : 'hd_family'
         return circleFilter === 'semua' || circle === circleFilter
       }),

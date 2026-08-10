@@ -1,7 +1,7 @@
 {
   "name": "ndod-money-manager",
   "private": true,
-  "version": "1.1.2",
+  "version": "1.1.13",
   "type": "module",
   "scripts": {
     "dev": "vite",

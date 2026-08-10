@@ -9,6 +9,7 @@ import {
   type ResolveEstimateAmountCtx,
 } from './moneyPlan'
 import { sortRecurringBillsForSettings } from './recurringBillDisplay'
+import { compareBucketsWithinKind } from './bucketsGroup'
 import {
   estimateOccurrenceCount,
   type RecurringBill,
@@ -217,14 +218,7 @@ export function buildBonusAllocation(input: {
     .filter((b) => isTwelveMonthSinkingBucket(b, input.bills))
     .map((b) => ({ bucket: b, gap: sinkingGap(b) }))
     .filter((row) => row.gap > 0)
-    .sort((a, b) => {
-      if (a.bucket.sort_order !== b.bucket.sort_order) {
-        return a.bucket.sort_order - b.bucket.sort_order
-      }
-      return a.bucket.name.localeCompare(b.bucket.name, undefined, {
-        sensitivity: 'base',
-      })
-    })
+    .sort((a, b) => compareBucketsWithinKind(a.bucket, b.bucket))
 
   for (const { bucket, gap } of candidates) {
     if (remaining <= 0) break

@@ -1,4 +1,4 @@
-import { BUCKET_KIND_ORDER, compareBucketNameAsc } from './bucketsGroup'
+import { BUCKET_KIND_ORDER, compareBucketsWithinKind } from './bucketsGroup'
 import { supabase } from './supabase'
 import type { BudgetGroup, Bucket, BucketKind } from './types'
 import { OWNER_ACCOUNT_LABELS } from './types'
@@ -145,7 +145,8 @@ export type NewBucketInput = {
 }
 
 /**
- * Persist sort_order: kind section order, then name ascending within each kind.
+ * Persist sort_order: kind section order, then within each kind
+ * (sinking: Needs → Wants → target amount desc → name asc; others: name asc).
  * Active buckets only (inactive keep their last sort_order).
  */
 export async function reorderBucketsByNameWithinKinds(): Promise<void> {
@@ -162,9 +163,7 @@ export async function reorderBucketsByNameWithinKinds(): Promise<void> {
   const pending: Array<PromiseLike<{ error: { message: string } | null }>> =
     []
   for (const kind of BUCKET_KIND_ORDER) {
-    const items = [...(byKind.get(kind) ?? [])].sort((a, b) =>
-      compareBucketNameAsc(a.name, b.name),
-    )
+    const items = [...(byKind.get(kind) ?? [])].sort(compareBucketsWithinKind)
     for (const b of items) {
       if (b.sort_order !== order) {
         pending.push(
@@ -202,7 +201,7 @@ async function findInactiveBucketMatches(input: {
  * Add sinking fund. Revives one exact name+icon inactive row when found.
  * On revive, target_amount and opening_balance come from current input
  * (not from the soft-deleted history values).
- * After save, active buckets are reordered by name within each kind section.
+ * After save, active buckets are reordered within each kind section.
  */
 export async function createBucket(input: NewBucketInput): Promise<Bucket> {
   if (input.kind === 'emergency' || input.kind === 'investment') {

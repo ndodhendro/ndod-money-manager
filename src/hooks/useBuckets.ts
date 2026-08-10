@@ -7,7 +7,7 @@ import {
 } from '../lib/bucketsApi'
 import {
   BUCKET_KIND_ORDER,
-  compareBucketNameAsc,
+  compareBucketsWithinKind,
 } from '../lib/bucketsGroup'
 import type { Bucket, BucketWithBalance } from '../lib/types'
 
@@ -70,7 +70,7 @@ export function useBuckets(options?: { includeInactive?: boolean }) {
       const ai = BUCKET_KIND_ORDER.indexOf(a.kind)
       const bi = BUCKET_KIND_ORDER.indexOf(b.kind)
       if (ai !== bi) return ai - bi
-      return compareBucketNameAsc(a.name, b.name)
+      return compareBucketsWithinKind(a, b)
     })
   }, [buckets, balances])
 

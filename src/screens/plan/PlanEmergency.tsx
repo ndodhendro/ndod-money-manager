@@ -27,6 +27,7 @@ import {
 } from '../../lib/types'
 
 const KIND_BAR: Record<BucketKind, string> = {
+  checking: 'bg-sky-500',
   emergency: 'bg-teal-500',
   investment: 'bg-indigo-500',
   sinking: 'bg-violet-500',

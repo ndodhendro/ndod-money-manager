@@ -22,8 +22,8 @@ import type {
   TransactionWithCategory,
 } from './types'
 
-/** Minimal bucket fields for Needs/Wants transfer classification. */
-export type BucketBudgetRef = Pick<Bucket, 'kind' | 'budget_group'>
+/** Minimal bucket fields for Needs/Wants transfer classification + sort. */
+export type BucketBudgetRef = Pick<Bucket, 'kind' | 'budget_group' | 'name'>
 
 /**
  * Needs/Wants for a transfer into a sinking fund.

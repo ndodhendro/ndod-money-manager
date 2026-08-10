@@ -596,12 +596,38 @@ export function formatRecurringSettingsDescription(input: {
 }
 
 /**
+ * Weekly / biweekly settings hint: how many times this estimate hits the
+ * given month (matches planned-needs / This Month Totals weighting).
+ * Returns null for non-weekly schedules.
+ */
+export function formatThisMonthFrequencyLabel(
+  bill: RecurringBill,
+  yearMonth: string,
+  override?: RecurringBillMonthOverride | null,
+  skippedOccurrenceKeys?: Set<string>,
+): string | null {
+  if (!bill.is_recurring || bill.interval_unit !== 'week') return null
+  const count = estimateOccurrenceCount(
+    bill,
+    yearMonth,
+    override,
+    skippedOccurrenceKeys,
+  )
+  return `${count}× this month`
+}
+
+/**
  * Settings list / plan meta copy for a recurring bill.
  */
 export function formatRecurringMeta(
   bill: RecurringBill,
   cursor?: MonthCursor,
-  options?: { currentMonthDone?: boolean; occurredOn?: string },
+  options?: {
+    currentMonthDone?: boolean
+    occurredOn?: string
+    /** YYYY-MM — settings list: append "N× this month" for weekly/biweekly. */
+    thisMonthYearMonth?: string
+  },
 ): string {
   if (!bill.is_recurring) {
     return 'Monthly estimate'
@@ -632,8 +658,10 @@ export function formatRecurringMeta(
     endsYearMonth: bill.ends_year_month,
     startsOn: bill.starts_on,
   })
-  if (left) return `${description} · ${left}`
-  return description
+  const thisMonth = options?.thisMonthYearMonth
+    ? formatThisMonthFrequencyLabel(bill, options.thisMonthYearMonth)
+    : null
+  return [description, thisMonth, left].filter(Boolean).join(' · ')
 }
 
 /** Inclusive remaining on-grid occurrences from now (or start) through end. */

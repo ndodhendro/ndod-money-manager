@@ -3,6 +3,7 @@ import {
   categoryDisplayParts,
   formatTransferLabel,
   formatTransferToLabel,
+  OWNER_ACCOUNT_LABELS,
   TRANSFER_TYPE_ICON,
   type CategoryWithParent,
 } from './types'
@@ -75,10 +76,34 @@ function compareTextAsc(a: string, b: string): number {
   return a.localeCompare(b, 'en', { sensitivity: 'base' })
 }
 
-/** income → transfer → expense */
-function typeSortRank(type: RecurringBill['type']): number {
-  if (type === 'income') return 0
-  if (type === 'transfer') return 1
+/** Transfer into Ndod Account / Devi Account (system checking buckets). */
+function isTransferToCheckingAccount(
+  bill: RecurringBill,
+  bucketsById?: Map<string, BucketBudgetRef>,
+): boolean {
+  if (bill.type !== 'transfer' || !bill.to_bucket_id || !bucketsById) {
+    return false
+  }
+  return bucketsById.get(bill.to_bucket_id)?.kind === 'checking'
+}
+
+/**
+ * income → transfer (non-checking) → expense → Ndod Account → Devi Account.
+ * Checking-account transfers sit at the bottom of the date group (Ndod first).
+ */
+function typeSortRank(
+  bill: RecurringBill,
+  bucketsById?: Map<string, BucketBudgetRef>,
+): number {
+  if (bill.type === 'income') return 0
+  if (bill.type === 'transfer') {
+    if (!isTransferToCheckingAccount(bill, bucketsById)) return 1
+    const name = bill.to_bucket_id
+      ? bucketsById?.get(bill.to_bucket_id)?.name
+      : undefined
+    if (name === OWNER_ACCOUNT_LABELS.istri) return 4
+    return 3 // Ndod Account (and any other checking)
+  }
   return 2
 }
 
@@ -122,13 +147,8 @@ function categoryOrderKeys(
   return { categoryOrder: cat.sort_order, subcategoryOrder: -1 }
 }
 
-/** Amounts < 0 ascending; amounts > 0 descending; negatives before positives. */
-function compareAmount(a: number, b: number): number {
-  if (a < 0 && b < 0) return a - b
-  if (a > 0 && b > 0) return b - a
-  if (a === b) return 0
-  if (a < 0) return -1
-  if (b < 0) return 1
+/** Amount descending (larger first). */
+function compareAmountDesc(a: number, b: number): number {
   return b - a
 }
 
@@ -151,9 +171,17 @@ function intervalSortRank(bill: RecurringBill): number {
 }
 
 /**
- * Shared within-day order (Settings list + Plan checklist):
- * plan tag (Emergency → Investment → Needs → Wants) → interval → type →
- * category order → subcategory order → amount → circle → owner → note.
+ * Shared row order for Settings Monthly Estimates and Plan Due Checklist
+ * (within the same date / day group):
+ * 1. type — income → transfer → expense → Ndod Account → Devi Account
+ * 2. interval — shortest recurring first
+ * 3. plan tag — Emergency → Investment → Needs → Wants
+ * 4. category sort_order ascending
+ * 5. subcategory sort_order ascending
+ * 6. amount descending
+ * 7. circle
+ * 8. profile (owner)
+ * 9. note
  */
 export function compareRecurringBillsWithinDay(
   a: RecurringBill,
@@ -161,18 +189,18 @@ export function compareRecurringBillsWithinDay(
   byId: Map<string, Category>,
   bucketsById?: Map<string, BucketBudgetRef>,
 ): number {
+  const byType = typeSortRank(a, bucketsById) - typeSortRank(b, bucketsById)
+  if (byType !== 0) return byType
+
+  const byInterval = intervalSortRank(a) - intervalSortRank(b)
+  if (byInterval !== 0) return byInterval
+
   if (bucketsById) {
     const byPlan =
       estimatePlanTagSortRank(estimatePlanTag(a, byId, bucketsById)) -
       estimatePlanTagSortRank(estimatePlanTag(b, byId, bucketsById))
     if (byPlan !== 0) return byPlan
   }
-
-  const byInterval = intervalSortRank(a) - intervalSortRank(b)
-  if (byInterval !== 0) return byInterval
-
-  const byType = typeSortRank(a.type) - typeSortRank(b.type)
-  if (byType !== 0) return byType
 
   const ka = categoryOrderKeys(a, byId)
   const kb = categoryOrderKeys(b, byId)
@@ -183,7 +211,7 @@ export function compareRecurringBillsWithinDay(
     return ka.subcategoryOrder - kb.subcategoryOrder
   }
 
-  const byAmount = compareAmount(a.amount, b.amount)
+  const byAmount = compareAmountDesc(a.amount, b.amount)
   if (byAmount !== 0) return byAmount
 
   const byCircle = CIRCLE_SORT_RANK[a.circle] - CIRCLE_SORT_RANK[b.circle]
@@ -226,8 +254,9 @@ export type RecurringChecklistOccurrence = {
 }
 
 /**
- * Plan checklist: unchecked first, then occurred-on descending,
- * then the same within-day order (applies inside unchecked and checked).
+ * Plan checklist: status-ready order, then occurred-on descending,
+ * then the same within-day order as Monthly Estimates
+ * (`compareRecurringBillsWithinDay` — pass bucketsById for plan-tag parity).
  */
 export function sortRecurringOccurrencesForChecklist(
   items: RecurringChecklistOccurrence[],
@@ -257,6 +286,7 @@ export function sortRecurringBillsForChecklist(
   cursor: MonthCursor,
   byId: Map<string, Category>,
   overrideByBillId?: Map<string, RecurringBillMonthOverride>,
+  bucketsById?: Map<string, BucketBudgetRef>,
 ): RecurringBill[] {
   return [...bills].sort((a, b) => {
     const aDone = logByBillId.has(a.id)
@@ -273,6 +303,6 @@ export function sortRecurringBillsForChecklist(
     )
     if (aDate !== bDate) return bDate.localeCompare(aDate)
 
-    return compareRecurringBillsWithinDay(a, b, byId)
+    return compareRecurringBillsWithinDay(a, b, byId, bucketsById)
   })
 }

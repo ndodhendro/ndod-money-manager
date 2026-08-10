@@ -35,10 +35,12 @@ import { useCategories } from '../hooks/useCategories'
 import { usePyfSettings } from '../hooks/usePyfSettings'
 import { useTransactions } from '../hooks/useTransactions'
 import {
+  isCheckingAutoAmountTransfer,
   isPyfAutoAmountTransfer,
   resolveEstimateAmount,
   sumMonthIncome,
 } from '../lib/moneyPlan'
+import { computeFreeGuiltySplit } from '../lib/paydayAllocation'
 import { ConfirmDialog } from './ConfirmDialog'
 import { GroupedListFrame } from './GroupedListFrame'
 import { CollapsibleDayGroup } from './CollapsibleDayGroup'
@@ -268,15 +270,35 @@ export function DueThisMonthChecklist({
     () => sumMonthIncome(monthTransactions),
     [monthTransactions],
   )
-  const amountCtx = useMemo(
-    () => ({
+  const amountCtx = useMemo(() => {
+    const freeGuiltySplit = computeFreeGuiltySplit({
+      income: monthIncome,
+      bills,
+      overridesByBillId: overrideByBillId,
+      skippedOccurrenceKeys,
+      categoriesById: byId,
+      bucketsById,
+      yearMonth,
+      emergencyPct: pyfSettings?.emergency_fund_pct ?? 10,
+      investmentPct: pyfSettings?.investment_pct ?? 15,
+    }).split
+    return {
       monthIncome,
       emergencyPct: pyfSettings?.emergency_fund_pct ?? 10,
       investmentPct: pyfSettings?.investment_pct ?? 15,
       bucketsById,
-    }),
-    [monthIncome, pyfSettings, bucketsById],
-  )
+      freeGuiltySplit,
+    }
+  }, [
+    monthIncome,
+    pyfSettings,
+    bucketsById,
+    bills,
+    overrideByBillId,
+    skippedOccurrenceKeys,
+    byId,
+    yearMonth,
+  ])
 
   function resolvedAmount(
     bill: RecurringBill,
@@ -287,6 +309,13 @@ export function DueThisMonthChecklist({
 
   function isPyfAuto(bill: RecurringBill) {
     return isPyfAutoAmountTransfer(bill, bucketsById)
+  }
+
+  function isAutoAmount(bill: RecurringBill) {
+    return (
+      isPyfAutoAmountTransfer(bill, bucketsById) ||
+      isCheckingAutoAmountTransfer(bill, bucketsById)
+    )
   }
 
   // Drop optimistic entries once props match (silent reload finished).
@@ -679,13 +708,15 @@ export function DueThisMonthChecklist({
 
         const override = overrideByBillId.get(bill.id)
         const amount =
-          amountOverride != null && amountOverride > 0 && !isPyfAuto(bill)
+          amountOverride != null && amountOverride > 0 && !isAutoAmount(bill)
             ? amountOverride
             : resolvedAmount(bill, override)
         if (amount <= 0) {
           showAppToast(
-            isPyfAuto(bill)
-              ? 'No income this month'
+            isAutoAmount(bill)
+              ? isPyfAuto(bill)
+                ? 'No income this month'
+                : 'Free Guilty is zero this month'
               : 'Enter an amount greater than zero',
           )
           setPendingDone((prev) => {
@@ -749,7 +780,7 @@ export function DueThisMonthChecklist({
   }
 
   function proceedCheck(bill: RecurringBill, occurredOn: string) {
-    if (bill.variable_amount && !isPyfAuto(bill)) {
+    if (bill.variable_amount && !isAutoAmount(bill)) {
       setPendingAmountConfirm({ bill, occurredOn })
       return
     }
@@ -775,7 +806,7 @@ export function DueThisMonthChecklist({
     setEditingOccurredOn(occurredOn)
     setCheckAfterEdit(options?.checkAfterSave === true)
     setAutoFocusAmount(
-      options?.focusAmount === true && !isPyfAuto(bill),
+      options?.focusAmount === true && !isAutoAmount(bill),
     )
     setOpenSwipeId(null)
   }
@@ -788,7 +819,7 @@ export function DueThisMonthChecklist({
     const bill = editingBill
     const occurredOn = editingOccurredOn
     const shouldCheck = checkAfterEdit && occurredOn != null
-    const amount = isPyfAuto(bill)
+    const amount = isAutoAmount(bill)
       ? resolvedAmount(bill, overrideByBillId.get(bill.id))
       : input.amount
     setSavingOverride(true)
@@ -1001,11 +1032,11 @@ export function DueThisMonthChecklist({
                       (section.status === 'due' ||
                         section.status === 'unchecked') &&
                       occurredOn <= todayIso()
-                    const pyfAuto = isPyfAuto(bill)
+                    const autoAmount = isAutoAmount(bill)
                     const variableDue =
                       dueOrOverdue &&
                       bill.variable_amount === true &&
-                      !pyfAuto
+                      !autoAmount
                     const justChecked = justCheckedKey === key
                     const displayBill = {
                       ...bill,
@@ -1202,7 +1233,7 @@ export function DueThisMonthChecklist({
         initialDueDay={
           editingBill ? effectiveDueDay(editingBill, editingOverride) : 1
         }
-        amountLocked={editingBill ? isPyfAuto(editingBill) : false}
+        amountLocked={editingBill ? isAutoAmount(editingBill) : false}
         busy={savingOverride}
         autoFocusAmount={autoFocusAmount}
         onClose={() => {

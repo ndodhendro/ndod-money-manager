@@ -1,6 +1,7 @@
 import type { BucketKind, BucketWithBalance } from './types'
 
 export const BUCKET_KIND_ORDER: BucketKind[] = [
+  'checking',
   'emergency',
   'investment',
   'sinking',

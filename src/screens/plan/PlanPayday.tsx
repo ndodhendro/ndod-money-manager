@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { GroupedListFrame } from '../../components/GroupedListFrame'
 import { MonthPager } from '../../components/MonthPager'
 import { OwnerBadge } from '../../components/OwnerBadge'
@@ -6,16 +6,19 @@ import { PlanSubPage } from '../../components/PlanSubPage'
 import { useBuckets } from '../../hooks/useBuckets'
 import { useCategories } from '../../hooks/useCategories'
 import { useMonthCursor } from '../../hooks/useMonthCursor'
+import { usePyfSettings } from '../../hooks/usePyfSettings'
 import { useRecurringBills } from '../../hooks/useRecurringBills'
 import { useTransactions } from '../../hooks/useTransactions'
 import { formatRupiah } from '../../lib/format'
 import { monthCursorKey } from '../../lib/monthCursor'
-import {
-  buildPaydayAllocation,
-  type PaydayLineItem,
-} from '../../lib/paydayAllocation'
+import { buildPaydayAllocation } from '../../lib/paydayAllocation'
 import { PlanIcon, PlanTitle } from '../../lib/planSections'
-import { OWNER_LABELS, type Owner } from '../../lib/types'
+import {
+  fetchRecurringBills,
+  isMissingRecurringSchema,
+  type RecurringBill,
+} from '../../lib/recurringBillsApi'
+import type { Owner } from '../../lib/types'
 
 function AmountRow({
   label,
@@ -67,39 +70,6 @@ function SplitRow({
   )
 }
 
-function LineItemList({ items }: { items: PaydayLineItem[] }) {
-  if (items.length === 0) {
-    return (
-      <p className="text-xs text-neutral-400">No items this month</p>
-    )
-  }
-  return (
-    <ul className="space-y-2">
-      {items.map((item) => (
-        <li
-          key={`${item.billId}:${item.occurredOn}`}
-          className="flex items-center gap-2"
-        >
-          <span className="text-base leading-none" aria-hidden>
-            {item.icon}
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm text-neutral-800 dark:text-neutral-100">
-              {item.name}
-            </p>
-            <p className="text-[11px] text-neutral-400">
-              Due {item.occurredOn.slice(8)}
-            </p>
-          </div>
-          <span className="shrink-0 text-sm tabular-nums text-neutral-700 dark:text-neutral-200">
-            {formatRupiah(item.amount)}
-          </span>
-        </li>
-      ))}
-    </ul>
-  )
-}
-
 export function PlanPayday() {
   const {
     cursor,
@@ -114,10 +84,14 @@ export function PlanPayday() {
   const yearMonth = monthCursorKey(cursor)
   const { transactions, loading, error } = useTransactions(range)
   const {
-    bills,
+    settings,
+    loading: planLoading,
+    error: planError,
+  } = usePyfSettings()
+  const {
     overrideByBillId,
     skippedOccurrenceKeys,
-    loading: billsLoading,
+    loading: billsMetaLoading,
     available: billsAvailable,
     error: billsError,
   } = useRecurringBills(yearMonth)
@@ -132,8 +106,29 @@ export function PlanPayday() {
     error: bucketsError,
   } = useBuckets({ includeInactive: true })
 
-  const [undueOpen, setUndueOpen] = useState(true)
+  const [bills, setBills] = useState<RecurringBill[]>([])
+  const [billsLoading, setBillsLoading] = useState(true)
   const [sinkingOpen, setSinkingOpen] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    setBillsLoading(true)
+    void (async () => {
+      try {
+        const rows = await fetchRecurringBills()
+        if (!cancelled) setBills(rows)
+      } catch (err) {
+        if (cancelled) return
+        const message = err instanceof Error ? err.message : ''
+        if (isMissingRecurringSchema(message)) setBills([])
+      } finally {
+        if (!cancelled) setBillsLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const income = useMemo(
     () =>
@@ -143,32 +138,39 @@ export function PlanPayday() {
     [transactions],
   )
 
-  const allocation = useMemo(
-    () =>
-      buildPaydayAllocation({
-        income,
-        bills,
-        overridesByBillId: overrideByBillId,
-        skippedOccurrenceKeys,
-        categoriesById,
-        bucketsById,
-        yearMonth,
-      }),
-    [
+  const allocation = useMemo(() => {
+    if (!settings) return null
+    return buildPaydayAllocation({
       income,
       bills,
-      overrideByBillId,
+      overridesByBillId: overrideByBillId,
       skippedOccurrenceKeys,
       categoriesById,
       bucketsById,
       yearMonth,
-    ],
-  )
+      emergencyPct: settings.emergency_fund_pct,
+      investmentPct: settings.investment_pct,
+    })
+  }, [
+    settings,
+    income,
+    bills,
+    overrideByBillId,
+    skippedOccurrenceKeys,
+    categoriesById,
+    bucketsById,
+    yearMonth,
+  ])
 
   const pageLoading =
-    loading || billsLoading || categoriesLoading || bucketsLoading
+    loading ||
+    planLoading ||
+    billsLoading ||
+    billsMetaLoading ||
+    categoriesLoading ||
+    bucketsLoading
   const pageError =
-    error || billsError || categoriesError || bucketsError
+    error || planError || billsError || categoriesError || bucketsError
 
   return (
     <div
@@ -178,7 +180,7 @@ export function PlanPayday() {
       <PlanSubPage
         title={PlanTitle.payday}
         icon={PlanIcon.payday}
-        description="Split payday money for Free Guilty, undue bills, and sinking transfers."
+        description="Free Guilty split and sinking transfers for payday."
       >
         <MonthPager
           monthLabel={monthLabel}
@@ -199,13 +201,21 @@ export function PlanPayday() {
           </p>
         )}
 
-        {!pageLoading && !pageError && billsAvailable && (
+        {!pageLoading && !pageError && billsAvailable && allocation && (
           <div className="mt-5 space-y-5">
             <section className="space-y-2 rounded-2xl bg-white p-4 shadow-sm dark:bg-neutral-800">
               <AmountRow label="Income" amount={allocation.income} />
               <AmountRow
                 label="Planned Needs"
                 amount={allocation.plannedNeeds}
+              />
+              <AmountRow
+                label="Planned Wants"
+                amount={allocation.plannedWants}
+              />
+              <AmountRow
+                label="Sinking Funds"
+                amount={allocation.sinkingTotal}
               />
               <div className="border-t border-neutral-100 pt-2 dark:border-neutral-700">
                 <AmountRow
@@ -218,46 +228,8 @@ export function PlanPayday() {
                 <p className="text-[11px] font-medium text-neutral-500">
                   Free Guilty Split (50/50)
                 </p>
-                <SplitRow owner="suami" amount={allocation.freeGuiltyEach} />
-                <SplitRow owner="istri" amount={allocation.freeGuiltyEach} />
-              </div>
-            </section>
-
-            <GroupedListFrame
-              label="Undue Recurring"
-              collapseContent
-              expanded={undueOpen}
-              onToggle={setUndueOpen}
-            >
-              <div className="mb-3">
-                <AmountRow
-                  label="Total After Day 1"
-                  amount={allocation.undueRecurring}
-                  emphasize
-                />
-              </div>
-              <LineItemList items={allocation.undueItems} />
-            </GroupedListFrame>
-
-            <section className="space-y-2 rounded-2xl bg-white p-4 shadow-sm dark:bg-neutral-800">
-              <AmountRow
-                label="Grand Total"
-                amount={allocation.grandTotal}
-                emphasize
-              />
-              <p className="text-[11px] text-neutral-400">
-                Undue Recurring + Free Guilty
-              </p>
-              <div className="space-y-1.5 rounded-xl bg-neutral-50 px-3 py-2 dark:bg-neutral-900/60">
-                <p className="text-[11px] font-medium text-neutral-500">
-                  Transfer to Accounts (50/50)
-                </p>
-                <SplitRow owner="suami" amount={allocation.accountEach} />
-                <SplitRow owner="istri" amount={allocation.accountEach} />
-                <p className="pt-0.5 text-[11px] text-neutral-400">
-                  {OWNER_LABELS.suami} and {OWNER_LABELS.istri} each receive
-                  half.
-                </p>
+                <SplitRow owner="suami" amount={allocation.freeGuiltySuami} />
+                <SplitRow owner="istri" amount={allocation.freeGuiltyIstri} />
               </div>
             </section>
 
@@ -269,16 +241,18 @@ export function PlanPayday() {
             >
               <div className="mb-3">
                 <AmountRow
-                  label="Total Sinking"
+                  label="Total"
                   amount={allocation.sinkingTotal}
                   emphasize
                 />
               </div>
-              {allocation.sinkingByBucket.length > 0 && (
-                <ul className="mb-3 space-y-2 border-b border-neutral-100 pb-3 dark:border-neutral-700">
-                  {allocation.sinkingByBucket.map((row) => (
+              {allocation.sinkingTransfers.length === 0 ? (
+                <p className="text-xs text-neutral-400">No items this month</p>
+              ) : (
+                <ul className="space-y-2">
+                  {allocation.sinkingTransfers.map((row) => (
                     <li
-                      key={row.bucketId}
+                      key={row.billId}
                       className="flex items-center gap-2"
                     >
                       <span className="text-base leading-none" aria-hidden>
@@ -294,7 +268,6 @@ export function PlanPayday() {
                   ))}
                 </ul>
               )}
-              <LineItemList items={allocation.sinkingItems} />
             </GroupedListFrame>
           </div>
         )}

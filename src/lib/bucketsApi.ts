@@ -1,6 +1,16 @@
 import { BUCKET_KIND_ORDER, compareBucketNameAsc } from './bucketsGroup'
 import { supabase } from './supabase'
 import type { BudgetGroup, Bucket, BucketKind } from './types'
+import { OWNER_ACCOUNT_LABELS } from './types'
+
+const CHECKING_SYSTEM_ACCOUNTS: Array<{
+  name: string
+  icon: string
+  sort_order: number
+}> = [
+  { name: OWNER_ACCOUNT_LABELS.suami, icon: '💙', sort_order: 0 },
+  { name: OWNER_ACCOUNT_LABELS.istri, icon: '💗', sort_order: 0 },
+]
 
 function mapBudgetGroup(value: unknown): BudgetGroup | null {
   if (value === 'needs' || value === 'wants') {
@@ -87,9 +97,41 @@ export async function ensureSystemBuckets(): Promise<void> {
       opening_balance: 0,
     })
   }
+  for (const account of CHECKING_SYSTEM_ACCOUNTS) {
+    const hasAccount = existing.some(
+      (b) =>
+        b.kind === 'checking' &&
+        b.is_system &&
+        b.name === account.name,
+    )
+    if (hasAccount) continue
+    rows.push({
+      name: account.name,
+      kind: 'checking',
+      icon: account.icon,
+      sort_order: account.sort_order,
+      is_system: true,
+      opening_balance: 0,
+    })
+  }
   if (rows.length === 0) return
   const { error } = await supabase.from('buckets').insert(rows)
-  if (error) throw new Error(error.message)
+  if (error) {
+    // checking enum / index may be missing until migrate_buckets_checking_accounts.sql
+    const lower = error.message.toLowerCase()
+    if (
+      lower.includes('checking') ||
+      lower.includes('bucket_kind') ||
+      lower.includes('invalid input value')
+    ) {
+      const withoutChecking = rows.filter((r) => r.kind !== 'checking')
+      if (withoutChecking.length === 0) return
+      const retry = await supabase.from('buckets').insert(withoutChecking)
+      if (retry.error) throw new Error(retry.error.message)
+      return
+    }
+    throw new Error(error.message)
+  }
 }
 
 export type NewBucketInput = {
@@ -165,6 +207,9 @@ async function findInactiveBucketMatches(input: {
 export async function createBucket(input: NewBucketInput): Promise<Bucket> {
   if (input.kind === 'emergency' || input.kind === 'investment') {
     throw new Error('System buckets already exist')
+  }
+  if (input.kind === 'checking') {
+    throw new Error('Personal accounts are system buckets')
   }
   const name = input.name.trim()
   if (!name) throw new Error('Name is required')
@@ -263,6 +308,10 @@ export async function updateBucket(
     if (existingError) throw new Error(existingError.message)
     if (existing?.kind === 'emergency' || existing?.kind === 'investment') {
       delete nextPatch.target_amount
+    }
+    if (existing?.kind === 'checking') {
+      delete nextPatch.target_amount
+      delete nextPatch.budget_group
     }
   }
 

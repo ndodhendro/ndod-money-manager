@@ -1,14 +1,22 @@
 import { sumTransfersInto } from './bucketsApi'
-import type { Bucket, TransactionWithCategory } from './types'
+import type { Bucket, Owner, TransactionWithCategory } from './types'
+import { OWNER_ACCOUNT_LABELS } from './types'
 
-/** Minimal bucket fields for PYF auto-amount transfer detection. */
-export type PyfAutoBucketRef = Pick<Bucket, 'kind'>
+/** Minimal bucket fields for PYF / checking auto-amount transfer detection. */
+export type PyfAutoBucketRef = Pick<Bucket, 'kind' | 'name'>
+
+export type FreeGuiltySplit = {
+  suami: number
+  istri: number
+}
 
 export type ResolveEstimateAmountCtx = {
   monthIncome: number
   emergencyPct: number
   investmentPct: number
   bucketsById: Map<string, PyfAutoBucketRef>
+  /** When set, transfers into Ndod/Devi Account use these amounts. */
+  freeGuiltySplit?: FreeGuiltySplit
 }
 
 type EstimateAmountBill = {
@@ -35,6 +43,39 @@ export function pyfAutoTransferKind(
   return null
 }
 
+/** Transfer into system Ndod Account / Devi Account. */
+export function isCheckingAutoAmountTransfer(
+  bill: Pick<EstimateAmountBill, 'type' | 'to_bucket_id'>,
+  bucketsById: Map<string, PyfAutoBucketRef>,
+): boolean {
+  return checkingAccountOwner(bill, bucketsById) != null
+}
+
+/** Which personal account a transfer targets (by system checking bucket name). */
+export function checkingAccountOwner(
+  bill: Pick<EstimateAmountBill, 'type' | 'to_bucket_id'>,
+  bucketsById: Map<string, PyfAutoBucketRef>,
+): Owner | null {
+  if (bill.type !== 'transfer' || !bill.to_bucket_id) return null
+  const bucket = bucketsById.get(bill.to_bucket_id)
+  if (!bucket || bucket.kind !== 'checking') return null
+  if (bucket.name === OWNER_ACCOUNT_LABELS.suami) return 'suami'
+  if (bucket.name === OWNER_ACCOUNT_LABELS.istri) return 'istri'
+  return null
+}
+
+/**
+ * Split Free Guilty 50/50: Ndod floors, Devi ceilings when the half has decimals
+ * (e.g. odd totals). Sum always equals freeGuilty for integer amounts.
+ */
+export function freeGuiltySplitAmounts(freeGuilty: number): FreeGuiltySplit {
+  const total = Math.max(0, freeGuilty)
+  return {
+    suami: Math.floor(total / 2),
+    istri: Math.ceil(total / 2),
+  }
+}
+
 /** Monthly PYF transfer target: round(income × pct / 100). */
 export function pyfTransferTargetAmount(
   kind: 'emergency' | 'investment',
@@ -54,6 +95,7 @@ export function pyfAutoAmountPlaceholder(computed: number): number {
 /**
  * Effective estimate amount for a month.
  * PYF auto transfers ignore stored / override amounts and use income × %.
+ * Checking (Ndod/Devi) transfers use Free Guilty split when provided in ctx.
  */
 export function resolveEstimateAmount(
   bill: EstimateAmountBill,
@@ -68,6 +110,10 @@ export function resolveEstimateAmount(
       ctx.emergencyPct,
       ctx.investmentPct,
     )
+  }
+  const owner = checkingAccountOwner(bill, ctx.bucketsById)
+  if (owner && ctx.freeGuiltySplit) {
+    return ctx.freeGuiltySplit[owner]
   }
   if (override?.amount != null && override.amount > 0) return override.amount
   return bill.amount

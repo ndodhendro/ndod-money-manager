@@ -63,7 +63,20 @@ export function BucketPicker({
     ? sinkingBudgetGroup(selected)
     : null
 
-  const options = buckets.filter((b) => b.id !== excludeId)
+  const options = buckets
+    .filter((b) => b.id !== excludeId)
+    .slice()
+    .sort((a, b) => {
+      // Personal accounts first (after Main Account), then other kinds.
+      const aCheck = a.kind === 'checking' ? 0 : 1
+      const bCheck = b.kind === 'checking' ? 0 : 1
+      if (aCheck !== bCheck) return aCheck - bCheck
+      if (a.kind === 'checking' && b.kind === 'checking') {
+        // Ndod Account before Devi Account
+        return a.name.localeCompare(b.name, 'en', { sensitivity: 'base' })
+      }
+      return 0
+    })
 
   function displayLabel(): string {
     if (value === undefined) return 'Select…'

@@ -79,16 +79,23 @@ export const BUDGET_GROUP_COLOR: Record<BudgetGroup, string> = {
   wants: '#0ea5e9',
 }
 
-export type BucketKind = 'emergency' | 'investment' | 'sinking'
+export type BucketKind = 'checking' | 'emergency' | 'investment' | 'sinking'
 
 export const BUCKET_KIND_LABELS: Record<BucketKind, string> = {
+  checking: 'Account',
   emergency: 'Emergency',
   investment: 'Investment',
   sinking: 'Sinking fund',
 }
 
-/** Sentinel: null bucket id = main account (checking / available money). */
+/** Sentinel: null bucket id = shared main account (checking / available money). */
 export const CASHFLOW_LABEL = 'Main Account'
+
+/** System personal checking account names (transfer From/To). */
+export const OWNER_ACCOUNT_LABELS: Record<Owner, string> = {
+  suami: `${OWNER_LABELS.suami} Account`,
+  istri: `${OWNER_LABELS.istri} Account`,
+}
 
 export interface Bucket {
   id: string

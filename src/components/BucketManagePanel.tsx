@@ -705,7 +705,7 @@ function BucketRowContent({
       ? bucket.budget_group
       : null
   const target =
-    bucket.kind === 'investment'
+    bucket.kind === 'investment' || bucket.kind === 'checking'
       ? null
       : displayTarget != null
         ? displayTarget

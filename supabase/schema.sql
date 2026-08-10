@@ -20,7 +20,7 @@ do $$ begin
 exception when duplicate_object then null; end $$;
 
 do $$ begin
-  create type bucket_kind as enum ('emergency', 'investment', 'sinking');
+  create type bucket_kind as enum ('checking', 'emergency', 'investment', 'sinking');
 exception when duplicate_object then null; end $$;
 
 -- ============================================================
@@ -81,6 +81,10 @@ create table if not exists buckets (
 create unique index if not exists buckets_system_kind_uidx
   on buckets (kind)
   where is_system = true and kind in ('emergency', 'investment');
+
+create unique index if not exists buckets_system_checking_name_uidx
+  on buckets (name)
+  where is_system = true and kind = 'checking';
 
 create index if not exists buckets_active_sort_idx
   on buckets (is_active, sort_order);

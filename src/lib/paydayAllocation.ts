@@ -1,51 +1,47 @@
 import {
-  type BucketBudgetRef,
+  sumCommittedWants,
   sumPlannedNeeds,
 } from './freeWants'
 import {
-  effectiveAmount,
-  isOccurrenceSkipped,
-  isRecurringSkipped,
-  occurrencesInMonth,
+  freeGuiltySplitAmounts,
+  resolveEstimateAmount,
+  type FreeGuiltySplit,
+  type ResolveEstimateAmountCtx,
+} from './moneyPlan'
+import { sortRecurringBillsForSettings } from './recurringBillDisplay'
+import {
+  estimateOccurrenceCount,
   type RecurringBill,
   type RecurringBillMonthOverride,
 } from './recurringBillsApi'
-import type { Bucket, Category } from './types'
+import {
+  TRANSFER_TYPE_ICON,
+  type Bucket,
+  type BucketWithBalance,
+  type Category,
+} from './types'
 
-/** Day-of-month from YYYY-MM-DD (1–31). */
-function dayOfIso(isoDate: string): number {
-  return Number(isoDate.slice(8, 10))
-}
-
-export interface PaydayLineItem {
+export interface PaydayTransferLine {
   billId: string
   name: string
   amount: number
-  occurredOn: string
   icon: string
-}
-
-export interface PaydaySinkingBucketLine {
-  bucketId: string
-  name: string
-  icon: string
-  amount: number
+  /** Destination bucket kind for display/debug. */
+  bucketKind: 'emergency' | 'investment' | 'sinking'
 }
 
 export interface PaydayAllocation {
   income: number
   plannedNeeds: number
+  plannedWants: number
   freeGuilty: number
-  /** Free Guilty / 2 */
-  freeGuiltyEach: number
-  undueRecurring: number
-  undueItems: PaydayLineItem[]
-  grandTotal: number
-  /** Grand Total / 2 for Ndod and Devi */
-  accountEach: number
+  /** Free Guilty for Ndod (floor of half). */
+  freeGuiltySuami: number
+  /** Free Guilty for Devi (ceiling of half). */
+  freeGuiltyIstri: number
   sinkingTotal: number
-  sinkingByBucket: PaydaySinkingBucketLine[]
-  sinkingItems: PaydayLineItem[]
+  /** Transfer estimates (sinking + EF + Inv), Monthly Estimates order. */
+  sinkingTransfers: PaydayTransferLine[]
 }
 
 export type PaydayBucketRef = Pick<
@@ -61,134 +57,167 @@ export interface BuildPaydayAllocationInput {
   categoriesById: Map<string, Category>
   bucketsById: Map<string, PaydayBucketRef>
   yearMonth: string
+  emergencyPct: number
+  investmentPct: number
+}
+
+function isSavingsTransferDestination(
+  bill: RecurringBill,
+  bucketsById: Map<string, PaydayBucketRef>,
+): 'emergency' | 'investment' | 'sinking' | null {
+  if (bill.type !== 'transfer' || !bill.to_bucket_id) return null
+  const kind = bucketsById.get(bill.to_bucket_id)?.kind
+  if (kind === 'emergency' || kind === 'investment' || kind === 'sinking') {
+    return kind
+  }
+  return null
 }
 
 /**
- * Payday ritual totals for a month.
- *
- * Free Guilty = income − planned needs (no EF%/Inv% subtraction).
- * Undue = recurring expense occurrences with day-of-month > 1.
- * Grand = undue + free guilty (split 50/50 externally).
- * Sinking = all recurring transfers into sinking buckets this month.
+ * Free Guilty + Ndod/Devi split for a month (excludes checking-account transfers
+ * from sinking so amounts are not circular).
  */
-export function buildPaydayAllocation(
+export function computeFreeGuiltySplit(
   input: BuildPaydayAllocationInput,
-): PaydayAllocation {
+): {
+  income: number
+  plannedNeeds: number
+  plannedWants: number
+  sinkingTotal: number
+  freeGuilty: number
+  split: FreeGuiltySplit
+} {
   const income = Math.max(0, input.income)
-  const budgetBuckets = input.bucketsById as Map<string, BucketBudgetRef>
   const plannedNeeds = sumPlannedNeeds(
     input.bills,
     input.overridesByBillId,
     input.categoriesById,
     input.yearMonth,
     input.skippedOccurrenceKeys,
-    budgetBuckets,
   )
-  const freeGuilty = Math.max(0, income - plannedNeeds)
-  const freeGuiltyEach = freeGuilty / 2
+  const plannedWants = sumCommittedWants(
+    input.bills,
+    input.overridesByBillId,
+    input.categoriesById,
+    input.yearMonth,
+    input.skippedOccurrenceKeys,
+  )
 
-  const undueItems: PaydayLineItem[] = []
-  const sinkingItems: PaydayLineItem[] = []
-  const sinkingByBucketMap = new Map<string, PaydaySinkingBucketLine>()
-
-  for (const bill of input.bills) {
-    if (!bill.is_active) continue
-    const override = input.overridesByBillId.get(bill.id)
-    if (isRecurringSkipped(override)) continue
-
-    const dates = occurrencesInMonth(bill, input.yearMonth, override)
-    if (dates.length === 0) continue
-    const unit = effectiveAmount(bill, override)
-
-    if (bill.type === 'expense') {
-      for (const occurredOn of dates) {
-        if (
-          isOccurrenceSkipped(
-            bill.id,
-            occurredOn,
-            input.skippedOccurrenceKeys,
-            override,
-          )
-        ) {
-          continue
-        }
-        if (dayOfIso(occurredOn) <= 1) continue
-        undueItems.push({
-          billId: bill.id,
-          name: bill.name,
-          amount: unit,
-          occurredOn,
-          icon: bill.icon || '📆',
-        })
-      }
-      continue
-    }
-
-    if (bill.type === 'transfer' && bill.to_bucket_id) {
-      const bucket = input.bucketsById.get(bill.to_bucket_id)
-      if (!bucket || bucket.kind !== 'sinking') continue
-      for (const occurredOn of dates) {
-        if (
-          isOccurrenceSkipped(
-            bill.id,
-            occurredOn,
-            input.skippedOccurrenceKeys,
-            override,
-          )
-        ) {
-          continue
-        }
-        sinkingItems.push({
-          billId: bill.id,
-          name: bill.name,
-          amount: unit,
-          occurredOn,
-          icon: bill.icon || bucket.icon || '🪣',
-        })
-        const existing = sinkingByBucketMap.get(bucket.id)
-        if (existing) {
-          existing.amount += unit
-        } else {
-          sinkingByBucketMap.set(bucket.id, {
-            bucketId: bucket.id,
-            name: bucket.name,
-            icon: bucket.icon || '🪣',
-            amount: unit,
-          })
-        }
-      }
-    }
+  const amountCtx: ResolveEstimateAmountCtx = {
+    monthIncome: income,
+    emergencyPct: input.emergencyPct,
+    investmentPct: input.investmentPct,
+    bucketsById: input.bucketsById,
   }
 
-  undueItems.sort((a, b) =>
-    a.occurredOn === b.occurredOn
-      ? a.name.localeCompare(b.name)
-      : a.occurredOn.localeCompare(b.occurredOn),
-  )
-  sinkingItems.sort((a, b) =>
-    a.occurredOn === b.occurredOn
-      ? a.name.localeCompare(b.name)
-      : a.occurredOn.localeCompare(b.occurredOn),
-  )
+  let sinkingTotal = 0
+  for (const bill of input.bills) {
+    if (!bill.is_active) continue
+    if (!isSavingsTransferDestination(bill, input.bucketsById)) continue
+    const override = input.overridesByBillId.get(bill.id)
+    const count = estimateOccurrenceCount(
+      bill,
+      input.yearMonth,
+      override,
+      input.skippedOccurrenceKeys,
+    )
+    if (count === 0) continue
+    const unit = resolveEstimateAmount(bill, override, amountCtx)
+    sinkingTotal += unit * count
+  }
 
-  const undueRecurring = undueItems.reduce((sum, row) => sum + row.amount, 0)
-  const sinkingByBucket = [...sinkingByBucketMap.values()].sort((a, b) =>
-    a.name.localeCompare(b.name),
+  const freeGuilty = Math.max(
+    0,
+    income - plannedNeeds - plannedWants - sinkingTotal,
   )
-  const sinkingTotal = sinkingByBucket.reduce((sum, row) => sum + row.amount, 0)
-  const grandTotal = undueRecurring + freeGuilty
-
   return {
     income,
     plannedNeeds,
-    freeGuilty,
-    freeGuiltyEach,
-    undueRecurring,
-    undueItems,
-    grandTotal,
-    accountEach: grandTotal / 2,
+    plannedWants,
     sinkingTotal,
-    sinkingByBucket,
-    sinkingItems,
+    freeGuilty,
+    split: freeGuiltySplitAmounts(freeGuilty),
+  }
+}
+
+/**
+ * Payday ritual totals for a month.
+ *
+ * Planned Needs / Wants = expense estimates only (sinking transfers live under
+ * Sinking Funds to Transfer so they are not double-counted).
+ * Free Guilty = income − planned needs − planned wants − sinking total.
+ * Ndod = floor(Free Guilty / 2), Devi = ceil(Free Guilty / 2).
+ * Sinking = Monthly Estimate transfers into sinking / EF / Inv
+ * (EF & Inv amounts from Money Plan %), ordered like Settings Monthly Estimates.
+ */
+export function buildPaydayAllocation(
+  input: BuildPaydayAllocationInput,
+): PaydayAllocation {
+  const base = computeFreeGuiltySplit(input)
+  const amountCtx: ResolveEstimateAmountCtx = {
+    monthIncome: base.income,
+    emergencyPct: input.emergencyPct,
+    investmentPct: input.investmentPct,
+    bucketsById: input.bucketsById,
+  }
+
+  const transferBills: RecurringBill[] = []
+  for (const bill of input.bills) {
+    if (!bill.is_active) continue
+    if (!isSavingsTransferDestination(bill, input.bucketsById)) continue
+    const override = input.overridesByBillId.get(bill.id)
+    const count = estimateOccurrenceCount(
+      bill,
+      input.yearMonth,
+      override,
+      input.skippedOccurrenceKeys,
+    )
+    if (count === 0) continue
+    transferBills.push(bill)
+  }
+
+  const ordered = sortRecurringBillsForSettings(
+    transferBills,
+    input.categoriesById,
+    input.bucketsById as Map<string, BucketWithBalance>,
+  )
+
+  const sinkingTransfers: PaydayTransferLine[] = []
+  for (const bill of ordered) {
+    const bucketKind = isSavingsTransferDestination(bill, input.bucketsById)
+    if (!bucketKind) continue
+    const override = input.overridesByBillId.get(bill.id)
+    const count = estimateOccurrenceCount(
+      bill,
+      input.yearMonth,
+      override,
+      input.skippedOccurrenceKeys,
+    )
+    const unit = resolveEstimateAmount(bill, override, amountCtx)
+    const amount = unit * count
+    if (amount <= 0) continue
+    const bucket = bill.to_bucket_id
+      ? input.bucketsById.get(bill.to_bucket_id)
+      : undefined
+    const label =
+      bucket?.name?.trim() || bill.name.trim() || 'Transfer'
+    sinkingTransfers.push({
+      billId: bill.id,
+      name: label,
+      amount,
+      icon: bucket?.icon || TRANSFER_TYPE_ICON,
+      bucketKind,
+    })
+  }
+
+  return {
+    income: base.income,
+    plannedNeeds: base.plannedNeeds,
+    plannedWants: base.plannedWants,
+    freeGuilty: base.freeGuilty,
+    freeGuiltySuami: base.split.suami,
+    freeGuiltyIstri: base.split.istri,
+    sinkingTotal: base.sinkingTotal,
+    sinkingTransfers,
   }
 }

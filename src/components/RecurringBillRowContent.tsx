@@ -27,6 +27,11 @@ interface RecurringBillRowContentProps {
   occurredOn?: string
   /** Calendar current month already logged — drives "X months left". */
   currentMonthDone?: boolean
+  /**
+   * Settings Monthly Estimates: YYYY-MM for "N× this month" on weekly /
+   * biweekly rows (aligned with planned-needs weighting).
+   */
+  thisMonthYearMonth?: string
   /** Settings Monthly Estimates: Needs / Wants (Emergency & Investment show as Needs). */
   budgetGroup?: BudgetGroup | null
   /** When set, show this instead of bill.amount (e.g. PYF auto from Money Plan). */
@@ -43,6 +48,7 @@ export function RecurringBillRowContent({
   monthCursor,
   occurredOn,
   currentMonthDone = false,
+  thisMonthYearMonth,
   budgetGroup = null,
   displayAmount,
 }: RecurringBillRowContentProps) {
@@ -61,6 +67,7 @@ export function RecurringBillRowContent({
   const meta = formatRecurringMeta(bill, monthCursor, {
     currentMonthDone,
     occurredOn,
+    thisMonthYearMonth,
   })
 
   return (

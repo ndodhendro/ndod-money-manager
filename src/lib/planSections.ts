@@ -5,7 +5,7 @@ export const PLAN_PROGRESS_SECTIONS = [
     to: '/rencana/payday',
     icon: '💵',
     title: 'Payday Allocation',
-    subtitle: 'Free Guilty, undue bills, and sinking transfers',
+    subtitle: 'Free Guilty split and sinking transfers',
   },
   {
     to: '/rencana/recurring',

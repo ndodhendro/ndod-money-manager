@@ -26,12 +26,14 @@ import {
   yearMonthFromIso,
 } from '../lib/monthCursor'
 import {
+  checkingAccountOwner,
   pyfAutoAmountPlaceholder,
   pyfAutoTransferKind,
   pyfTransferTargetAmount,
   resolveEstimateAmount,
   sumMonthIncome,
 } from '../lib/moneyPlan'
+import { computeFreeGuiltySplit } from '../lib/paydayAllocation'
 import {
   createRecurringBill,
   deleteRecurringBill,
@@ -39,6 +41,7 @@ import {
   fetchRecurringBills,
   formatIntervalLabel,
   formatRecurringSettingsDescription,
+  formatThisMonthFrequencyLabel,
   isMissingRecurringSchema,
   RECURRING_EVERY_OPTIONS,
   recurringEveryKey,
@@ -331,14 +334,41 @@ export function RecurringBillsPanel({
   )
   const emergencyPct = pyfSettings?.emergency_fund_pct ?? 10
   const investmentPct = pyfSettings?.investment_pct ?? 15
+  const settingsThisMonthYm = useMemo(
+    () => monthCursorKey(currentMonthCursor()),
+    [],
+  )
+  const freeGuiltySplit = useMemo(
+    () =>
+      computeFreeGuiltySplit({
+        income: monthIncome,
+        bills,
+        overridesByBillId: new Map(),
+        categoriesById: allById,
+        bucketsById,
+        yearMonth: settingsThisMonthYm,
+        emergencyPct,
+        investmentPct,
+      }).split,
+    [
+      monthIncome,
+      bills,
+      allById,
+      bucketsById,
+      settingsThisMonthYm,
+      emergencyPct,
+      investmentPct,
+    ],
+  )
   const amountCtx = useMemo(
     () => ({
       monthIncome,
       emergencyPct,
       investmentPct,
       bucketsById,
+      freeGuiltySplit,
     }),
-    [monthIncome, emergencyPct, investmentPct, bucketsById],
+    [monthIncome, emergencyPct, investmentPct, bucketsById, freeGuiltySplit],
   )
   const formPyfKind =
     isTransfer && toBucket
@@ -347,7 +377,16 @@ export function RecurringBillsPanel({
           bucketsById,
         )
       : null
+  const formCheckingOwner =
+    isTransfer && toBucket
+      ? checkingAccountOwner(
+          { type: 'transfer', to_bucket_id: toBucket },
+          bucketsById,
+        )
+      : null
   const isFormPyfAuto = formPyfKind != null
+  const isFormCheckingAuto = formCheckingOwner != null
+  const isFormAutoAmount = isFormPyfAuto || isFormCheckingAuto
   const formPyfAmount = formPyfKind
     ? pyfTransferTargetAmount(
         formPyfKind,
@@ -356,6 +395,14 @@ export function RecurringBillsPanel({
         investmentPct,
       )
     : 0
+  const formCheckingAmount = formCheckingOwner
+    ? freeGuiltySplit[formCheckingOwner]
+    : 0
+  const formAutoAmount = isFormPyfAuto
+    ? formPyfAmount
+    : isFormCheckingAuto
+      ? formCheckingAmount
+      : 0
   const sortedBills = useMemo(
     () => sortRecurringBillsForSettings(bills, allById, bucketsById),
     [bills, allById, bucketsById],
@@ -369,11 +416,11 @@ export function RecurringBillsPanel({
       sumEstimateTotalsByType(
         bills,
         new Map(),
-        monthCursorKey(currentMonthCursor()),
+        settingsThisMonthYm,
         undefined,
         amountCtx,
       ),
-    [bills, amountCtx],
+    [bills, amountCtx, settingsThisMonthYm],
   )
   const dayPersistKeys = useMemo(
     () =>
@@ -391,12 +438,12 @@ export function RecurringBillsPanel({
   }, [dayPersistKeys, dayGroupsVersion])
 
   useEffect(() => {
-    if (!isFormPyfAuto) return
+    if (!isFormAutoAmount) return
     setVariableAmount(false)
     setAmountDigits(
-      formPyfAmount > 0 ? String(Math.round(formPyfAmount)) : '',
+      formAutoAmount > 0 ? String(Math.round(formAutoAmount)) : '',
     )
-  }, [isFormPyfAuto, formPyfAmount])
+  }, [isFormAutoAmount, formAutoAmount])
 
   async function reloadBills(options?: { silent?: boolean }) {
     if (!options?.silent) setLoading(true)
@@ -456,7 +503,7 @@ export function RecurringBillsPanel({
   }
 
   function isAmountFilled() {
-    if (isFormPyfAuto) return true
+    if (isFormAutoAmount) return true
     return Number(amountDigits) > 0
   }
 
@@ -666,7 +713,7 @@ export function RecurringBillsPanel({
   }
 
   function buildIntervalFields() {
-    const lockedVariable = isFormPyfAuto ? false : variableAmount
+    const lockedVariable = isFormAutoAmount ? false : variableAmount
     if (!isRecurring) {
       return {
         interval_unit: 'month' as const,
@@ -705,8 +752,8 @@ export function RecurringBillsPanel({
   }
 
   function resolveSaveAmount(): number | null {
-    if (isFormPyfAuto) {
-      return pyfAutoAmountPlaceholder(formPyfAmount)
+    if (isFormAutoAmount) {
+      return pyfAutoAmountPlaceholder(formAutoAmount)
     }
     const amount = Number(amountDigits)
     if (!amount || amount <= 0) return null
@@ -974,14 +1021,14 @@ export function RecurringBillsPanel({
     )
   }
 
-  const displayAmount = isFormPyfAuto
-    ? formPyfAmount > 0
-      ? formatNumber(formPyfAmount)
+  const displayAmount = isFormAutoAmount
+    ? formAutoAmount > 0
+      ? formatNumber(formAutoAmount)
       : '0'
     : amountDigits
       ? formatNumber(Number(amountDigits))
       : ''
-  const settingsDescription = isRecurring
+  const settingsDescriptionBase = isRecurring
     ? formatRecurringSettingsDescription({
         intervalUnit,
         intervalMonths,
@@ -997,6 +1044,38 @@ export function RecurringBillsPanel({
         startsOn: intervalUnit === 'week' ? startsOn : null,
       })
     : 'One-time monthly amount estimate (no due date)'
+  const settingsWeekThisMonth =
+    isRecurring && intervalUnit === 'week' && startsOn
+      ? formatThisMonthFrequencyLabel(
+          {
+            id: editingId ?? 'draft',
+            name: '',
+            amount: 0,
+            type: 'expense',
+            category_id: null,
+            from_bucket_id: null,
+            to_bucket_id: null,
+            circle: 'hd_family',
+            owner: 'suami',
+            due_day: Number(startsOn.slice(8, 10)) || dueDay,
+            interval_unit: 'week',
+            interval_months: intervalMonths,
+            starts_year_month: yearMonthFromIso(startsOn),
+            ends_year_month: endsYearMonth || null,
+            starts_on: startsOn,
+            variable_amount: false,
+            is_recurring: true,
+            icon: '',
+            sort_order: 0,
+            is_active: true,
+            created_at: '',
+          },
+          settingsThisMonthYm,
+        )
+      : null
+  const settingsDescription = settingsWeekThisMonth
+    ? `${settingsDescriptionBase} · ${settingsWeekThisMonth}`
+    : settingsDescriptionBase
   const everySelectValue = recurringEveryKey(intervalUnit, intervalMonths)
   const deleteLabel =
     deleteTarget?.name.trim() ||
@@ -1118,6 +1197,7 @@ export function RecurringBillsPanel({
                                 currentMonthDone={currentMonthDoneByBillId.has(
                                   bill.id,
                                 )}
+                                thisMonthYearMonth={settingsThisMonthYm}
                                 budgetGroup={budgetGroup}
                               />
                             </SwipeDeleteRow>
@@ -1156,7 +1236,7 @@ export function RecurringBillsPanel({
           </span>
           <div
             className={`flex items-center gap-2 rounded-xl bg-white px-4 py-3 shadow-sm dark:bg-neutral-800 ${
-              isFormPyfAuto ? 'opacity-80' : ''
+              isFormAutoAmount ? 'opacity-80' : ''
             }`}
           >
             <span className="text-sm font-medium text-neutral-400">Rp</span>
@@ -1168,10 +1248,10 @@ export function RecurringBillsPanel({
               enterKeyHint="next"
               autoComplete="off"
               value={displayAmount}
-              readOnly={isFormPyfAuto}
-              disabled={isFormPyfAuto}
+              readOnly={isFormAutoAmount}
+              disabled={isFormAutoAmount}
               onChange={(e) => {
-                if (isFormPyfAuto) return
+                if (isFormAutoAmount) return
                 const digits = e.target.value.replace(/\D/g, '').slice(0, 11)
                 setAmountDigits(digits)
               }}
@@ -1184,6 +1264,12 @@ export function RecurringBillsPanel({
             <p className="mt-1.5 text-xs text-neutral-400">
               From Money Plan ({formPyfKind === 'emergency' ? emergencyPct : investmentPct}%
               × this month&apos;s income).
+            </p>
+          ) : null}
+          {isFormCheckingAuto ? (
+            <p className="mt-1.5 text-xs text-neutral-400">
+              From Free Guilty split (Ndod floors, Devi ceilings when half is
+              not whole).
             </p>
           ) : null}
         </label>
@@ -1206,7 +1292,7 @@ export function RecurringBillsPanel({
           </span>
         </label>
 
-        {isRecurring && !isFormPyfAuto ? (
+        {isRecurring && !isFormAutoAmount ? (
           <label className="flex cursor-pointer items-start gap-3 rounded-xl bg-white px-4 py-3 shadow-sm dark:bg-neutral-800">
             <input
               type="checkbox"

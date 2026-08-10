@@ -11,6 +11,7 @@ import { useRecurringBills } from '../../hooks/useRecurringBills'
 import { useTransactions } from '../../hooks/useTransactions'
 import { formatRupiah } from '../../lib/format'
 import { monthCursorKey } from '../../lib/monthCursor'
+import { sumMonthIncomeParts } from '../../lib/moneyPlan'
 import { buildPaydayAllocation } from '../../lib/paydayAllocation'
 import { PlanIcon, PlanTitle } from '../../lib/planSections'
 import {
@@ -109,6 +110,7 @@ export function PlanPayday() {
   const [bills, setBills] = useState<RecurringBill[]>([])
   const [billsLoading, setBillsLoading] = useState(true)
   const [sinkingOpen, setSinkingOpen] = useState(true)
+  const [bonusOpen, setBonusOpen] = useState(true)
 
   useEffect(() => {
     let cancelled = false
@@ -130,18 +132,16 @@ export function PlanPayday() {
     }
   }, [])
 
-  const income = useMemo(
-    () =>
-      transactions
-        .filter((t) => t.type === 'income' && !t.complete_later)
-        .reduce((sum, t) => sum + t.amount, 0),
+  const incomeParts = useMemo(
+    () => sumMonthIncomeParts(transactions),
     [transactions],
   )
 
   const allocation = useMemo(() => {
     if (!settings) return null
     return buildPaydayAllocation({
-      income,
+      income: incomeParts.regular,
+      bonusIncome: incomeParts.bonus,
       bills,
       overridesByBillId: overrideByBillId,
       skippedOccurrenceKeys,
@@ -153,7 +153,7 @@ export function PlanPayday() {
     })
   }, [
     settings,
-    income,
+    incomeParts,
     bills,
     overrideByBillId,
     skippedOccurrenceKeys,
@@ -180,7 +180,7 @@ export function PlanPayday() {
       <PlanSubPage
         title={PlanTitle.payday}
         icon={PlanIcon.payday}
-        description="Free Guilty split and sinking transfers for payday."
+        description="Free Guilty split, sinking transfers, and bonus allocation."
       >
         <MonthPager
           monthLabel={monthLabel}
@@ -205,6 +205,9 @@ export function PlanPayday() {
           <div className="mt-5 space-y-5">
             <section className="space-y-2 rounded-2xl bg-white p-4 shadow-sm dark:bg-neutral-800">
               <AmountRow label="Income" amount={allocation.income} />
+              {allocation.bonusIncome > 0 && (
+                <AmountRow label="Bonus" amount={allocation.bonusIncome} />
+              )}
               <AmountRow
                 label="Planned Needs"
                 amount={allocation.plannedNeeds}
@@ -232,6 +235,66 @@ export function PlanPayday() {
                 <SplitRow owner="istri" amount={allocation.freeGuiltyIstri} />
               </div>
             </section>
+
+            {allocation.bonusAllocation && (
+              <GroupedListFrame
+                label="Bonus Allocation"
+                collapseContent
+                expanded={bonusOpen}
+                onToggle={setBonusOpen}
+              >
+                <div className="mb-3 space-y-2">
+                  <AmountRow
+                    label="Bonus Income"
+                    amount={allocation.bonusAllocation.bonusIncome}
+                    emphasize
+                  />
+                  <AmountRow
+                    label="To 12-Month Sinking"
+                    amount={allocation.bonusAllocation.sinkingFilled}
+                  />
+                  <AmountRow
+                    label="To Emergency"
+                    amount={allocation.bonusAllocation.emergency}
+                  />
+                  <AmountRow
+                    label="To Investment"
+                    amount={allocation.bonusAllocation.investment}
+                  />
+                  {allocation.bonusAllocation.unallocated > 0 && (
+                    <AmountRow
+                      label="Unallocated"
+                      amount={allocation.bonusAllocation.unallocated}
+                    />
+                  )}
+                </div>
+                {allocation.bonusAllocation.lines.length === 0 ? (
+                  <p className="text-xs text-neutral-400">
+                    No 12-month sinking gaps; remainder goes to Emergency &amp;
+                    Investment
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {allocation.bonusAllocation.lines.map((row) => (
+                      <li
+                        key={`${row.kind}:${row.bucketId}`}
+                        className="flex items-center gap-2"
+                      >
+                        <span className="text-base leading-none" aria-hidden>
+                          {row.icon}
+                        </span>
+                        <p className="min-w-0 flex-1 truncate text-sm text-neutral-800 dark:text-neutral-100">
+                          {row.name}
+                        </p>
+                        <span className="shrink-0 text-sm tabular-nums text-neutral-700 dark:text-neutral-200">
+                          {formatRupiah(row.amount)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </GroupedListFrame>
+            )}
 
             <GroupedListFrame
               label="Sinking Funds to Transfer"

@@ -38,7 +38,7 @@ import {
   isCheckingAutoAmountTransfer,
   isPyfAutoAmountTransfer,
   resolveEstimateAmount,
-  sumMonthIncome,
+  sumMonthRegularIncome,
 } from '../lib/moneyPlan'
 import { computeFreeGuiltySplit } from '../lib/paydayAllocation'
 import { ConfirmDialog } from './ConfirmDialog'
@@ -258,18 +258,25 @@ export function DueThisMonthChecklist({
     [logByOccurrenceKeyProp, logByBillId, bills, yearMonth, overrideByBillId],
   )
   const { byId } = useCategories(undefined, { includeInactive: true })
-  const { buckets } = useBuckets()
+  const { buckets, loading: bucketsLoading } = useBuckets()
   const bucketsById = useMemo(
     () => new Map(buckets.map((b) => [b.id, b])),
     [buckets],
   )
-  const { settings: pyfSettings } = usePyfSettings()
+  const { settings: pyfSettings, loading: pyfLoading } = usePyfSettings()
   const monthRange = useMemo(() => monthCursorRange(cursor), [cursor])
-  const { transactions: monthTransactions } = useTransactions(monthRange)
+  const { transactions: monthTransactions, loading: monthTxLoading } =
+    useTransactions(monthRange)
   const monthIncome = useMemo(
-    () => sumMonthIncome(monthTransactions),
+    () => sumMonthRegularIncome(monthTransactions),
     [monthTransactions],
   )
+  // Buckets + income + Money Plan % must be ready before PYF / checking
+  // transfer rows show note/amount — otherwise users see Main Account / stored
+  // placeholder flash into the real destination + computed amount.
+  const amountDepsReady =
+    !bucketsLoading && !pyfLoading && !monthTxLoading
+  const displayLoading = loading || !amountDepsReady
   const amountCtx = useMemo(() => {
     const freeGuiltySplit = computeFreeGuiltySplit({
       income: monthIncome,
@@ -583,7 +590,7 @@ export function DueThisMonthChecklist({
   useEffect(() => {
     if (variant !== 'dueInbox') return
     const focusDue = (location.state as RecurringFocusState | null)?.focusDue
-    if (!focusDue || loading) return
+    if (!focusDue || displayLoading) return
     if (monthCursorKey(cursor) !== monthCursorKey(currentMonthCursor())) return
 
     const targetKey = firstDueUncheckedKey(
@@ -607,7 +614,7 @@ export function DueThisMonthChecklist({
   }, [
     variant,
     location.state,
-    loading,
+    displayLoading,
     occurrenceItems,
     effectiveLogByOccurrenceKey,
     overrideByBillId,
@@ -617,14 +624,14 @@ export function DueThisMonthChecklist({
   ])
 
   useEffect(() => {
-    if (!focusOccurrenceKey || loading) return
+    if (!focusOccurrenceKey || displayLoading) return
     const t = window.setTimeout(() => {
       document
         .getElementById(`recurring-bill-${focusOccurrenceKey}`)
         ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }, 80)
     return () => window.clearTimeout(t)
-  }, [focusOccurrenceKey, loading, sectionDayForceKey, statusSections])
+  }, [focusOccurrenceKey, displayLoading, sectionDayForceKey, statusSections])
 
   const doneCount = useMemo(
     () =>
@@ -946,7 +953,7 @@ export function DueThisMonthChecklist({
     )
   }
 
-  if (loading && bills.length === 0) {
+  if (displayLoading && (bills.length === 0 || !amountDepsReady)) {
     if (variant === 'dueInbox') return null
     return (
       <section className={embedded ? '' : 'mt-6'}>

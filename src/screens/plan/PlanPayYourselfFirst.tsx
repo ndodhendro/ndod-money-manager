@@ -15,6 +15,7 @@ import { sumPlannedNeeds } from '../../lib/freeWants'
 import {
   buildMoneyPlan,
   makeMoneyPlanBucket,
+  sumMonthRegularIncome,
   sumSavingsActuals,
   type MoneyPlanBucket,
 } from '../../lib/moneyPlan'
@@ -132,9 +133,7 @@ export function PlanPayYourselfFirst() {
     }
   }, [])
 
-  const totalIncome = transactions
-    .filter((t) => t.type === 'income' && !t.complete_later)
-    .reduce((sum, t) => sum + t.amount, 0)
+  const totalIncome = sumMonthRegularIncome(transactions)
 
   const savingsActuals = useMemo(
     () =>

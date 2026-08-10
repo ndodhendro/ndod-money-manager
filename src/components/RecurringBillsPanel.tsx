@@ -31,7 +31,7 @@ import {
   pyfAutoTransferKind,
   pyfTransferTargetAmount,
   resolveEstimateAmount,
-  sumMonthIncome,
+  sumMonthRegularIncome,
 } from '../lib/moneyPlan'
 import { computeFreeGuiltySplit } from '../lib/paydayAllocation'
 import {
@@ -170,14 +170,15 @@ export function RecurringBillsPanel({
     useCategories(categoryType)
   const { byId: allById } = useCategories(undefined, { includeInactive: true })
   const { buckets, loading: bucketsLoading } = useBuckets()
-  const { settings: pyfSettings } = usePyfSettings()
+  const { settings: pyfSettings, loading: pyfLoading } = usePyfSettings()
   const settingsMonthRange = useMemo(
     () => monthCursorRange(currentMonthCursor()),
     [],
   )
-  const { transactions: monthTransactions } = useTransactions(settingsMonthRange)
+  const { transactions: monthTransactions, loading: monthTxLoading } =
+    useTransactions(settingsMonthRange)
   const monthIncome = useMemo(
-    () => sumMonthIncome(monthTransactions),
+    () => sumMonthRegularIncome(monthTransactions),
     [monthTransactions],
   )
 
@@ -188,6 +189,9 @@ export function RecurringBillsPanel({
   const [loading, setLoading] = useState(true)
   const [available, setAvailable] = useState(true)
   const [saving, setSaving] = useState(false)
+  const amountDepsReady =
+    !bucketsLoading && !pyfLoading && !monthTxLoading
+  const listLoading = loading || catsLoading || !amountDepsReady
 
   const [note, setNote] = useState('')
   const [amountDigits, setAmountDigits] = useState('')
@@ -481,12 +485,12 @@ export function RecurringBillsPanel({
   }, [highlightId])
 
   useEffect(() => {
-    if (!highlightId || loading || view !== 'list') return
+    if (!highlightId || listLoading || view !== 'list') return
     highlightRef.current?.scrollIntoView({
       behavior: 'smooth',
       block: 'center',
     })
-  }, [highlightId, loading, view, bills])
+  }, [highlightId, listLoading, view, bills])
 
   useEffect(() => {
     if (type === 'transfer') return
@@ -1022,9 +1026,11 @@ export function RecurringBillsPanel({
   }
 
   const displayAmount = isFormAutoAmount
-    ? formAutoAmount > 0
-      ? formatNumber(formAutoAmount)
-      : '0'
+    ? !amountDepsReady
+      ? ''
+      : formAutoAmount > 0
+        ? formatNumber(formAutoAmount)
+        : '0'
     : amountDigits
       ? formatNumber(Number(amountDigits))
       : ''
@@ -1087,7 +1093,7 @@ export function RecurringBillsPanel({
 
   return (
     <div className="space-y-3">
-      {(loading || catsLoading) && (
+      {(listLoading) && (
         <p className="text-sm text-neutral-400">Loading…</p>
       )}
       {view === 'list' ? (
@@ -1101,7 +1107,7 @@ export function RecurringBillsPanel({
               {ActionEmoji.add} Add New
             </button>
           </div>
-          {sortedBills.length === 0 ? (
+          {listLoading ? null : sortedBills.length === 0 ? (
             <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
               No estimates yet. Tap Add New to create one.
             </p>

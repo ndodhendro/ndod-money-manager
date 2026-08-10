@@ -21,7 +21,7 @@ import {
 } from '../../lib/monthCursor'
 import {
   pyfTransferTargetAmount,
-  sumMonthIncome,
+  sumMonthRegularIncome,
 } from '../../lib/moneyPlan'
 import {
   fetchRecurringBills,
@@ -198,7 +198,7 @@ export function SettingsMoneyPlan() {
     loading: transactionsLoading,
   } = useTransactions(monthRange)
   const monthIncome = useMemo(
-    () => sumMonthIncome(monthTransactions),
+    () => sumMonthRegularIncome(monthTransactions),
     [monthTransactions],
   )
 

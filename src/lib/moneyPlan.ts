@@ -119,16 +119,75 @@ export function resolveEstimateAmount(
   return bill.amount
 }
 
-/** Sum of completed income txs for the month (excludes complete_later). */
-export function sumMonthIncome(
-  transactions: Array<{ type: string; amount: number; complete_later?: boolean }>,
-): number {
-  let sum = 0
+/**
+ * Leaf income category names treated as bonus (excluded from Free Guilty /
+ * monthly PYF % base). English seed + legacy Indonesian names.
+ */
+export const BONUS_INCOME_LEAF_NAMES = new Set([
+  'Holiday Bonus (THR)',
+  'Performance Bonus',
+  'THR',
+  'Bonus Kinerja',
+])
+
+type IncomeCategoryRef = {
+  name?: string | null
+  parent?: { name?: string | null } | null
+} | null
+
+/** THR / Performance Bonus income (by leaf category name). */
+export function isBonusIncomeCategory(category: IncomeCategoryRef): boolean {
+  const leaf = category?.name?.trim() ?? ''
+  return leaf.length > 0 && BONUS_INCOME_LEAF_NAMES.has(leaf)
+}
+
+type MonthIncomeTx = {
+  type: string
+  amount: number
+  complete_later?: boolean
+  category?: IncomeCategoryRef
+}
+
+export type MonthIncomeParts = {
+  /** All completed income. */
+  total: number
+  /** Income excluding THR / Performance Bonus. */
+  regular: number
+  /** THR + Performance Bonus only. */
+  bonus: number
+}
+
+/** Split completed month income into regular vs bonus. */
+export function sumMonthIncomeParts(
+  transactions: MonthIncomeTx[],
+): MonthIncomeParts {
+  let total = 0
+  let bonus = 0
   for (const tx of transactions) {
     if (tx.type !== 'income' || tx.complete_later) continue
-    sum += tx.amount
+    total += tx.amount
+    if (isBonusIncomeCategory(tx.category ?? null)) bonus += tx.amount
   }
-  return sum
+  return {
+    total,
+    regular: Math.max(0, total - bonus),
+    bonus: Math.max(0, bonus),
+  }
+}
+
+/** Sum of completed income txs for the month (excludes complete_later). */
+export function sumMonthIncome(transactions: MonthIncomeTx[]): number {
+  return sumMonthIncomeParts(transactions).total
+}
+
+/** Completed income excluding THR / Performance Bonus. */
+export function sumMonthRegularIncome(transactions: MonthIncomeTx[]): number {
+  return sumMonthIncomeParts(transactions).regular
+}
+
+/** Completed THR + Performance Bonus income for the month. */
+export function sumMonthBonusIncome(transactions: MonthIncomeTx[]): number {
+  return sumMonthIncomeParts(transactions).bonus
 }
 
 export interface MoneyPlanInput {

@@ -22,7 +22,9 @@ import {
 import {
   buildMoneyPlan,
   budgetGroupOfTx,
+  isBonusIncomeCategory,
   makeMoneyPlanBucket,
+  sumMonthRegularIncome,
 } from '../../lib/moneyPlan'
 import { monthCursorKey, monthCursorRange } from '../../lib/monthCursor'
 import { PlanIcon, PlanTitle } from '../../lib/planSections'
@@ -135,9 +137,7 @@ export function PlanNeedsWants() {
     [transactions, viewYm],
   )
 
-  const totalIncome = monthTx
-    .filter((t) => t.type === 'income' && !t.complete_later)
-    .reduce((sum, t) => sum + t.amount, 0)
+  const totalIncome = sumMonthRegularIncome(monthTx)
   const needsExpenseTotal = monthTx
     .filter(
       (t) =>
@@ -272,6 +272,7 @@ export function PlanNeedsWants() {
     }
     for (const tx of transactions) {
       if (tx.type !== 'income' || tx.complete_later) continue
+      if (isBonusIncomeCategory(tx.category)) continue
       const ym = tx.occurred_on.slice(0, 7)
       if (!incomeByMonth.has(ym)) continue
       incomeByMonth.set(ym, (incomeByMonth.get(ym) ?? 0) + tx.amount)

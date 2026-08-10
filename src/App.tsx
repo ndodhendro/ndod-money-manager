@@ -18,6 +18,7 @@ import { MoneyPlanScreen } from './screens/MoneyPlan'
 import { PlanEmergency } from './screens/plan/PlanEmergency'
 import { PlanNeedsWants } from './screens/plan/PlanNeedsWants'
 import { PlanPayYourselfFirst } from './screens/plan/PlanPayYourselfFirst'
+import { PlanPayday } from './screens/plan/PlanPayday'
 import { PlanRecurring } from './screens/plan/PlanRecurring'
 import { PinUnlock } from './screens/PinUnlock'
 import { ProfilePicker } from './screens/ProfilePicker'
@@ -76,6 +77,7 @@ function AppShell({ onProfileReset }: { onProfileReset: () => void }) {
         <Route path="/riwayat" element={<History />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/rencana" element={<MoneyPlanScreen />} />
+        <Route path="/rencana/payday" element={<PlanPayday />} />
         <Route path="/rencana/recurring" element={<PlanRecurring />} />
         <Route
           path="/rencana/pay-yourself-first"

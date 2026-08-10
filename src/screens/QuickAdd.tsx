@@ -231,39 +231,6 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     return Number(amountDigits) > 0
   }
 
-  function isTransferReady() {
-    return fromBucket !== undefined && toBucket !== undefined
-  }
-
-  function findIncompleteAbove(
-    from: 'circle' | 'category' | 'description' | 'save' | 'from' | 'to',
-  ): 'amount' | 'circle' | 'category' | 'from' | 'to' | null {
-    if (completeLater) return null
-    if (!isAmountFilled()) return 'amount'
-    if (type === 'transfer') {
-      if (from !== 'circle' && !circle) return 'circle'
-      if (from !== 'from' && from !== 'circle' && fromBucket === undefined) {
-        return 'from'
-      }
-      if (
-        from !== 'to' &&
-        from !== 'from' &&
-        from !== 'circle' &&
-        toBucket === undefined
-      ) {
-        return 'to'
-      }
-      return null
-    }
-    if (type === 'income') {
-      if (from !== 'category' && !categoryId) return 'category'
-      return null
-    }
-    if (from !== 'circle' && !circle) return 'circle'
-    if (from !== 'category' && from !== 'circle' && !categoryId) return 'category'
-    return null
-  }
-
   function findNextEmpty(
     from: 'amount' | 'circle' | 'category' | 'from' | 'to',
   ): 'circle' | 'category' | 'from' | 'to' | null {
@@ -302,6 +269,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   }
 
   function focusAmountField(message?: string) {
+    setOwnerOpen(false)
     setCircleOpen(false)
     setCategoryOpen(false)
     setFromOpen(false)
@@ -314,6 +282,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   }
 
   function focusCircleField(message?: string) {
+    setOwnerOpen(false)
     setCategoryOpen(false)
     setFromOpen(false)
     setToOpen(false)
@@ -322,6 +291,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   }
 
   function focusCategoryField(message?: string) {
+    setOwnerOpen(false)
     setCircleOpen(false)
     setFromOpen(false)
     setToOpen(false)
@@ -330,6 +300,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   }
 
   function focusFromField(message?: string) {
+    setOwnerOpen(false)
     setCircleOpen(false)
     setCategoryOpen(false)
     setToOpen(false)
@@ -338,6 +309,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   }
 
   function focusToField(message?: string) {
+    setOwnerOpen(false)
     setCircleOpen(false)
     setCategoryOpen(false)
     setFromOpen(false)
@@ -375,140 +347,10 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     focusNextEmptyField('amount')
   }
 
-  function focusIncompleteField(
-    field: 'amount' | 'circle' | 'category' | 'from' | 'to',
-  ) {
-    if (field === 'amount') {
-      focusAmountField('Enter the amount first')
-      return
-    }
-    if (field === 'circle') {
-      focusCircleField('Pick a circle first')
-      return
-    }
-    if (field === 'from') {
-      focusFromField('Pick a source first')
-      return
-    }
-    if (field === 'to') {
-      focusToField('Pick a destination first')
-      return
-    }
-    focusCategoryField('Pick a category first')
-  }
-
-  function advanceOrFixAbove(
-    from: 'amount' | 'circle' | 'category' | 'description' | 'save' | 'from' | 'to',
-  ): boolean {
-    if (completeLater) {
-      if (from === 'amount') {
-        focusNextEmptyField('amount')
-        return true
-      }
-      return true
-    }
-    if (from === 'amount') {
-      if (!isAmountFilled()) {
-        focusAmountField('Enter the amount first')
-        return false
-      }
-      focusNextEmptyField('amount')
-      return true
-    }
-
-    if (type === 'transfer') {
-      if (from === 'circle') {
-        if (!isAmountFilled()) {
-          focusAmountField('Enter the amount first')
-          return false
-        }
-        if (!circle) {
-          focusCircleField('Pick a circle first')
-          return false
-        }
-        focusNextEmptyField('circle')
-        return true
-      }
-      if (from === 'from') {
-        if (!isAmountFilled()) {
-          focusAmountField('Enter the amount first')
-          return false
-        }
-        if (!circle) {
-          focusCircleField('Pick a circle first')
-          return false
-        }
-        if (fromBucket === undefined) {
-          focusFromField('Pick a source first')
-          return false
-        }
-        focusNextEmptyField('from')
-        return true
-      }
-      if (from === 'to') {
-        if (!isAmountFilled()) {
-          focusAmountField('Enter the amount first')
-          return false
-        }
-        if (!circle) {
-          focusCircleField('Pick a circle first')
-          return false
-        }
-        if (fromBucket === undefined) {
-          focusFromField('Pick a source first')
-          return false
-        }
-        if (toBucket === undefined) {
-          focusToField('Pick a destination first')
-          return false
-        }
-        return true
-      }
-      const incomplete = findIncompleteAbove(
-        from === 'description' ? 'description' : 'save',
-      )
-      if (incomplete) {
-        focusIncompleteField(incomplete)
-        return false
-      }
-      return true
-    }
-
-    if (from === 'circle') {
-      if (type === 'income') return true
-      if (!isAmountFilled()) {
-        focusAmountField('Enter the amount first')
-        return false
-      }
-      if (!circle) {
-        focusCircleField('Pick a circle first')
-        return false
-      }
-      focusNextEmptyField('circle')
-      return true
-    }
-
-    const incomplete = findIncompleteAbove(
-      from === 'category'
-        ? 'category'
-        : from === 'description'
-          ? 'description'
-          : 'save',
-    )
-    if (incomplete) {
-      focusIncompleteField(incomplete)
-      return false
-    }
-    return true
-  }
-
   function handleCircleOpenChange(open: boolean) {
     if (type === 'income') return
     if (open) {
-      if (!completeLater && !isAmountFilled()) {
-        focusAmountField('Enter the amount first')
-        return
-      }
+      setOwnerOpen(false)
       if (type === 'transfer') {
         setFromOpen(false)
         setToOpen(false)
@@ -521,14 +363,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
 
   function handleCategoryOpenChange(open: boolean) {
     if (open) {
-      if (!completeLater && !isAmountFilled()) {
-        focusAmountField('Enter the amount first')
-        return
-      }
-      if (!completeLater && type !== 'income' && !circle) {
-        focusCircleField('Pick a circle first')
-        return
-      }
+      setOwnerOpen(false)
       setCircleOpen(false)
     }
     setCategoryOpen(open)
@@ -536,14 +371,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
 
   function handleFromOpenChange(open: boolean) {
     if (open) {
-      if (!completeLater && !isAmountFilled()) {
-        focusAmountField('Enter the amount first')
-        return
-      }
-      if (!completeLater && !circle) {
-        focusCircleField('Pick a circle first')
-        return
-      }
+      setOwnerOpen(false)
       setCircleOpen(false)
       setToOpen(false)
     }
@@ -552,31 +380,36 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
 
   function handleToOpenChange(open: boolean) {
     if (open) {
-      if (!completeLater && !isAmountFilled()) {
-        focusAmountField('Enter the amount first')
-        return
-      }
-      if (!completeLater && !circle) {
-        focusCircleField('Pick a circle first')
-        return
-      }
-      if (!completeLater && fromBucket === undefined) {
-        focusFromField('Pick a source first')
-        return
-      }
+      setOwnerOpen(false)
       setCircleOpen(false)
       setFromOpen(false)
     }
     setToOpen(open)
   }
 
+  function handleOwnerOpenChange(open: boolean) {
+    if (open) {
+      setCircleOpen(false)
+      setCategoryOpen(false)
+      setFromOpen(false)
+      setToOpen(false)
+    }
+    setOwnerOpen(open)
+  }
+
+  function handleOwnerSelect(next: Owner) {
+    setOwner(next)
+    setOwnerOpen(false)
+    if (completeLater) {
+      window.setTimeout(() => descriptionRef.current?.focus(), 0)
+      return
+    }
+    focusNextEmptyField('amount')
+  }
+
   function handleCircleSelect(next: Circle) {
     setCircle(next)
     setCircleOpen(false)
-    if (!completeLater && !isAmountFilled()) {
-      focusAmountField('Enter the amount first')
-      return
-    }
     if (type === 'transfer') {
       if (fromBucket === undefined) {
         focusFromField()
@@ -596,14 +429,6 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     if (toBucket !== undefined && toBucket === next) {
       setToBucket(undefined)
     }
-    if (!completeLater && !isAmountFilled()) {
-      focusAmountField('Enter the amount first')
-      return
-    }
-    if (!completeLater && !circle) {
-      focusCircleField('Pick a circle first')
-      return
-    }
     if (toBucket === undefined || toBucket === next) {
       focusToField()
     }
@@ -612,46 +437,19 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   function handleToSelect(next: BucketSelection) {
     setToBucket(next)
     setToOpen(false)
-    if (!completeLater && !isAmountFilled()) {
-      focusAmountField('Enter the amount first')
-      return
-    }
-    if (!completeLater && !circle) {
-      focusCircleField('Pick a circle first')
-      return
-    }
-    if (fromBucket === undefined) {
-      focusFromField('Pick a source first')
-    }
   }
 
   function handleAmountKeyDown(e: KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'Enter') {
       e.preventDefault()
       amountRef.current?.blur()
-      advanceOrFixAbove('amount')
+      focusNextEmptyField('amount')
     }
   }
 
   function handleCategorySelect(id: string) {
     setCategoryId(id)
     setCategoryOpen(false)
-    if (!completeLater && !isAmountFilled()) {
-      focusAmountField('Enter the amount first')
-      return
-    }
-    if (!completeLater && type !== 'income' && !circle) {
-      focusCircleField('Pick a circle first')
-    }
-  }
-
-  function handleDescriptionFocus() {
-    if (completeLater) return
-    const incomplete = findIncompleteAbove('description')
-    if (incomplete) {
-      descriptionRef.current?.blur()
-      focusIncompleteField(incomplete)
-    }
   }
 
   function handleCompleteLaterChange(checked: boolean) {
@@ -683,6 +481,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   function handleTypeChange(next: TransactionType) {
     setType(next)
     setCategoryId(null)
+    setOwnerOpen(false)
     setCircleOpen(false)
     setCategoryOpen(false)
     setFromOpen(false)
@@ -718,25 +517,41 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         showAppToast('Pick different from and to')
         return
       }
-    } else {
-      if (!advanceOrFixAbove('save')) return
-
-      if (type === 'transfer') {
-        if (!isTransferReady()) return
-        if (fromBucket === toBucket) {
-          showAppToast('Pick different from and to')
-          return
-        }
-        if (fromBucket == null && toBucket == null) {
-          showAppToast('Transfer needs at least one bucket')
-          return
-        }
-        if (!circle) return
-      } else if (type === 'income') {
-        if (!categoryId) return
-      } else if (!circle || !categoryId) {
+    } else if (!isAmountFilled()) {
+      focusAmountField('Enter the amount')
+      return
+    } else if (type === 'transfer') {
+      if (!circle) {
+        focusCircleField('Pick a circle')
         return
       }
+      if (fromBucket === undefined) {
+        focusFromField('Pick a source')
+        return
+      }
+      if (toBucket === undefined) {
+        focusToField('Pick a destination')
+        return
+      }
+      if (fromBucket === toBucket) {
+        showAppToast('Pick different from and to')
+        return
+      }
+      if (fromBucket == null && toBucket == null) {
+        showAppToast('Transfer needs at least one bucket')
+        return
+      }
+    } else if (type === 'income') {
+      if (!categoryId) {
+        focusCategoryField('Pick a category')
+        return
+      }
+    } else if (!circle) {
+      focusCircleField('Pick a circle')
+      return
+    } else if (!categoryId) {
+      focusCategoryField('Pick a category')
+      return
     }
 
     const numericAmount = Number(amountDigits) || 0
@@ -744,9 +559,6 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
       type === 'income'
         ? 'hd_family'
         : (circle ?? getStoredCircle() ?? 'hd_family')
-
-    const resolvedOwner: Owner =
-      isEditing || completeLater ? owner : profileOwner
 
     const draft: NewTransactionInput =
       type === 'transfer'
@@ -757,7 +569,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
             to_bucket_id: toBucket ?? null,
             amount: numericAmount,
             description,
-            owner: resolvedOwner,
+            owner,
             circle: resolvedCircle,
             occurred_on: occurredOn,
             is_recurring: false,
@@ -770,7 +582,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
             to_bucket_id: null,
             amount: numericAmount,
             description,
-            owner: resolvedOwner,
+            owner,
             circle: resolvedCircle,
             occurred_on: occurredOn,
             is_recurring: false,
@@ -863,10 +675,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
             {isEditing ? 'Edit Transaction' : 'Add Transaction'}
           </PageTitle>
         </div>
-        <OwnerBadge
-          owner={isEditing || completeLater ? owner : profileOwner}
-          size="md"
-        />
+        <OwnerBadge owner={owner} size="md" />
       </div>
 
       <div className="mt-4 grid grid-cols-3 gap-1 rounded-xl bg-neutral-100 p-1 dark:bg-neutral-800">
@@ -913,31 +722,6 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         </span>
       </label>
 
-      {completeLater ? (
-        <div className="mt-3">
-          <OwnerPicker
-            label="Profile"
-            value={owner}
-            onChange={(next) => {
-              setOwner(next)
-              setOwnerOpen(false)
-              window.setTimeout(() => descriptionRef.current?.focus(), 0)
-            }}
-            open={ownerOpen}
-            onOpenChange={(open) => {
-              setOwnerOpen(open)
-              if (open) {
-                setCircleOpen(false)
-                setCategoryOpen(false)
-                setFromOpen(false)
-                setToOpen(false)
-              }
-            }}
-            highlighted={ownerOpen}
-          />
-        </div>
-      ) : null}
-
       <label className="mt-3 block">
         <span className="mb-1.5 block text-sm font-medium text-neutral-600 dark:text-neutral-300">
           Amount{completeLater ? ' (optional)' : ''}
@@ -962,6 +746,17 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
           />
         </div>
       </label>
+
+      <div className="mt-3">
+        <OwnerPicker
+          label="Profile"
+          value={owner}
+          onChange={handleOwnerSelect}
+          open={ownerOpen}
+          onOpenChange={handleOwnerOpenChange}
+          highlighted={ownerOpen}
+        />
+      </div>
 
       <div className="mt-4 space-y-3">
         {isTransfer ? (
@@ -1033,8 +828,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
           value={description}
           onChange={setDescription}
           categoryId={isTransfer ? null : categoryId}
-          owner={isEditing || completeLater ? owner : profileOwner}
-          onFocus={handleDescriptionFocus}
+          owner={owner}
           onKeyDown={handleDescriptionKeyDown}
           placeholder={
             completeLater ? 'Note (required)' : 'Note (optional)'

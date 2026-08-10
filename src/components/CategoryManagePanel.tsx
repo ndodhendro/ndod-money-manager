@@ -35,11 +35,11 @@ import {
   reorderCategories,
 } from '../lib/categoriesApi'
 import {
-  BUDGET_GROUP_LABELS,
   type BudgetGroup,
   type Category,
   type CategoryType,
 } from '../lib/types'
+import { BudgetGroupBadge } from './BudgetGroupBadge'
 import { CollapseChevron } from './CollapseChevron'
 import { ConfirmDialog } from './ConfirmDialog'
 import { GroupedListFrame } from './GroupedListFrame'
@@ -218,7 +218,7 @@ export function CategoryManagePanel({
       return
     }
     if (resolvedType === 'expense' && !budgetGroup) {
-      showAppToast('Select needs, wants, or savings')
+      showAppToast('Select needs or wants')
       budgetRef.current?.focus()
       return
     }
@@ -277,11 +277,9 @@ export function CategoryManagePanel({
     setEditIcon(cat.icon)
     setEditBudgetGroup(
       type === 'expense'
-        ? (cat.budget_group === 'needs' ||
-          cat.budget_group === 'wants' ||
-          cat.budget_group === 'savings'
-            ? cat.budget_group
-            : 'needs')
+        ? cat.budget_group === 'needs' || cat.budget_group === 'wants'
+          ? cat.budget_group
+          : 'needs'
         : null,
     )
     const isSub = Boolean(cat.parent_id)
@@ -528,7 +526,6 @@ export function CategoryManagePanel({
                 <option value="">Select One</option>
                 <option value="needs">Needs</option>
                 <option value="wants">Wants</option>
-                <option value="savings">Savings</option>
               </select>
             )}
           </div>
@@ -717,8 +714,8 @@ function SortableParentRow({
                 )}
               </p>
               {cat.children.length === 0 && cat.budget_group && (
-                <p className="text-[11px] text-neutral-400">
-                  {BUDGET_GROUP_LABELS[cat.budget_group]}
+                <p className="mt-0.5">
+                  <BudgetGroupBadge group={cat.budget_group} />
                 </p>
               )}
             </div>
@@ -832,8 +829,8 @@ function SortableChildRow({
         <span className="min-w-0 truncate">
           {child.icon} {child.name}
           {child.budget_group ? (
-            <span className="ml-1.5 text-[11px] text-neutral-400">
-              · {BUDGET_GROUP_LABELS[child.budget_group]}
+            <span className="ml-1.5 inline-flex align-middle">
+              <BudgetGroupBadge group={child.budget_group} />
             </span>
           ) : null}
         </span>
@@ -971,7 +968,6 @@ function EditRow({
         >
           <option value="needs">Needs</option>
           <option value="wants">Wants</option>
-          <option value="savings">Savings</option>
         </select>
       )}
     </div>

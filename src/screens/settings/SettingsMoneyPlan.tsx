@@ -1,39 +1,49 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { GroupedListFrame } from '../../components/GroupedListFrame'
 import { SettingsSubPage } from '../../components/SettingsSubPage'
 import { SettingsIcon } from '../../lib/settingsSections'
+import { useBuckets } from '../../hooks/useBuckets'
+import { useCategories } from '../../hooks/useCategories'
 import { usePyfSettings } from '../../hooks/usePyfSettings'
-import { useTransactions } from '../../hooks/useTransactions'
 import { showAppToast } from '../../lib/appToast'
 import {
   areAllCollapseOpen,
   getCollapseOpen,
   setCollapseOpen,
 } from '../../lib/collapseState'
-import { formatNumber, formatRupiah } from '../../lib/format'
-import { averageMonthlyNeeds } from '../../lib/moneyPlan'
+import { formatRupiah } from '../../lib/format'
+import { sumPlannedNeeds } from '../../lib/freeWants'
+import { currentMonthCursor, monthCursorKey } from '../../lib/monthCursor'
 import {
-  monthsSpanRange,
-  previousCompleteMonths,
-} from '../../lib/monthCursor'
+  fetchRecurringBills,
+  isMissingRecurringSchema,
+  type RecurringBill,
+} from '../../lib/recurringBillsApi'
 
-const NEEDS_AVG_LOOKBACK = 3
 const EF_COLLAPSE_KEY = 'settings:money-plan:emergency'
 const INV_COLLAPSE_KEY = 'settings:money-plan:investment'
 const SECTION_KEYS = [EF_COLLAPSE_KEY, INV_COLLAPSE_KEY]
+/** Matches disabled auto-calc fields in BucketManagePanel (no native input:disabled UA overrides). */
+const DISABLED_FIELD_CLASS =
+  'mt-1 w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm tabular-nums text-neutral-500 opacity-80 dark:bg-neutral-700 dark:text-neutral-400'
 
 export function SettingsMoneyPlan() {
   const { settings, loading, error, save } = usePyfSettings()
-  const prevNeedsMonths = previousCompleteMonths(NEEDS_AVG_LOOKBACK)
-  const { transactions: prevTx, loading: prevTxLoading } = useTransactions(
-    monthsSpanRange(prevNeedsMonths),
-  )
+  const {
+    byId: categoriesById,
+    loading: categoriesLoading,
+  } = useCategories('expense', { includeInactive: true })
+  const {
+    byId: bucketsById,
+    loading: bucketsLoading,
+  } = useBuckets()
 
   const [emergencyPct, setEmergencyPct] = useState('10')
   const [investmentPct, setInvestmentPct] = useState('15')
-  const [plannedNeedsDigits, setPlannedNeedsDigits] = useState('')
   const [efMultiplier, setEfMultiplier] = useState('3')
   const [savingPlan, setSavingPlan] = useState(false)
+  const [bills, setBills] = useState<RecurringBill[]>([])
+  const [billsLoading, setBillsLoading] = useState(true)
   const [efOpen, setEfOpen] = useState(() =>
     getCollapseOpen(EF_COLLAPSE_KEY, true),
   )
@@ -52,13 +62,44 @@ export function SettingsMoneyPlan() {
     if (!settings) return
     setEmergencyPct(String(settings.emergency_fund_pct))
     setInvestmentPct(String(settings.investment_pct))
-    setPlannedNeedsDigits(
-      settings.planned_needs_amount > 0
-        ? String(Math.round(settings.planned_needs_amount))
-        : '',
-    )
     setEfMultiplier(String(settings.emergency_fund_target_multiplier || 3))
   }, [settings])
+
+  useEffect(() => {
+    let cancelled = false
+    setBillsLoading(true)
+    void (async () => {
+      try {
+        const rows = await fetchRecurringBills()
+        if (!cancelled) setBills(rows)
+      } catch (err) {
+        if (cancelled) return
+        const message = err instanceof Error ? err.message : ''
+        if (isMissingRecurringSchema(message)) {
+          setBills([])
+        }
+      } finally {
+        if (!cancelled) setBillsLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const viewYm = monthCursorKey(currentMonthCursor())
+  const plannedNeeds = useMemo(
+    () =>
+      sumPlannedNeeds(
+        bills,
+        new Map(),
+        categoriesById,
+        viewYm,
+        undefined,
+        bucketsById,
+      ),
+    [bills, categoriesById, bucketsById, viewYm],
+  )
 
   function setSectionOpen(key: string, open: boolean) {
     setCollapseOpen(key, open)
@@ -75,7 +116,6 @@ export function SettingsMoneyPlan() {
   async function handleSaveMoneyPlan() {
     const emergency = Number(emergencyPct)
     const investment = Number(investmentPct)
-    const plannedNeeds = plannedNeedsDigits ? Number(plannedNeedsDigits) : 0
     const multiplier = Number(efMultiplier)
 
     if (Number.isNaN(emergency) || Number.isNaN(investment)) {
@@ -111,10 +151,7 @@ export function SettingsMoneyPlan() {
     }
   }
 
-  const plannedNeedsPreview = plannedNeedsDigits
-    ? Number(plannedNeedsDigits)
-    : 0
-  const needsAvg = averageMonthlyNeeds(prevTx, prevNeedsMonths)
+  const pageLoading = loading || billsLoading || categoriesLoading || bucketsLoading
 
   return (
     <SettingsSubPage
@@ -122,12 +159,12 @@ export function SettingsMoneyPlan() {
       icon={SettingsIcon.moneyPlan}
       description=""
     >
-      {loading && (
+      {pageLoading && (
         <p className="text-sm text-neutral-400">Loading…</p>
       )}
       {error && <p className="text-sm text-red-500">{error}</p>}
 
-      {!loading && settings && (
+      {!pageLoading && settings && (
         <div className="space-y-5">
           <GroupedListFrame
             label="Money Plan"
@@ -154,45 +191,28 @@ export function SettingsMoneyPlan() {
                       step={0.5}
                       value={emergencyPct}
                       onChange={(e) => setEmergencyPct(e.target.value)}
-                      className="mt-1 w-full rounded-lg bg-white px-3 py-2 text-sm shadow-sm dark:bg-neutral-800 dark:text-neutral-100"
+                      className="mt-1 w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
                     />
                   </label>
-                  <label className="block">
+                  <div className="block">
                     <span className="text-xs text-neutral-500">
-                      Planned needs (monthly)
+                      Planned Needs (Monthly)
                     </span>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      placeholder="e.g. 15000000"
-                      value={
-                        plannedNeedsDigits
-                          ? formatNumber(Number(plannedNeedsDigits))
-                          : ''
-                      }
-                      onChange={(e) =>
-                        setPlannedNeedsDigits(e.target.value.replace(/\D/g, ''))
-                      }
-                      className="mt-1 w-full rounded-lg bg-white px-3 py-2 text-sm shadow-sm dark:bg-neutral-800 dark:text-neutral-100"
-                    />
-                    {plannedNeedsPreview > 0 && (
-                      <span className="mt-1 block text-[11px] text-neutral-400">
-                        {formatRupiah(plannedNeedsPreview)}
-                      </span>
-                    )}
-                    {!prevTxLoading && needsAvg && (
-                      <span className="mt-1 block text-[11px] text-neutral-400">
-                        Last {needsAvg.monthsUsed} month
-                        {needsAvg.monthsUsed === 1 ? '' : 's'} avg needs:{' '}
-                        {formatRupiah(Math.round(needsAvg.average))}
-                      </span>
-                    )}
-                    {!prevTxLoading && !needsAvg && (
-                      <span className="mt-1 block text-[11px] text-neutral-400">
-                        No needs data in the last {NEEDS_AVG_LOOKBACK} months
-                      </span>
-                    )}
-                  </label>
+                    <div
+                      aria-label="Planned Needs (Monthly) (auto-calculated)"
+                      className={DISABLED_FIELD_CLASS}
+                    >
+                      {formatRupiah(plannedNeeds)}
+                    </div>
+                    <span className="mt-1 block text-[11px] text-neutral-400">
+                      Includes both Needs expenses (non-recurring, weekly /
+                      every 2 weeks, or monthly) and transfers into Needs
+                      sinking funds. Multi-month Needs expenses (e.g. yearly
+                      tax) are excluded — covered by sinking transfers.
+                      Emergency Fund and Investment transfers use Money Plan %
+                      separately and are not included here.
+                    </span>
+                  </div>
                   <label className="block">
                     <span className="text-xs text-neutral-500">
                       Emergency fund target (× monthly needs)
@@ -205,13 +225,31 @@ export function SettingsMoneyPlan() {
                       step={0.5}
                       value={efMultiplier}
                       onChange={(e) => setEfMultiplier(e.target.value)}
-                      className="mt-1 w-full rounded-lg bg-white px-3 py-2 text-sm shadow-sm dark:bg-neutral-800 dark:text-neutral-100"
+                      className="mt-1 w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
                     />
                     <span className="mt-1 block text-[11px] text-neutral-400">
                       Common range: 3–6×. When the Emergency bucket reaches
                       this, consider lowering the monthly %.
                     </span>
                   </label>
+                  <div className="block">
+                    <span className="text-xs text-neutral-500">
+                      Emergency Fund Goal
+                    </span>
+                    <div
+                      aria-label="Emergency Fund Goal (auto-calculated)"
+                      className={DISABLED_FIELD_CLASS}
+                    >
+                      {formatRupiah(
+                        Math.max(0, plannedNeeds) *
+                          Math.max(0, Number(efMultiplier) || 0),
+                      )}
+                    </div>
+                    <span className="mt-1 block text-[11px] text-neutral-400">
+                      Auto-set as the Emergency Fund bucket target (planned
+                      needs × multiplier).
+                    </span>
+                  </div>
                 </div>
               </GroupedListFrame>
 
@@ -233,7 +271,7 @@ export function SettingsMoneyPlan() {
                     step={0.5}
                     value={investmentPct}
                     onChange={(e) => setInvestmentPct(e.target.value)}
-                    className="mt-1 w-full rounded-lg bg-white px-3 py-2 text-sm shadow-sm dark:bg-neutral-800 dark:text-neutral-100"
+                    className="mt-1 w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
                   />
                 </label>
               </GroupedListFrame>

@@ -9,7 +9,7 @@ export const SETTINGS_SECTIONS = [
   {
     to: '/pengaturan/recurring',
     icon: '📆',
-    title: 'Recurring',
+    title: 'Monthly Estimates',
     subtitle: '',
   },
   {

@@ -12,11 +12,11 @@ import {
 import {
   currentMonthCursor,
   monthCursorKey,
+  monthCursorRange,
   type MonthCursor,
 } from '../lib/monthCursor'
 import { getStoredProfile } from '../lib/profile'
 import {
-  effectiveAmount,
   effectiveDueDay,
   isOccurrenceSkipped,
   markBillPaid,
@@ -32,6 +32,13 @@ import {
 import { createTransaction, deleteTransaction } from '../lib/transactionsApi'
 import { useBuckets } from '../hooks/useBuckets'
 import { useCategories } from '../hooks/useCategories'
+import { usePyfSettings } from '../hooks/usePyfSettings'
+import { useTransactions } from '../hooks/useTransactions'
+import {
+  isPyfAutoAmountTransfer,
+  resolveEstimateAmount,
+  sumMonthIncome,
+} from '../lib/moneyPlan'
 import { ConfirmDialog } from './ConfirmDialog'
 import { GroupedListFrame } from './GroupedListFrame'
 import { CollapsibleDayGroup } from './CollapsibleDayGroup'
@@ -209,6 +216,10 @@ export function DueThisMonthChecklist({
     bill: RecurringBill
     occurredOn: string
   } | null>(null)
+  const [pendingDoneConfirm, setPendingDoneConfirm] = useState<{
+    bill: RecurringBill
+    occurredOn: string
+  } | null>(null)
   const [savingOverride, setSavingOverride] = useState(false)
   const [openSwipeId, setOpenSwipeId] = useState<string | null>(null)
   const [pendingSkip, setPendingSkip] = useState<{
@@ -250,6 +261,33 @@ export function DueThisMonthChecklist({
     () => new Map(buckets.map((b) => [b.id, b])),
     [buckets],
   )
+  const { settings: pyfSettings } = usePyfSettings()
+  const monthRange = useMemo(() => monthCursorRange(cursor), [cursor])
+  const { transactions: monthTransactions } = useTransactions(monthRange)
+  const monthIncome = useMemo(
+    () => sumMonthIncome(monthTransactions),
+    [monthTransactions],
+  )
+  const amountCtx = useMemo(
+    () => ({
+      monthIncome,
+      emergencyPct: pyfSettings?.emergency_fund_pct ?? 10,
+      investmentPct: pyfSettings?.investment_pct ?? 15,
+      bucketsById,
+    }),
+    [monthIncome, pyfSettings, bucketsById],
+  )
+
+  function resolvedAmount(
+    bill: RecurringBill,
+    override?: RecurringBillMonthOverride | null,
+  ) {
+    return resolveEstimateAmount(bill, override, amountCtx)
+  }
+
+  function isPyfAuto(bill: RecurringBill) {
+    return isPyfAutoAmountTransfer(bill, bucketsById)
+  }
 
   // Drop optimistic entries once props match (silent reload finished).
   useEffect(() => {
@@ -343,8 +381,9 @@ export function DueThisMonthChecklist({
       items,
       effectiveLogByOccurrenceKey,
       byId,
+      bucketsById,
     )
-  }, [bills, yearMonth, overrideByBillId, effectiveLogByOccurrenceKey, byId])
+  }, [bills, yearMonth, overrideByBillId, effectiveLogByOccurrenceKey, byId, bucketsById])
 
   const statusSections = useMemo(() => {
     const due: RecurringChecklistOccurrence[] = []
@@ -640,9 +679,22 @@ export function DueThisMonthChecklist({
 
         const override = overrideByBillId.get(bill.id)
         const amount =
-          amountOverride != null && amountOverride > 0
+          amountOverride != null && amountOverride > 0 && !isPyfAuto(bill)
             ? amountOverride
-            : effectiveAmount(bill, override)
+            : resolvedAmount(bill, override)
+        if (amount <= 0) {
+          showAppToast(
+            isPyfAuto(bill)
+              ? 'No income this month'
+              : 'Enter an amount greater than zero',
+          )
+          setPendingDone((prev) => {
+            const next = new Map(prev)
+            next.delete(key)
+            return next
+          })
+          return
+        }
         const owner = bill.owner ?? getStoredProfile() ?? 'suami'
         const circle = bill.type === 'income' ? 'hd_family' : bill.circle
         const txId = await createTransaction(
@@ -681,7 +733,7 @@ export function DueThisMonthChecklist({
           transactionId: txId,
         })
         setJustCheckedKey(key)
-        showAppToast(`Logged ${ActionEmoji.save}`)
+        showAppToast(`Saved ${ActionEmoji.save}`)
       }
       onChanged()
     } catch (err) {
@@ -696,12 +748,21 @@ export function DueThisMonthChecklist({
     }
   }
 
-  function requestCheck(bill: RecurringBill, occurredOn: string) {
-    if (bill.variable_amount) {
+  function proceedCheck(bill: RecurringBill, occurredOn: string) {
+    if (bill.variable_amount && !isPyfAuto(bill)) {
       setPendingAmountConfirm({ bill, occurredOn })
       return
     }
     void handleToggle(bill, occurredOn, false)
+  }
+
+  function requestCheck(bill: RecurringBill, occurredOn: string) {
+    if (variant === 'plan') return
+    if (variant === 'dueInbox') {
+      setPendingDoneConfirm({ bill, occurredOn })
+      return
+    }
+    proceedCheck(bill, occurredOn)
   }
 
   function openAmountEdit(
@@ -713,8 +774,48 @@ export function DueThisMonthChecklist({
     setEditingBill(bill)
     setEditingOccurredOn(occurredOn)
     setCheckAfterEdit(options?.checkAfterSave === true)
-    setAutoFocusAmount(options?.focusAmount === true)
+    setAutoFocusAmount(
+      options?.focusAmount === true && !isPyfAuto(bill),
+    )
     setOpenSwipeId(null)
+  }
+
+  async function handleSaveOverride(input: {
+    amount: number
+    dueDay: number
+  }) {
+    if (!editingBill || savingOverride) return
+    const bill = editingBill
+    const occurredOn = editingOccurredOn
+    const shouldCheck = checkAfterEdit && occurredOn != null
+    const amount = isPyfAuto(bill)
+      ? resolvedAmount(bill, overrideByBillId.get(bill.id))
+      : input.amount
+    setSavingOverride(true)
+    try {
+      await upsertRecurringBillMonthOverride({
+        billId: bill.id,
+        yearMonth,
+        amount,
+        dueDay: input.dueDay,
+        templateAmount: bill.amount,
+        templateDueDay: bill.due_day,
+      })
+      setEditingBill(null)
+      setEditingOccurredOn(null)
+      setAutoFocusAmount(false)
+      setCheckAfterEdit(false)
+      showAppToast(`Saved ${ActionEmoji.save}`)
+      if (shouldCheck && occurredOn) {
+        await handleToggle(bill, occurredOn, false, amount)
+      } else {
+        onChanged()
+      }
+    } catch (err) {
+      showAppToast(err instanceof Error ? err.message : 'Failed to save')
+    } finally {
+      setSavingOverride(false)
+    }
   }
 
   async function confirmSkip() {
@@ -796,41 +897,6 @@ export function DueThisMonthChecklist({
     }
   }
 
-  async function handleSaveOverride(input: {
-    amount: number
-    dueDay: number
-  }) {
-    if (!editingBill || savingOverride) return
-    const bill = editingBill
-    const occurredOn = editingOccurredOn
-    const shouldCheck = checkAfterEdit && occurredOn != null
-    setSavingOverride(true)
-    try {
-      await upsertRecurringBillMonthOverride({
-        billId: bill.id,
-        yearMonth,
-        amount: input.amount,
-        dueDay: input.dueDay,
-        templateAmount: bill.amount,
-        templateDueDay: bill.due_day,
-      })
-      setEditingBill(null)
-      setEditingOccurredOn(null)
-      setAutoFocusAmount(false)
-      setCheckAfterEdit(false)
-      showAppToast(`Saved ${ActionEmoji.save}`)
-      if (shouldCheck && occurredOn) {
-        await handleToggle(bill, occurredOn, false, input.amount)
-      } else {
-        onChanged()
-      }
-    } catch (err) {
-      showAppToast(err instanceof Error ? err.message : 'Failed to save')
-    } finally {
-      setSavingOverride(false)
-    }
-  }
-
   if (!available) {
     if (variant === 'dueInbox') return null
     return (
@@ -843,7 +909,7 @@ export function DueThisMonthChecklist({
         <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
           Run migration{' '}
           <code className="text-xs">migrate_recurring_bills.sql</code> in
-          Supabase, then add items in Settings → Recurring.
+          Supabase, then add items in Settings → Monthly Estimates.
         </p>
       </section>
     )
@@ -869,7 +935,8 @@ export function DueThisMonthChecklist({
             </p>
           )}
           <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
-            No recurring items yet. Add them in Settings → Recurring.
+            No due items yet. Add recurring estimates in Settings → Monthly
+            Estimates.
           </p>
         </section>
       )
@@ -928,14 +995,17 @@ export function DueThisMonthChecklist({
                       !skipped && effectiveLogByOccurrenceKey.has(key)
                     const busy = busyKey === key
                     const override = overrideByBillId.get(bill.id)
-                    const amount = effectiveAmount(bill, override)
+                    const amount = resolvedAmount(bill, override)
                     const dueDay = effectiveDueDay(bill, override)
                     const dueOrOverdue =
                       (section.status === 'due' ||
                         section.status === 'unchecked') &&
                       occurredOn <= todayIso()
+                    const pyfAuto = isPyfAuto(bill)
                     const variableDue =
-                      dueOrOverdue && bill.variable_amount === true
+                      dueOrOverdue &&
+                      bill.variable_amount === true &&
+                      !pyfAuto
                     const justChecked = justCheckedKey === key
                     const displayBill = {
                       ...bill,
@@ -956,9 +1026,11 @@ export function DueThisMonthChecklist({
                         ? done
                         : (currentMonthDoneByBillId?.has(bill.id) ?? false)
                     const rowId = `recurring-bill-${key}`
+                    const showCheckbox = variant !== 'plan' && !skipped
+                    const canToggleCheck = variant !== 'plan'
                     const rowInner = (
                       <>
-                        {!skipped ? (
+                        {showCheckbox ? (
                           <span className="shrink-0">
                             <ChecklistCheckbox checked={done} />
                           </span>
@@ -967,6 +1039,7 @@ export function DueThisMonthChecklist({
                           <RecurringBillRowContent
                             bill={displayBill}
                             display={display}
+                            displayAmount={amount}
                             done={done}
                             inactive={skipped}
                             monthCursor={cursor}
@@ -1033,7 +1106,7 @@ export function DueThisMonthChecklist({
                             deleteAriaLabel={`Skip ${label} for this month`}
                             highlighted={justChecked}
                             onContentClick={() => {
-                              if (busy) return
+                              if (busy || !canToggleCheck) return
                               if (done) {
                                 void handleToggle(bill, occurredOn, true)
                               } else {
@@ -1060,6 +1133,20 @@ export function DueThisMonthChecklist({
                           >
                             {rowInner}
                           </SwipeDeleteRow>
+                        </div>
+                      )
+                    }
+
+                    if (!canToggleCheck) {
+                      return (
+                        <div
+                          key={key}
+                          id={rowId}
+                          className="relative flex w-full items-center gap-1 rounded-xl border-2 border-transparent bg-white shadow-sm dark:bg-neutral-800"
+                        >
+                          <div className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5">
+                            {rowInner}
+                          </div>
                         </div>
                       )
                     }
@@ -1110,11 +1197,12 @@ export function DueThisMonthChecklist({
         bill={editingBill}
         cursor={cursor}
         initialAmount={
-          editingBill ? effectiveAmount(editingBill, editingOverride) : 0
+          editingBill ? resolvedAmount(editingBill, editingOverride) : 0
         }
         initialDueDay={
           editingBill ? effectiveDueDay(editingBill, editingOverride) : 1
         }
+        amountLocked={editingBill ? isPyfAuto(editingBill) : false}
         busy={savingOverride}
         autoFocusAmount={autoFocusAmount}
         onClose={() => {
@@ -1128,12 +1216,55 @@ export function DueThisMonthChecklist({
       />
 
       <ConfirmDialog
+        open={pendingDoneConfirm != null}
+        title="Has This Transaction Been Done?"
+        message={
+          pendingDoneConfirm
+            ? `Confirm that ${
+                pendingDoneConfirm.bill.name.trim() || 'this item'
+              } has already been completed.`
+            : ''
+        }
+        confirmLabel="Yes"
+        cancelLabel="Cancel"
+        busyLabel="Logging…"
+        danger={false}
+        busy={
+          pendingDoneConfirm != null &&
+          busyKey ===
+            occurrenceLogKey(
+              pendingDoneConfirm.bill.id,
+              pendingDoneConfirm.occurredOn,
+            )
+        }
+        onCancel={() => {
+          if (
+            pendingDoneConfirm != null &&
+            busyKey ===
+              occurrenceLogKey(
+                pendingDoneConfirm.bill.id,
+                pendingDoneConfirm.occurredOn,
+              )
+          ) {
+            return
+          }
+          setPendingDoneConfirm(null)
+        }}
+        onConfirm={() => {
+          if (!pendingDoneConfirm) return
+          const { bill, occurredOn } = pendingDoneConfirm
+          setPendingDoneConfirm(null)
+          proceedCheck(bill, occurredOn)
+        }}
+      />
+
+      <ConfirmDialog
         open={pendingAmountConfirm != null}
         title="Confirm Amount?"
         message={
           pendingAmountConfirm
             ? `Is ${formatRupiah(
-                effectiveAmount(
+                resolvedAmount(
                   pendingAmountConfirm.bill,
                   overrideByBillId.get(pendingAmountConfirm.bill.id),
                 ),
@@ -1215,7 +1346,7 @@ export function DueThisMonthChecklist({
   const content = (
     <>
       <GroupedListFrame
-        label={embedded ? 'Recurring Checklist' : 'Recurring this month'}
+        label={embedded ? 'Due Checklist' : 'Due This Month'}
         expanded={allExpanded}
         onToggle={toggleAllExpanded}
       >
@@ -1230,7 +1361,7 @@ export function DueThisMonthChecklist({
 
   return (
     <CollapsibleSection
-      title="Recurring this month"
+      title="Due This Month"
       subtitle={`${doneCount}/${activeCount} done`}
       defaultOpen
       className="mt-6"

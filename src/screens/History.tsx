@@ -43,7 +43,10 @@ import {
   CIRCLES,
   categoryDisplayParts,
   formatTransferLabel,
+  formatTransferToLabel,
   isCircle,
+  TRANSFER_TYPE_ICON,
+  type Category,
   type Circle,
   type TransactionWithCategory,
 } from '../lib/types'
@@ -54,6 +57,20 @@ type AllFilter = 'all'
 
 const SELECT_CLASS =
   'w-full rounded-lg border-0 bg-neutral-100 px-2 py-2 text-xs text-neutral-800 outline-none dark:bg-neutral-800 dark:text-neutral-100'
+
+/** Income/expense parents can share a display name with different ids. */
+function categoryNameKey(name: string): string {
+  return name.trim().toLowerCase()
+}
+
+function resolveParentCategory(
+  cat: Category | null | undefined,
+  byId: Map<string, Category>,
+): Category | null {
+  if (!cat) return null
+  if (!cat.parent_id) return cat
+  return byId.get(cat.parent_id) ?? null
+}
 
 function currentCursor(): MonthCursor {
   const now = new Date()
@@ -187,29 +204,80 @@ export function History() {
     })
   }, [highlightId, loading, transactions])
 
-  const categoryOptions = useMemo(
-    () =>
-      [...parents].sort((a, b) => {
-        if (a.type !== b.type) return a.type === 'expense' ? -1 : 1
-        return a.sort_order - b.sort_order
-      }),
-    [parents],
-  )
+  const categoryOptions = useMemo(() => {
+    const sorted = [...parents].sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'expense' ? -1 : 1
+      return a.sort_order - b.sort_order
+    })
+    // One option per display name so Business covers income + expense parents.
+    const seen = new Set<string>()
+    const unique: typeof sorted = []
+    for (const parent of sorted) {
+      const key = categoryNameKey(parent.name)
+      if (seen.has(key)) continue
+      seen.add(key)
+      unique.push(parent)
+    }
+    return unique
+  }, [parents])
+
+  const parentIdsMatchingCategoryFilter = useMemo(() => {
+    if (categoryFilter === 'all') return null
+    const selected = byId.get(categoryFilter)
+    if (!selected) return new Set<string>([categoryFilter])
+    const key = categoryNameKey(selected.name)
+    return new Set(
+      parents
+        .filter((p) => categoryNameKey(p.name) === key)
+        .map((p) => p.id),
+    )
+  }, [categoryFilter, byId, parents])
 
   const subcategoryOptions = useMemo(() => {
-    if (categoryFilter !== 'all') {
-      return (childrenByParent.get(categoryFilter) ?? []).map((child) => ({
-        id: child.id,
-        label: `${child.icon} ${child.name}`,
-      }))
+    if (categoryFilter !== 'all' && parentIdsMatchingCategoryFilter) {
+      const seen = new Set<string>()
+      const options: Array<{ id: string; label: string }> = []
+      for (const parentId of parentIdsMatchingCategoryFilter) {
+        for (const child of childrenByParent.get(parentId) ?? []) {
+          const key = categoryNameKey(child.name)
+          if (seen.has(key)) continue
+          seen.add(key)
+          options.push({
+            id: child.id,
+            label: `${child.icon} ${child.name}`,
+          })
+        }
+      }
+      return options
     }
-    return categoryOptions.flatMap((parent) =>
-      (childrenByParent.get(parent.id) ?? []).map((child) => ({
-        id: child.id,
-        label: `${child.icon} ${parent.name} / ${child.name}`,
-      })),
-    )
-  }, [categoryFilter, childrenByParent, categoryOptions])
+    const seen = new Set<string>()
+    const options: Array<{ id: string; label: string }> = []
+    for (const parent of categoryOptions) {
+      const parentIds = parents
+        .filter((p) => categoryNameKey(p.name) === categoryNameKey(parent.name))
+        .map((p) => p.id)
+      for (const parentId of parentIds) {
+        const parentRow = byId.get(parentId) ?? parent
+        for (const child of childrenByParent.get(parentId) ?? []) {
+          const key = `${categoryNameKey(parentRow.name)}/${categoryNameKey(child.name)}`
+          if (seen.has(key)) continue
+          seen.add(key)
+          options.push({
+            id: child.id,
+            label: `${child.icon} ${parentRow.name} / ${child.name}`,
+          })
+        }
+      }
+    }
+    return options
+  }, [
+    categoryFilter,
+    parentIdsMatchingCategoryFilter,
+    childrenByParent,
+    categoryOptions,
+    parents,
+    byId,
+  ])
 
   const canGoNext = !isCurrentMonth(cursor) && !isAfterCurrentMonth(cursor)
 
@@ -278,16 +346,29 @@ export function History() {
     }
 
     if (subcategoryFilter !== 'all') {
-      return tx.category_id === subcategoryFilter
+      const selectedSub = byId.get(subcategoryFilter)
+      const cat = tx.category
+      if (!selectedSub || !cat) return false
+      if (cat.id === subcategoryFilter) return true
+      // Same subcategory name under same parent name (income + expense ids differ).
+      const selectedParent = resolveParentCategory(selectedSub, byId)
+      const txParent = resolveParentCategory(cat, byId)
+      if (!selectedParent || !txParent) return false
+      return (
+        categoryNameKey(cat.name) === categoryNameKey(selectedSub.name) &&
+        categoryNameKey(txParent.name) === categoryNameKey(selectedParent.name)
+      )
     }
 
-    if (categoryFilter !== 'all') {
+    if (categoryFilter !== 'all' && parentIdsMatchingCategoryFilter) {
       const cat = tx.category
       if (!cat) return false
-      if (cat.id === categoryFilter) return true
-      if (cat.parent_id === categoryFilter) return true
-      const parent = cat.parent_id ? byId.get(cat.parent_id) : null
-      return parent?.id === categoryFilter
+      if (parentIdsMatchingCategoryFilter.has(cat.id)) return true
+      if (cat.parent_id && parentIdsMatchingCategoryFilter.has(cat.parent_id)) {
+        return true
+      }
+      const parent = resolveParentCategory(cat, byId)
+      return parent != null && parentIdsMatchingCategoryFilter.has(parent.id)
     }
 
     return true
@@ -476,16 +557,15 @@ export function History() {
               const { parentIcon, parentName, childIcon, childName } =
                 isTransfer
                   ? {
-                      parentIcon: '🔄',
-                      parentName: formatTransferLabel(
-                        tx.from_bucket,
-                        tx.to_bucket,
-                      ),
+                      parentIcon: TRANSFER_TYPE_ICON,
+                      parentName: formatTransferLabel(tx.from_bucket),
                       childIcon: null as string | null,
                       childName: null as string | null,
                     }
                   : categoryDisplayParts(tx.category)
-              const note = tx.description?.trim() || null
+              const note = isTransfer
+                ? formatTransferToLabel(tx.to_bucket)
+                : tx.description?.trim() || null
               const isHighlighted = highlightId === tx.id
               const amountLabel =
                 tx.amount > 0

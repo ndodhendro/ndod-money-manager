@@ -52,12 +52,31 @@ export type CategoryType = 'income' | 'expense'
 
 export type TransactionType = 'income' | 'expense' | 'transfer'
 
-export type BudgetGroup = 'needs' | 'wants' | 'savings'
+export type BudgetGroup = 'needs' | 'wants'
 
 export const BUDGET_GROUP_LABELS: Record<BudgetGroup, string> = {
   needs: 'Needs',
   wants: 'Wants',
-  savings: 'Savings',
+}
+
+/**
+ * Needs = rose (must-pay / obligatory), Wants = sky (flexible) —
+ * text markers, Plan bars, and Dashboard donut share these tones.
+ */
+export const BUDGET_GROUP_TEXT_CLASS: Record<BudgetGroup, string> = {
+  needs: 'text-rose-600 dark:text-rose-400',
+  wants: 'text-sky-600 dark:text-sky-400',
+}
+
+export const BUDGET_GROUP_BAR_CLASS: Record<BudgetGroup, string> = {
+  needs: 'bg-rose-500',
+  wants: 'bg-sky-500',
+}
+
+/** Hex for charts (rose-500 / sky-500). */
+export const BUDGET_GROUP_COLOR: Record<BudgetGroup, string> = {
+  needs: '#f43f5e',
+  wants: '#0ea5e9',
 }
 
 export type BucketKind = 'emergency' | 'investment' | 'sinking'
@@ -78,6 +97,11 @@ export interface Bucket {
   icon: string
   target_amount: number | null
   opening_balance: number
+  /**
+   * Needs/Wants for sinking funds (Money Plan).
+   * Null for emergency/investment system buckets.
+   */
+  budget_group: BudgetGroup | null
   sort_order: number
   is_active: boolean
   is_system: boolean
@@ -153,14 +177,30 @@ export function isTransactionFullySpecified(input: NewTransactionInput): boolean
   return true
 }
 
+/** Single-side bucket label for transfer rows (Main Account when null). */
+export function formatBucketSideLabel(
+  bucket: Bucket | null | undefined,
+): string {
+  return bucket ? `${bucket.icon} ${bucket.name}` : CASHFLOW_LABEL
+}
+
+/** Transfer row title: source bucket only. */
 export function formatTransferLabel(
   from: Bucket | null | undefined,
+  _to?: Bucket | null | undefined,
+): string {
+  return formatBucketSideLabel(from)
+}
+
+/** Transfer row note line: destination bucket. */
+export function formatTransferToLabel(
   to: Bucket | null | undefined,
 ): string {
-  const fromLabel = from ? `${from.icon} ${from.name}` : CASHFLOW_LABEL
-  const toLabel = to ? `${to.icon} ${to.name}` : CASHFLOW_LABEL
-  return `${fromLabel} → ${toLabel}`
+  return formatBucketSideLabel(to)
 }
+
+/** Single-sourced glyph for transfer-type rows (History, estimates, etc.). */
+export const TRANSFER_TYPE_ICON = '➡️'
 
 /** Label tampilan: "🚗 Transportasi/Parkir" atau "🏠 Tempat Tinggal" */
 export function formatCategoryLabel(

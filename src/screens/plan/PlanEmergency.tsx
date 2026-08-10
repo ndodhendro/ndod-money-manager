@@ -1,17 +1,25 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { CollapsibleDayGroup } from '../../components/CollapsibleDayGroup'
 import { GroupedListFrame } from '../../components/GroupedListFrame'
 import { PlanBudgetRow } from '../../components/PlanBudgetRow'
 import { PlanSubPage } from '../../components/PlanSubPage'
 import { useBuckets } from '../../hooks/useBuckets'
+import { useCategories } from '../../hooks/useCategories'
 import { usePyfSettings } from '../../hooks/usePyfSettings'
 import { groupBucketsByKind } from '../../lib/bucketsGroup'
+import { sumPlannedNeeds } from '../../lib/freeWants'
 import {
   emergencyFundTarget,
   makeMoneyPlanBucket,
   type MoneyPlanBucket,
 } from '../../lib/moneyPlan'
+import { currentMonthCursor, monthCursorKey } from '../../lib/monthCursor'
 import { PlanIcon, PlanTitle } from '../../lib/planSections'
+import {
+  fetchRecurringBills,
+  isMissingRecurringSchema,
+  type RecurringBill,
+} from '../../lib/recurringBillsApi'
 import {
   BUCKET_KIND_LABELS,
   type BucketKind,
@@ -38,6 +46,12 @@ function overallRowForBucket(
       hint: `${efMultiplier}× planned needs`,
     }
   }
+  if (b.kind === 'investment') {
+    return {
+      bucket: makeMoneyPlanBucket(b.name, 0, b.balance, 'floor'),
+      hint: 'Funded from monthly investment %',
+    }
+  }
   const target = b.target_amount ?? 0
   return {
     bucket: makeMoneyPlanBucket(b.name, target, b.balance, 'floor'),
@@ -53,25 +67,66 @@ export function PlanEmergency() {
   } = usePyfSettings()
   const {
     buckets,
+    byId: bucketsById,
     emergency,
     loading: bucketsLoading,
     error: bucketsError,
   } = useBuckets()
+  const {
+    byId: categoriesById,
+    loading: categoriesLoading,
+  } = useCategories('expense', { includeInactive: true })
 
   const [kindGroupsExpanded, setKindGroupsExpanded] = useState(true)
   const [kindGroupsVersion, setKindGroupsVersion] = useState(0)
+  const [bills, setBills] = useState<RecurringBill[]>([])
+  const [billsLoading, setBillsLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    setBillsLoading(true)
+    void (async () => {
+      try {
+        const rows = await fetchRecurringBills()
+        if (!cancelled) setBills(rows)
+      } catch (err) {
+        if (cancelled) return
+        const message = err instanceof Error ? err.message : ''
+        if (isMissingRecurringSchema(message)) setBills([])
+      } finally {
+        if (!cancelled) setBillsLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const viewYm = monthCursorKey(currentMonthCursor())
+  const plannedNeeds = useMemo(
+    () =>
+      sumPlannedNeeds(
+        bills,
+        new Map(),
+        categoriesById,
+        viewYm,
+        undefined,
+        bucketsById,
+      ),
+    [bills, categoriesById, bucketsById, viewYm],
+  )
 
   const efTarget = useMemo(() => {
     if (!settings) return 0
     return emergencyFundTarget(
-      settings.planned_needs_amount,
+      plannedNeeds,
       settings.emergency_fund_target_multiplier,
     )
-  }, [settings])
+  }, [settings, plannedNeeds])
 
   const efMultiplier = settings?.emergency_fund_target_multiplier ?? 3
   const groupedBuckets = useMemo(() => groupBucketsByKind(buckets), [buckets])
-  const pageLoading = planLoading || bucketsLoading
+  const pageLoading = planLoading || bucketsLoading || billsLoading || categoriesLoading
 
   const systemEmergencyFunded =
     emergency != null && efTarget > 0 && emergency.balance >= efTarget
@@ -103,8 +158,9 @@ export function PlanEmergency() {
         emergency &&
         efTarget <= 0 && (
           <p className="mt-4 rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
-            Set planned needs and emergency multiplier in Settings → Money Plan
-            for the emergency overall target.
+            Add needs expenses in Settings → Monthly Estimates and set the
+            emergency multiplier in Settings → Money Plan for the overall
+            target.
           </p>
         )}
 

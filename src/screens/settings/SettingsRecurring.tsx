@@ -16,10 +16,10 @@ export function SettingsRecurring() {
   const inForm = isNew || editId != null
 
   const title = !inForm
-    ? 'Recurring'
+    ? 'Monthly Estimates'
     : editId
-      ? 'Edit Recurring'
-      : 'Add Recurring'
+      ? 'Edit Estimate'
+      : 'Add Estimate'
 
   const goList = useCallback(() => {
     dismissNumericKeyboard()

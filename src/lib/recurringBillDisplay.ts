@@ -2,9 +2,16 @@ import type { BucketWithBalance, Category, Circle, Owner } from './types'
 import {
   categoryDisplayParts,
   formatTransferLabel,
+  formatTransferToLabel,
+  TRANSFER_TYPE_ICON,
   type CategoryWithParent,
 } from './types'
 import { recurringOccurredOn, type MonthCursor } from './monthCursor'
+import {
+  estimatePlanTag,
+  estimatePlanTagSortRank,
+  type BucketBudgetRef,
+} from './freeWants'
 import {
   effectiveDueDay,
   RECURRING_EVERY_OPTIONS,
@@ -19,6 +26,8 @@ export type RecurringBillDisplayParts = {
   childIcon: string | null
   childName: string | null
   isTransfer: boolean
+  /** Shown in the note slot for transfers (destination bucket). */
+  transferToLabel: string | null
   circle: RecurringBill['circle']
 }
 
@@ -28,15 +37,19 @@ export function getRecurringBillDisplayParts(
   bucketsById: Map<string, BucketWithBalance>,
 ): RecurringBillDisplayParts {
   if (bill.type === 'transfer') {
+    const from = bill.from_bucket_id
+      ? bucketsById.get(bill.from_bucket_id)
+      : null
+    const to = bill.to_bucket_id
+      ? bucketsById.get(bill.to_bucket_id)
+      : null
     return {
-      parentIcon: '🔄',
-      parentName: formatTransferLabel(
-        bill.from_bucket_id ? bucketsById.get(bill.from_bucket_id) : null,
-        bill.to_bucket_id ? bucketsById.get(bill.to_bucket_id) : null,
-      ),
+      parentIcon: TRANSFER_TYPE_ICON,
+      parentName: formatTransferLabel(from),
       childIcon: null,
       childName: null,
       isTransfer: true,
+      transferToLabel: formatTransferToLabel(to),
       circle: bill.circle,
     }
   }
@@ -53,6 +66,7 @@ export function getRecurringBillDisplayParts(
   return {
     ...parts,
     isTransfer: false,
+    transferToLabel: null,
     circle: bill.circle,
   }
 }
@@ -138,13 +152,22 @@ function intervalSortRank(bill: RecurringBill): number {
 
 /**
  * Shared within-day order (Settings list + Plan checklist):
- * interval → type → category order → subcategory order → amount → circle → owner → note.
+ * plan tag (Emergency → Investment → Needs → Wants) → interval → type →
+ * category order → subcategory order → amount → circle → owner → note.
  */
 export function compareRecurringBillsWithinDay(
   a: RecurringBill,
   b: RecurringBill,
   byId: Map<string, Category>,
+  bucketsById?: Map<string, BucketBudgetRef>,
 ): number {
+  if (bucketsById) {
+    const byPlan =
+      estimatePlanTagSortRank(estimatePlanTag(a, byId, bucketsById)) -
+      estimatePlanTagSortRank(estimatePlanTag(b, byId, bucketsById))
+    if (byPlan !== 0) return byPlan
+  }
+
   const byInterval = intervalSortRank(a) - intervalSortRank(b)
   if (byInterval !== 0) return byInterval
 
@@ -182,11 +205,17 @@ export function compareRecurringBillsWithinDay(
 export function sortRecurringBillsForSettings(
   bills: RecurringBill[],
   byId: Map<string, Category>,
-  _bucketsById: Map<string, BucketWithBalance>,
+  bucketsById: Map<string, BucketWithBalance>,
 ): RecurringBill[] {
   return [...bills].sort((a, b) => {
-    if (a.due_day !== b.due_day) return b.due_day - a.due_day
-    return compareRecurringBillsWithinDay(a, b, byId)
+    // Non-recurring Estimates group before dated recurring (due_day unused for estimates).
+    const aRecurring = a.is_recurring !== false
+    const bRecurring = b.is_recurring !== false
+    if (aRecurring !== bRecurring) return aRecurring ? 1 : -1
+    if (aRecurring && bRecurring && a.due_day !== b.due_day) {
+      return b.due_day - a.due_day
+    }
+    return compareRecurringBillsWithinDay(a, b, byId, bucketsById)
   })
 }
 
@@ -204,6 +233,7 @@ export function sortRecurringOccurrencesForChecklist(
   items: RecurringChecklistOccurrence[],
   logByOccurrenceKey: Map<string, RecurringBillLog>,
   byId: Map<string, Category>,
+  bucketsById?: Map<string, BucketBudgetRef>,
 ): RecurringChecklistOccurrence[] {
   return [...items].sort((a, b) => {
     const aDone = logByOccurrenceKey.has(a.key)
@@ -214,7 +244,7 @@ export function sortRecurringOccurrencesForChecklist(
       return b.occurredOn.localeCompare(a.occurredOn)
     }
 
-    return compareRecurringBillsWithinDay(a.bill, b.bill, byId)
+    return compareRecurringBillsWithinDay(a.bill, b.bill, byId, bucketsById)
   })
 }
 

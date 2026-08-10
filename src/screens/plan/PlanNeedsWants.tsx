@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { MonthPager } from '../../components/MonthPager'
 import { PlanBudgetRow } from '../../components/PlanBudgetRow'
 import { PlanSubPage } from '../../components/PlanSubPage'
+import { useBuckets } from '../../hooks/useBuckets'
 import { useCategories } from '../../hooks/useCategories'
 import { useMonthCursor } from '../../hooks/useMonthCursor'
 import { usePyfSettings } from '../../hooks/usePyfSettings'
@@ -9,11 +10,14 @@ import { useTransactions } from '../../hooks/useTransactions'
 import { formatRupiah, todayIso } from '../../lib/format'
 import {
   buildFreeWantsPace,
+  budgetGroupOfTransferTo,
   freeWantsLookbackMonths,
   groupOverridesByMonth,
   isFreeWantsExpense,
   mondayOf,
   sumCommittedWants,
+  sumPlannedNeeds,
+  sumTransferActualsByBudgetGroup,
 } from '../../lib/freeWants'
 import {
   buildMoneyPlan,
@@ -22,6 +26,7 @@ import {
 } from '../../lib/moneyPlan'
 import { monthCursorKey, monthCursorRange } from '../../lib/monthCursor'
 import { PlanIcon, PlanTitle } from '../../lib/planSections'
+import { BUDGET_GROUP_BAR_CLASS } from '../../lib/types'
 import {
   fetchRecurringBillMonthOverridesInRange,
   fetchRecurringBillOccurrenceSkipsInRange,
@@ -61,6 +66,11 @@ export function PlanNeedsWants() {
     loading: categoriesLoading,
     error: categoriesError,
   } = useCategories('expense', { includeInactive: true })
+  const {
+    byId: bucketsById,
+    loading: bucketsLoading,
+    error: bucketsError,
+  } = useBuckets({ includeInactive: true })
 
   const [bills, setBills] = useState<RecurringBill[]>([])
   const [overrides, setOverrides] = useState<RecurringBillMonthOverride[]>([])
@@ -128,7 +138,7 @@ export function PlanNeedsWants() {
   const totalIncome = monthTx
     .filter((t) => t.type === 'income' && !t.complete_later)
     .reduce((sum, t) => sum + t.amount, 0)
-  const needsTotal = monthTx
+  const needsExpenseTotal = monthTx
     .filter(
       (t) =>
         t.type === 'expense' &&
@@ -136,7 +146,7 @@ export function PlanNeedsWants() {
         budgetGroupOfTx(t) === 'needs',
     )
     .reduce((sum, t) => sum + t.amount, 0)
-  const wantsTotal = monthTx
+  const wantsExpenseTotal = monthTx
     .filter(
       (t) =>
         t.type === 'expense' &&
@@ -144,7 +154,19 @@ export function PlanNeedsWants() {
         budgetGroupOfTx(t) === 'wants',
     )
     .reduce((sum, t) => sum + t.amount, 0)
-  const committedPaid = monthTx
+  const needsTransferTotal = sumTransferActualsByBudgetGroup(
+    monthTx,
+    bucketsById,
+    'needs',
+  )
+  const wantsTransferTotal = sumTransferActualsByBudgetGroup(
+    monthTx,
+    bucketsById,
+    'wants',
+  )
+  const needsTotal = needsExpenseTotal + needsTransferTotal
+  const wantsTotal = wantsExpenseTotal + wantsTransferTotal
+  const committedPaidExpense = monthTx
     .filter(
       (t) =>
         t.type === 'expense' &&
@@ -153,20 +175,59 @@ export function PlanNeedsWants() {
         budgetGroupOfTx(t) === 'wants',
     )
     .reduce((sum, t) => sum + t.amount, 0)
+  const committedPaidTransfer = monthTx
+    .filter(
+      (t) =>
+        t.type === 'transfer' &&
+        !t.complete_later &&
+        t.is_recurring &&
+        budgetGroupOfTransferTo(t.to_bucket_id, bucketsById) === 'wants',
+    )
+    .reduce((sum, t) => sum + t.amount, 0)
+  const committedPaid = committedPaidExpense + committedPaidTransfer
 
   const moneyPlan = useMemo(() => {
     if (!settings) return null
+    const overridesByBill = new Map(
+      overrides
+        .filter((o) => o.year_month === viewYm)
+        .map((o) => [o.bill_id, o]),
+    )
+    const skipKeys = new Set(
+      occurrenceSkips
+        .filter((s) => s.year_month === viewYm)
+        .map((s) => occurrenceLogKey(s.bill_id, s.occurred_on)),
+    )
+    const plannedNeeds = sumPlannedNeeds(
+      bills,
+      overridesByBill,
+      categoriesById,
+      viewYm,
+      skipKeys,
+      bucketsById,
+    )
     return buildMoneyPlan({
       income: totalIncome,
       emergencyPct: settings.emergency_fund_pct,
       investmentPct: settings.investment_pct,
-      plannedNeeds: settings.planned_needs_amount,
+      plannedNeeds,
       needsActual: needsTotal,
       wantsActual: wantsTotal,
       emergencyActual: 0,
       investmentActual: 0,
     })
-  }, [settings, totalIncome, needsTotal, wantsTotal])
+  }, [
+    settings,
+    totalIncome,
+    needsTotal,
+    wantsTotal,
+    bills,
+    overrides,
+    occurrenceSkips,
+    categoriesById,
+    bucketsById,
+    viewYm,
+  ])
 
   const freeWants = useMemo(() => {
     if (!settings) return null
@@ -179,11 +240,13 @@ export function PlanNeedsWants() {
     }
     const incomeByMonth = new Map<string, number>()
     const committedByMonth = new Map<string, number>()
+    const plannedNeedsByMonth = new Map<string, number>()
 
     for (const m of lookbackMonths) {
       const ym = monthCursorKey(m)
       incomeByMonth.set(ym, 0)
       const byBill = overridesByMonth.get(ym) ?? new Map()
+      const skipKeys = skipsByMonth.get(ym)
       committedByMonth.set(
         ym,
         sumCommittedWants(
@@ -191,7 +254,19 @@ export function PlanNeedsWants() {
           byBill,
           categoriesById,
           ym,
-          skipsByMonth.get(ym),
+          skipKeys,
+          bucketsById,
+        ),
+      )
+      plannedNeedsByMonth.set(
+        ym,
+        sumPlannedNeeds(
+          bills,
+          byBill,
+          categoriesById,
+          ym,
+          skipKeys,
+          bucketsById,
         ),
       )
     }
@@ -202,6 +277,9 @@ export function PlanNeedsWants() {
       incomeByMonth.set(ym, (incomeByMonth.get(ym) ?? 0) + tx.amount)
     }
 
+    const viewPlannedNeeds =
+      plannedNeedsByMonth.get(monthCursorKey(cursor)) ?? 0
+
     return buildFreeWantsPace({
       months: lookbackMonths,
       incomeByMonth,
@@ -209,7 +287,7 @@ export function PlanNeedsWants() {
       freeSpendTxs: transactions.filter(isFreeWantsExpense),
       emergencyPct: settings.emergency_fund_pct,
       investmentPct: settings.investment_pct,
-      plannedNeeds: settings.planned_needs_amount,
+      plannedNeeds: viewPlannedNeeds,
       viewMonth: cursor,
       today: todayIso(),
     })
@@ -220,12 +298,17 @@ export function PlanNeedsWants() {
     lookbackMonths,
     bills,
     categoriesById,
+    bucketsById,
     transactions,
     cursor,
   ])
 
   const pageLoading =
-    loading || planLoading || recurringLoading || categoriesLoading
+    loading ||
+    planLoading ||
+    recurringLoading ||
+    categoriesLoading ||
+    bucketsLoading
   const hasSplit = needsTotal > 0 || wantsTotal > 0
 
   const committedBucket = freeWants
@@ -289,10 +372,20 @@ export function PlanNeedsWants() {
             {categoriesError}
           </p>
         )}
+        {bucketsError && (
+          <p className="mt-2 text-center text-sm text-red-500">{bucketsError}</p>
+        )}
 
         {!pageLoading && !moneyPlan && (
           <p className="mt-4 rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
-            Set planned needs in Settings → Money Plan to see targets.
+            Set savings targets in Settings → Money Plan to see budgets.
+          </p>
+        )}
+
+        {!pageLoading && moneyPlan && moneyPlan.needs.target <= 0 && (
+          <p className="mt-4 rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
+            Add needs expenses in Settings → Monthly Estimates to set planned
+            needs.
           </p>
         )}
 
@@ -307,13 +400,13 @@ export function PlanNeedsWants() {
             <PlanBudgetRow
               bucket={moneyPlan.needs}
               hint="Planned essentials"
-              barClass="bg-sky-500"
+              barClass={BUDGET_GROUP_BAR_CLASS.needs}
               mode="floor"
             />
             <PlanBudgetRow
               bucket={moneyPlan.wants}
               hint="Leftover after savings & needs"
-              barClass="bg-amber-400"
+              barClass={BUDGET_GROUP_BAR_CLASS.wants}
               mode="ceiling"
             />
             {moneyPlan.wantsWarning && (
@@ -331,7 +424,7 @@ export function PlanNeedsWants() {
                 </p>
                 <PlanBudgetRow
                   bucket={committedBucket}
-                  hint="Recurring wants reserved this month"
+                  hint="Estimate wants reserved this month"
                   barClass="bg-violet-400"
                   mode="floor"
                 />

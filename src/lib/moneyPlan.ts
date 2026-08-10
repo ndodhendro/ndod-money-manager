@@ -1,6 +1,90 @@
 import { sumTransfersInto } from './bucketsApi'
 import type { Bucket, TransactionWithCategory } from './types'
 
+/** Minimal bucket fields for PYF auto-amount transfer detection. */
+export type PyfAutoBucketRef = Pick<Bucket, 'kind'>
+
+export type ResolveEstimateAmountCtx = {
+  monthIncome: number
+  emergencyPct: number
+  investmentPct: number
+  bucketsById: Map<string, PyfAutoBucketRef>
+}
+
+type EstimateAmountBill = {
+  type: string
+  to_bucket_id: string | null
+  amount: number
+}
+
+/** Transfer estimates into Emergency Fund / Investment use Money Plan %. */
+export function isPyfAutoAmountTransfer(
+  bill: Pick<EstimateAmountBill, 'type' | 'to_bucket_id'>,
+  bucketsById: Map<string, PyfAutoBucketRef>,
+): boolean {
+  return pyfAutoTransferKind(bill, bucketsById) != null
+}
+
+export function pyfAutoTransferKind(
+  bill: Pick<EstimateAmountBill, 'type' | 'to_bucket_id'>,
+  bucketsById: Map<string, PyfAutoBucketRef>,
+): 'emergency' | 'investment' | null {
+  if (bill.type !== 'transfer' || !bill.to_bucket_id) return null
+  const kind = bucketsById.get(bill.to_bucket_id)?.kind
+  if (kind === 'emergency' || kind === 'investment') return kind
+  return null
+}
+
+/** Monthly PYF transfer target: round(income × pct / 100). */
+export function pyfTransferTargetAmount(
+  kind: 'emergency' | 'investment',
+  income: number,
+  emergencyPct: number,
+  investmentPct: number,
+): number {
+  const pct = kind === 'emergency' ? emergencyPct : investmentPct
+  return Math.round((Math.max(0, income) * Math.max(0, pct)) / 100)
+}
+
+/** DB placeholder when computed is 0 (constraint amount > 0). */
+export function pyfAutoAmountPlaceholder(computed: number): number {
+  return Math.max(1, Math.round(computed))
+}
+
+/**
+ * Effective estimate amount for a month.
+ * PYF auto transfers ignore stored / override amounts and use income × %.
+ */
+export function resolveEstimateAmount(
+  bill: EstimateAmountBill,
+  override: { amount?: number | null } | null | undefined,
+  ctx: ResolveEstimateAmountCtx,
+): number {
+  const kind = pyfAutoTransferKind(bill, ctx.bucketsById)
+  if (kind) {
+    return pyfTransferTargetAmount(
+      kind,
+      ctx.monthIncome,
+      ctx.emergencyPct,
+      ctx.investmentPct,
+    )
+  }
+  if (override?.amount != null && override.amount > 0) return override.amount
+  return bill.amount
+}
+
+/** Sum of completed income txs for the month (excludes complete_later). */
+export function sumMonthIncome(
+  transactions: Array<{ type: string; amount: number; complete_later?: boolean }>,
+): number {
+  let sum = 0
+  for (const tx of transactions) {
+    if (tx.type !== 'income' || tx.complete_later) continue
+    sum += tx.amount
+  }
+  return sum
+}
+
 export interface MoneyPlanInput {
   income: number
   emergencyPct: number

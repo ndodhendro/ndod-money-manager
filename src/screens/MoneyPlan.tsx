@@ -12,10 +12,7 @@ import {
 } from '../lib/format'
 import { monthCursorKey } from '../lib/monthCursor'
 import { NavIcon } from '../lib/navTabs'
-import {
-  PLAN_ACTION_SECTIONS,
-  PLAN_PROGRESS_SECTIONS,
-} from '../lib/planSections'
+import { PLAN_PROGRESS_SECTIONS } from '../lib/planSections'
 
 export function MoneyPlanScreen() {
   const {
@@ -84,10 +81,10 @@ export function MoneyPlanScreen() {
         <>
           <section className="mt-6">
             <p className="mb-2 text-sm font-medium text-neutral-600 dark:text-neutral-300">
-              Do This Month
+              Track Progress
             </p>
             <div className="space-y-2">
-              {PLAN_ACTION_SECTIONS.map((section) => (
+              {PLAN_PROGRESS_SECTIONS.map((section) => (
                 <SettingsNavRow
                   key={section.to}
                   to={section.to}
@@ -98,23 +95,6 @@ export function MoneyPlanScreen() {
                       ? recurringSubtitle
                       : section.subtitle
                   }
-                />
-              ))}
-            </div>
-          </section>
-
-          <section className="mt-6">
-            <p className="mb-2 text-sm font-medium text-neutral-600 dark:text-neutral-300">
-              Track Progress
-            </p>
-            <div className="space-y-2">
-              {PLAN_PROGRESS_SECTIONS.map((section) => (
-                <SettingsNavRow
-                  key={section.to}
-                  to={section.to}
-                  icon={section.icon}
-                  title={section.title}
-                  subtitle={section.subtitle}
                 />
               ))}
             </div>

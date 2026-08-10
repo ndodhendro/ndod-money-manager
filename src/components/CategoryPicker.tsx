@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { useOverlayBack } from '../hooks/useBackButton'
 import type { CategoryTreeNode } from '../hooks/useCategories'
 import { ActionEmoji } from '../lib/actionEmoji'
-import type { Category, CategoryType } from '../lib/types'
+import { budgetGroupOfCategory } from '../lib/freeWants'
+import { type Category, type CategoryType } from '../lib/types'
+import { BudgetGroupBadge } from './BudgetGroupBadge'
 import { CategoryManagePanel } from './CategoryManagePanel'
 
 interface CategoryPickerProps {
@@ -15,6 +17,8 @@ interface CategoryPickerProps {
   transactionType: CategoryType
   onCategoriesChanged: () => void
   highlighted?: boolean
+  /** Settings Monthly Estimates: show Needs / Wants / Savings for selection. */
+  showBudgetGroup?: boolean
 }
 
 export function CategoryPicker({
@@ -27,6 +31,7 @@ export function CategoryPicker({
   transactionType,
   onCategoriesChanged,
   highlighted = false,
+  showBudgetGroup = false,
 }: CategoryPickerProps) {
   const selected = selectedId ? byId.get(selectedId) : null
   const isChild = Boolean(selected?.parent_id)
@@ -36,6 +41,10 @@ export function CategoryPicker({
       : selected
     : null
   const childCategory = isChild ? selected : null
+  const budgetGroup =
+    showBudgetGroup && selectedId
+      ? budgetGroupOfCategory(selectedId, byId)
+      : null
 
   const [activeParentId, setActiveParentId] = useState<string | null>(null)
   const [managing, setManaging] = useState(false)
@@ -130,6 +139,11 @@ export function CategoryPicker({
                 <span className="truncate">{childCategory.name}</span>
               </p>
             )}
+            {budgetGroup ? (
+              <p className="mt-0.5">
+                <BudgetGroupBadge group={budgetGroup} />
+              </p>
+            ) : null}
           </div>
         </div>
         <span className="shrink-0 text-neutral-300">›</span>
@@ -217,6 +231,10 @@ export function CategoryPicker({
                 <div className="w-[42%] overflow-y-auto border-r border-neutral-200 dark:border-neutral-800">
                   {tree.map((parent) => {
                     const active = parent.id === activeParentId
+                    const parentGroup =
+                      showBudgetGroup && parent.children.length === 0
+                        ? budgetGroupOfCategory(parent.id, byId)
+                        : null
                     return (
                       <button
                         key={parent.id}
@@ -232,6 +250,12 @@ export function CategoryPicker({
                         <span className="min-w-0 flex-1 truncate font-medium">
                           {parent.name}
                         </span>
+                        {parentGroup ? (
+                          <BudgetGroupBadge
+                            group={parentGroup}
+                            className={active ? 'text-white dark:text-white' : ''}
+                          />
+                        ) : null}
                         {parent.children.length > 0 && (
                           <span
                             className={
@@ -253,6 +277,9 @@ export function CategoryPicker({
                     <div className="grid grid-cols-1">
                       {children.map((child) => {
                         const picked = child.id === selectedId
+                        const childGroup = showBudgetGroup
+                          ? budgetGroupOfCategory(child.id, byId)
+                          : null
                         return (
                           <button
                             key={child.id}
@@ -270,6 +297,9 @@ export function CategoryPicker({
                             <span className="min-w-0 flex-1 truncate">
                               {child.name}
                             </span>
+                            {childGroup ? (
+                              <BudgetGroupBadge group={childGroup} />
+                            ) : null}
                           </button>
                         )
                       })}

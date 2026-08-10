@@ -1,0 +1,35 @@
+---
+description: On commit+push, bump app version first, then commit and push
+alwaysApply: true
+---
+
+# Git commit + push — version bump first
+
+## Trigger
+
+When the user asks to **git commit and push** (both in the same request), always follow this order. Do not skip the version bump.
+
+Commit-only or push-only requests are unchanged: do not bump version unless the user also asked for both commit and push, or explicitly asked to bump version.
+
+## Required sequence
+
+1. **Bump version** in `package.json` (`version` field). `APP_VERSION` in `src/lib/branding.ts` reads from there — do not hardcode a second version elsewhere.
+2. **Commit** all intended changes **including** the version bump (same commit as the feature/fix work unless the user asked otherwise).
+3. **Push** to the tracked remote branch.
+
+## Version bump rules
+
+- Default: **patch** bump (`1.1.1` → `1.1.2`).
+- Use **minor** or **major** only when the user specifies it, or clearly describes a breaking / feature-level release.
+- Keep SemVer (`MAJOR.MINOR.PATCH`). Do not invent alternate schemes.
+- If `package-lock.json` top-level `version` mirrors the package, keep it in sync when bumping; otherwise leave dependency lock entries alone.
+
+## Commit message
+
+- Follow the repo’s existing commit style and the user’s git commit protocol.
+- Prefer mentioning the new version when it helps (e.g. release/patch context); do not make the message only “bump version” if other changes are the main intent — version bump is a required step of the release commit.
+
+## Safety
+
+- Still never force-push, hard-reset, or skip hooks unless the user explicitly requests that.
+- Still only push when the user asked to push (this rule assumes they did, via “commit and push”).

@@ -1,6 +1,13 @@
 import { BUCKET_KIND_ORDER, compareBucketNameAsc } from './bucketsGroup'
 import { supabase } from './supabase'
-import type { Bucket, BucketKind } from './types'
+import type { BudgetGroup, Bucket, BucketKind } from './types'
+
+function mapBudgetGroup(value: unknown): BudgetGroup | null {
+  if (value === 'needs' || value === 'wants') {
+    return value
+  }
+  return null
+}
 
 function mapBucket(row: Record<string, unknown>): Bucket {
   return {
@@ -11,11 +18,26 @@ function mapBucket(row: Record<string, unknown>): Bucket {
     target_amount:
       row.target_amount == null ? null : Number(row.target_amount),
     opening_balance: Number(row.opening_balance ?? 0),
+    budget_group: mapBudgetGroup(row.budget_group),
     sort_order: Number(row.sort_order ?? 0),
     is_active: Boolean(row.is_active),
     is_system: Boolean(row.is_system),
     created_at: String(row.created_at),
   }
+}
+
+function isMissingBudgetGroupColumn(message: string): boolean {
+  const lower = message.toLowerCase()
+  return (
+    lower.includes('budget_group') ||
+    (lower.includes('schema cache') && lower.includes('budget'))
+  )
+}
+
+function migrateBudgetGroupHint(): Error {
+  return new Error(
+    'Run migrate_buckets_budget_group.sql in Supabase to enable Needs/Wants on sinking funds',
+  )
 }
 
 export async function fetchBuckets(options?: {
@@ -76,6 +98,8 @@ export type NewBucketInput = {
   icon: string
   target_amount: number
   opening_balance: number
+  /** Required for sinking funds: needs or wants. */
+  budget_group: 'needs' | 'wants'
 }
 
 /**
@@ -149,9 +173,13 @@ export async function createBucket(input: NewBucketInput): Promise<Bucket> {
   if (!Number.isFinite(target_amount) || target_amount <= 0) {
     throw new Error('Target amount is required')
   }
+  if (input.budget_group !== 'needs' && input.budget_group !== 'wants') {
+    throw new Error('Pick Needs or Wants for this sinking fund')
+  }
   const opening_balance = Number.isFinite(input.opening_balance)
     ? Math.max(0, input.opening_balance)
     : 0
+  const budget_group = input.budget_group
 
   let createdId: string
   const matches = await findInactiveBucketMatches({ name, icon })
@@ -163,11 +191,15 @@ export async function createBucket(input: NewBucketInput): Promise<Bucket> {
         is_active: true,
         target_amount,
         opening_balance,
+        budget_group,
       })
       .eq('id', match.id)
       .select('*')
       .single()
-    if (error) throw new Error(error.message)
+    if (error) {
+      if (isMissingBudgetGroupColumn(error.message)) throw migrateBudgetGroupHint()
+      throw new Error(error.message)
+    }
     createdId = String((data as Record<string, unknown>).id)
   } else {
     const { data, error } = await supabase
@@ -178,13 +210,17 @@ export async function createBucket(input: NewBucketInput): Promise<Bucket> {
         icon,
         target_amount,
         opening_balance,
+        budget_group,
         sort_order: 0,
         is_system: false,
         is_active: true,
       })
       .select('*')
       .single()
-    if (error) throw new Error(error.message)
+    if (error) {
+      if (isMissingBudgetGroupColumn(error.message)) throw migrateBudgetGroupHint()
+      throw new Error(error.message)
+    }
     createdId = String((data as Record<string, unknown>).id)
   }
 
@@ -200,6 +236,7 @@ export type UpdateBucketInput = {
   icon?: string
   target_amount?: number | null
   opening_balance?: number
+  budget_group?: 'needs' | 'wants' | null
   is_active?: boolean
 }
 
@@ -207,13 +244,38 @@ export async function updateBucket(
   id: string,
   patch: UpdateBucketInput,
 ): Promise<Bucket> {
+  if (
+    patch.budget_group != null &&
+    patch.budget_group !== 'needs' &&
+    patch.budget_group !== 'wants'
+  ) {
+    throw new Error('Pick Needs or Wants for this sinking fund')
+  }
+
+  // Emergency target is derived from Money Plan; Investment has no overall target.
+  const nextPatch: UpdateBucketInput = { ...patch }
+  if (nextPatch.target_amount !== undefined) {
+    const { data: existing, error: existingError } = await supabase
+      .from('buckets')
+      .select('kind')
+      .eq('id', id)
+      .maybeSingle()
+    if (existingError) throw new Error(existingError.message)
+    if (existing?.kind === 'emergency' || existing?.kind === 'investment') {
+      delete nextPatch.target_amount
+    }
+  }
+
   const { data, error } = await supabase
     .from('buckets')
-    .update(patch)
+    .update(nextPatch)
     .eq('id', id)
     .select('*')
     .single()
-  if (error) throw new Error(error.message)
+  if (error) {
+    if (isMissingBudgetGroupColumn(error.message)) throw migrateBudgetGroupHint()
+    throw new Error(error.message)
+  }
 
   if (patch.name != null || patch.is_active != null) {
     await reorderBucketsByNameWithinKinds()

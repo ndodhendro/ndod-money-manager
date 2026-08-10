@@ -16,6 +16,8 @@ interface RecurringMonthOverrideSheetProps {
   busy?: boolean
   /** Focus the amount field when the sheet opens. */
   autoFocusAmount?: boolean
+  /** PYF Emergency/Investment: amount is from Money Plan (read-only). */
+  amountLocked?: boolean
   onClose: () => void
   onSave: (input: { amount: number; dueDay: number }) => void
 }
@@ -28,6 +30,7 @@ export function RecurringMonthOverrideSheet({
   initialDueDay,
   busy = false,
   autoFocusAmount = false,
+  amountLocked = false,
   onClose,
   onSave,
 }: RecurringMonthOverrideSheetProps) {
@@ -49,23 +52,26 @@ export function RecurringMonthOverrideSheet({
   }, [open, bill, initialAmount, initialDueDay, maxDay])
 
   useEffect(() => {
-    if (!open || !autoFocusAmount) return
+    if (!open || !autoFocusAmount || amountLocked) return
     const t = window.setTimeout(() => {
       amountInputRef.current?.focus()
       amountInputRef.current?.select()
     }, 50)
     return () => window.clearTimeout(t)
-  }, [open, autoFocusAmount, bill?.id])
+  }, [open, autoFocusAmount, amountLocked, bill?.id])
 
   if (!open || !bill) return null
 
   const displayAmount = amountDigits ? formatNumber(Number(amountDigits)) : ''
-  const canSave = Number(amountDigits) > 0 && !busy
+  const canSave =
+    (amountLocked || Number(amountDigits) > 0) && !busy
 
   function handleSave() {
-    const amount = Number(amountDigits)
-    if (!canSave || amount <= 0) return
-    onSave({ amount, dueDay })
+    const amount = amountLocked
+      ? Math.max(0, Math.round(initialAmount))
+      : Number(amountDigits)
+    if (!canSave || (!amountLocked && amount <= 0)) return
+    onSave({ amount: amountLocked ? Math.max(1, amount || 1) : amount, dueDay })
   }
 
   return (
@@ -110,7 +116,11 @@ export function RecurringMonthOverrideSheet({
             <span className="mb-1.5 block text-sm font-medium text-neutral-600 dark:text-neutral-300">
               Amount
             </span>
-            <div className="flex items-center gap-2 rounded-xl bg-neutral-50 px-4 py-3 dark:bg-neutral-900">
+            <div
+              className={`flex items-center gap-2 rounded-xl bg-neutral-50 px-4 py-3 dark:bg-neutral-900 ${
+                amountLocked ? 'opacity-80' : ''
+              }`}
+            >
               <span className="text-sm font-medium text-neutral-400">Rp</span>
               <input
                 ref={amountInputRef}
@@ -119,15 +129,22 @@ export function RecurringMonthOverrideSheet({
                 pattern="[0-9]*"
                 autoComplete="off"
                 value={displayAmount}
-                disabled={busy}
+                readOnly={amountLocked}
+                disabled={busy || amountLocked}
                 onChange={(e) => {
+                  if (amountLocked) return
                   const digits = e.target.value.replace(/\D/g, '').slice(0, 11)
                   setAmountDigits(digits)
                 }}
                 placeholder="0"
-                className="w-full bg-transparent text-2xl font-semibold tabular-nums text-neutral-900 outline-none placeholder:text-neutral-300 disabled:opacity-60 dark:text-neutral-50"
+                className="w-full bg-transparent text-2xl font-semibold tabular-nums text-neutral-900 outline-none placeholder:text-neutral-300 disabled:cursor-not-allowed disabled:opacity-60 dark:text-neutral-50"
               />
             </div>
+            {amountLocked ? (
+              <p className="mt-1.5 text-xs text-neutral-400">
+                From Money Plan (% × this month&apos;s income).
+              </p>
+            ) : null}
           </label>
 
           <label className="block">

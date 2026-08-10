@@ -18,7 +18,12 @@ import {
   formatRupiah,
 } from '../lib/format'
 import { budgetGroupOfTx } from '../lib/moneyPlan'
-import { categoryIcon, isCircle, type Circle } from '../lib/types'
+import {
+  BUDGET_GROUP_COLOR,
+  categoryIcon,
+  isCircle,
+  type Circle,
+} from '../lib/types'
 
 export function Dashboard() {
   const {
@@ -109,13 +114,13 @@ export function Dashboard() {
           key: 'needs',
           label: 'Needs',
           value: needsTotal,
-          color: '#0ea5e9',
+          color: BUDGET_GROUP_COLOR.needs,
         },
         {
           key: 'wants',
           label: 'Wants',
           value: wantsTotal,
-          color: '#f59e0b',
+          color: BUDGET_GROUP_COLOR.wants,
         },
       ].filter((s) => s.value > 0),
     [needsTotal, wantsTotal],

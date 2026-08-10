@@ -8,16 +8,30 @@ import {
 } from 'react'
 import { useBuckets } from '../hooks/useBuckets'
 import { useCategories } from '../hooks/useCategories'
+import { usePyfSettings } from '../hooks/usePyfSettings'
+import { useTransactions } from '../hooks/useTransactions'
 import { ActionEmoji } from '../lib/actionEmoji'
 import { showAppToast } from '../lib/appToast'
 import { areAllCollapseOpen } from '../lib/collapseState'
-import { formatNumber, todayIso } from '../lib/format'
+import { formatNumber, formatRupiah, todayIso } from '../lib/format'
 import {
   getRecurringBillDisplayParts,
   sortRecurringBillsForSettings,
 } from '../lib/recurringBillDisplay'
 import { getStoredCircle, getStoredProfile, setStoredCircle } from '../lib/profile'
-import { currentMonthCursor, monthCursorKey, yearMonthFromIso } from '../lib/monthCursor'
+import {
+  currentMonthCursor,
+  monthCursorKey,
+  monthCursorRange,
+  yearMonthFromIso,
+} from '../lib/monthCursor'
+import {
+  pyfAutoAmountPlaceholder,
+  pyfAutoTransferKind,
+  pyfTransferTargetAmount,
+  resolveEstimateAmount,
+  sumMonthIncome,
+} from '../lib/moneyPlan'
 import {
   createRecurringBill,
   deleteRecurringBill,
@@ -32,7 +46,17 @@ import {
   type RecurringBill,
   type RecurringIntervalUnit,
 } from '../lib/recurringBillsApi'
-import type { Circle, Owner, TransactionType } from '../lib/types'
+import {
+  estimatePlanBadgeGroup,
+  estimatePlanTag,
+  sumEstimateTotalsByType,
+} from '../lib/freeWants'
+import {
+  TRANSFER_TYPE_ICON,
+  type Circle,
+  type Owner,
+  type TransactionType,
+} from '../lib/types'
 import {
   BucketPicker,
   type BucketSelection,
@@ -48,14 +72,37 @@ import { OwnerPicker } from './OwnerPicker'
 import { RecurringBillRowContent } from './RecurringBillRowContent'
 import { SwipeDeleteRow } from './SwipeDeleteRow'
 
-function groupByDueDay(bills: RecurringBill[]): Array<[number, RecurringBill[]]> {
-  const map = new Map<number, RecurringBill[]>()
+function groupEstimatesForSettings(
+  bills: RecurringBill[],
+): Array<{ key: string; title: string; items: RecurringBill[] }> {
+  const estimates: RecurringBill[] = []
+  const byDay = new Map<number, RecurringBill[]>()
   for (const bill of bills) {
-    const list = map.get(bill.due_day) ?? []
+    if (!bill.is_recurring) {
+      estimates.push(bill)
+      continue
+    }
+    const list = byDay.get(bill.due_day) ?? []
     list.push(bill)
-    map.set(bill.due_day, list)
+    byDay.set(bill.due_day, list)
   }
-  return [...map.entries()].sort(([a], [b]) => b - a)
+  const groups: Array<{ key: string; title: string; items: RecurringBill[] }> =
+    []
+  if (estimates.length > 0) {
+    groups.push({
+      key: 'estimate',
+      title: 'Estimates',
+      items: estimates,
+    })
+  }
+  for (const [day, items] of [...byDay.entries()].sort(([a], [b]) => b - a)) {
+    groups.push({
+      key: `day:${day}`,
+      title: `Day ${day}`,
+      items,
+    })
+  }
+  return groups
 }
 
 function toYearMonth(year: number, month: number): string {
@@ -120,6 +167,16 @@ export function RecurringBillsPanel({
     useCategories(categoryType)
   const { byId: allById } = useCategories(undefined, { includeInactive: true })
   const { buckets, loading: bucketsLoading } = useBuckets()
+  const { settings: pyfSettings } = usePyfSettings()
+  const settingsMonthRange = useMemo(
+    () => monthCursorRange(currentMonthCursor()),
+    [],
+  )
+  const { transactions: monthTransactions } = useTransactions(settingsMonthRange)
+  const monthIncome = useMemo(
+    () => sumMonthIncome(monthTransactions),
+    [monthTransactions],
+  )
 
   const [bills, setBills] = useState<RecurringBill[]>([])
   const [currentMonthDoneByBillId, setCurrentMonthDoneByBillId] = useState(
@@ -149,6 +206,7 @@ export function RecurringBillsPanel({
   const [startsOn, setStartsOn] = useState(() => todayIso())
   const [endsYearMonth, setEndsYearMonth] = useState('')
   const [variableAmount, setVariableAmount] = useState(false)
+  const [isRecurring, setIsRecurring] = useState(true)
   const yearOptions = useMemo(() => {
     const base = buildYearOptions()
     const minYear = base[0] ?? 2026
@@ -271,13 +329,59 @@ export function RecurringBillsPanel({
     () => new Map(buckets.map((b) => [b.id, b])),
     [buckets],
   )
+  const emergencyPct = pyfSettings?.emergency_fund_pct ?? 10
+  const investmentPct = pyfSettings?.investment_pct ?? 15
+  const amountCtx = useMemo(
+    () => ({
+      monthIncome,
+      emergencyPct,
+      investmentPct,
+      bucketsById,
+    }),
+    [monthIncome, emergencyPct, investmentPct, bucketsById],
+  )
+  const formPyfKind =
+    isTransfer && toBucket
+      ? pyfAutoTransferKind(
+          { type: 'transfer', to_bucket_id: toBucket },
+          bucketsById,
+        )
+      : null
+  const isFormPyfAuto = formPyfKind != null
+  const formPyfAmount = formPyfKind
+    ? pyfTransferTargetAmount(
+        formPyfKind,
+        monthIncome,
+        emergencyPct,
+        investmentPct,
+      )
+    : 0
   const sortedBills = useMemo(
     () => sortRecurringBillsForSettings(bills, allById, bucketsById),
     [bills, allById, bucketsById],
   )
-  const groupedBills = groupByDueDay(sortedBills)
+  const groupedBills = useMemo(
+    () => groupEstimatesForSettings(sortedBills),
+    [sortedBills],
+  )
+  const monthTotals = useMemo(
+    () =>
+      sumEstimateTotalsByType(
+        bills,
+        new Map(),
+        monthCursorKey(currentMonthCursor()),
+        undefined,
+        amountCtx,
+      ),
+    [bills, amountCtx],
+  )
   const dayPersistKeys = useMemo(
-    () => groupedBills.map(([day]) => `settings:recurring:day:${day}`),
+    () =>
+      groupedBills.map((g) =>
+        g.key === 'estimate'
+          ? 'settings:estimates:nodate'
+          : `settings:recurring:day:${g.key.replace('day:', '')}`,
+      ),
     [groupedBills],
   )
 
@@ -285,6 +389,14 @@ export function RecurringBillsPanel({
     if (dayGroupsVersion > 0) return
     setDayGroupsExpanded(areAllCollapseOpen(dayPersistKeys, true))
   }, [dayPersistKeys, dayGroupsVersion])
+
+  useEffect(() => {
+    if (!isFormPyfAuto) return
+    setVariableAmount(false)
+    setAmountDigits(
+      formPyfAmount > 0 ? String(Math.round(formPyfAmount)) : '',
+    )
+  }, [isFormPyfAuto, formPyfAmount])
 
   async function reloadBills(options?: { silent?: boolean }) {
     if (!options?.silent) setLoading(true)
@@ -344,6 +456,7 @@ export function RecurringBillsPanel({
   }
 
   function isAmountFilled() {
+    if (isFormPyfAuto) return true
     return Number(amountDigits) > 0
   }
 
@@ -487,6 +600,7 @@ export function RecurringBillsPanel({
     setStartsOn(todayIso())
     setEndsYearMonth('')
     setVariableAmount(false)
+    setIsRecurring(true)
     setEditingId(null)
     hydratedEditIdRef.current = null
     closePickers()
@@ -511,6 +625,7 @@ export function RecurringBillsPanel({
     )
     setEndsYearMonth(bill.ends_year_month ?? '')
     setVariableAmount(bill.variable_amount === true)
+    setIsRecurring(bill.is_recurring !== false)
     setOpenSwipeId(null)
     closePickers()
 
@@ -545,38 +660,62 @@ export function RecurringBillsPanel({
   }
 
   function resolveIcon(): string {
-    if (type === 'transfer') return '🔄'
+    if (type === 'transfer') return TRANSFER_TYPE_ICON
     const cat = categoryId ? byId.get(categoryId) : null
     return cat?.icon ?? '📌'
   }
 
   function buildIntervalFields() {
+    const lockedVariable = isFormPyfAuto ? false : variableAmount
+    if (!isRecurring) {
+      return {
+        interval_unit: 'month' as const,
+        interval_months: 1,
+        starts_on: null as string | null,
+        starts_year_month: null as string | null,
+        due_day: 1,
+        ends_year_month: null as string | null,
+        variable_amount: false,
+        is_recurring: false,
+      }
+    }
     if (intervalUnit === 'week') {
       const day = Number(startsOn.slice(8, 10))
+      return {
+        interval_unit: 'week' as const,
+        interval_months: intervalMonths,
+        starts_on: startsOn,
+        starts_year_month: yearMonthFromIso(startsOn),
+        due_day: Number.isFinite(day) && day >= 1 && day <= 31 ? day : 1,
+        ends_year_month: endsYearMonth || null,
+        variable_amount: lockedVariable,
+        is_recurring: true,
+      }
+    }
     return {
-      interval_unit: 'week' as const,
+      interval_unit: 'month' as const,
       interval_months: intervalMonths,
-      starts_on: startsOn,
-      starts_year_month: yearMonthFromIso(startsOn),
-      due_day: Number.isFinite(day) && day >= 1 && day <= 31 ? day : 1,
+      starts_on: null as string | null,
+      starts_year_month: startsYearMonth || null,
+      due_day: dueDay,
       ends_year_month: endsYearMonth || null,
-      variable_amount: variableAmount,
+      variable_amount: lockedVariable,
+      is_recurring: true,
     }
   }
-  return {
-    interval_unit: 'month' as const,
-    interval_months: intervalMonths,
-    starts_on: null as string | null,
-    starts_year_month: startsYearMonth || null,
-    due_day: dueDay,
-    ends_year_month: endsYearMonth || null,
-    variable_amount: variableAmount,
+
+  function resolveSaveAmount(): number | null {
+    if (isFormPyfAuto) {
+      return pyfAutoAmountPlaceholder(formPyfAmount)
+    }
+    const amount = Number(amountDigits)
+    if (!amount || amount <= 0) return null
+    return amount
   }
-}
 
   async function handleAdd() {
-    const amount = Number(amountDigits)
-    if (!amount || amount <= 0) {
+    const amount = resolveSaveAmount()
+    if (amount == null) {
       focusAmountField('Enter an amount')
       return
     }
@@ -673,8 +812,8 @@ export function RecurringBillsPanel({
   async function handleUpdate() {
     if (!editingId) return
 
-    const amount = Number(amountDigits)
-    if (!amount || amount <= 0) {
+    const amount = resolveSaveAmount()
+    if (amount == null) {
       focusAmountField('Enter an amount')
       return
     }
@@ -764,7 +903,8 @@ export function RecurringBillsPanel({
   function handleNoteKeyDown(e: KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'Enter') {
       e.preventDefault()
-      focusIntervalField()
+      if (isRecurring) focusIntervalField()
+      else void (editingId ? handleUpdate() : handleAdd())
     }
   }
 
@@ -829,21 +969,34 @@ export function RecurringBillsPanel({
     return (
       <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
         Run <code className="text-xs">migrate_recurring_bills.sql</code> in
-        Supabase SQL Editor to enable recurring templates.
+        Supabase SQL Editor to enable monthly estimates.
       </p>
     )
   }
 
-  const displayAmount = amountDigits ? formatNumber(Number(amountDigits)) : ''
-  const settingsDescription = formatRecurringSettingsDescription({
-    intervalUnit,
-    intervalMonths,
-    dueDay: intervalUnit === 'week' ? Number(startsOn.slice(8, 10)) || dueDay : dueDay,
-    startsYearMonth:
-      intervalUnit === 'week' ? yearMonthFromIso(startsOn) : startsYearMonth || null,
-    endsYearMonth: endsYearMonth || null,
-    startsOn: intervalUnit === 'week' ? startsOn : null,
-  })
+  const displayAmount = isFormPyfAuto
+    ? formPyfAmount > 0
+      ? formatNumber(formPyfAmount)
+      : '0'
+    : amountDigits
+      ? formatNumber(Number(amountDigits))
+      : ''
+  const settingsDescription = isRecurring
+    ? formatRecurringSettingsDescription({
+        intervalUnit,
+        intervalMonths,
+        dueDay:
+          intervalUnit === 'week'
+            ? Number(startsOn.slice(8, 10)) || dueDay
+            : dueDay,
+        startsYearMonth:
+          intervalUnit === 'week'
+            ? yearMonthFromIso(startsOn)
+            : startsYearMonth || null,
+        endsYearMonth: endsYearMonth || null,
+        startsOn: intervalUnit === 'week' ? startsOn : null,
+      })
+    : 'One-time monthly amount estimate (no due date)'
   const everySelectValue = recurringEveryKey(intervalUnit, intervalMonths)
   const deleteLabel =
     deleteTarget?.name.trim() ||
@@ -871,64 +1024,111 @@ export function RecurringBillsPanel({
           </div>
           {sortedBills.length === 0 ? (
             <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
-              No recurring items yet. Tap Add New to create one.
+              No estimates yet. Tap Add New to create one.
             </p>
           ) : (
-            <GroupedListFrame
-              label="Recurring list"
-              expanded={dayGroupsExpanded}
-              onToggle={(expanded) => {
-                setDayGroupsExpanded(expanded)
-                setDayGroupsVersion((v) => v + 1)
-              }}
-            >
-              <div className="space-y-5">
-              {groupedBills.map(([day, items]) => (
-                <CollapsibleDayGroup
-                  key={day}
-                  title={`Day ${day}`}
-                  persistKey={`settings:recurring:day:${day}`}
-                  forceOpen={dayGroupsVersion > 0 ? dayGroupsExpanded : undefined}
-                  forceVersion={dayGroupsVersion}
-                >
-                  <div className="space-y-2">
-                    {items.map((bill) => {
-                      const display = getRecurringBillDisplayParts(
-                        bill,
-                        allById,
-                        bucketsById,
-                      )
-                      const isHighlighted = highlightId === bill.id
-                      return (
-                        <SwipeDeleteRow
-                          key={bill.id}
-                          open={openSwipeId === bill.id}
-                          onOpenChange={(open) =>
-                            setOpenSwipeId(open ? bill.id : null)
-                          }
-                          onDelete={() => {
-                            setOpenSwipeId(bill.id)
-                            setDeleteTarget(bill)
-                          }}
-                          contentRef={isHighlighted ? highlightRef : undefined}
-                          highlighted={isHighlighted}
-                          onContentClick={() => openEditForm(bill)}
-                        >
-                          <RecurringBillRowContent
-                            bill={bill}
-                            display={display}
-                            currentMonthDone={currentMonthDoneByBillId.has(
-                              bill.id,
-                            )}
-                          />
-                        </SwipeDeleteRow>
-                      )
-                    })}
+            <>
+              <div className="rounded-xl bg-white px-3 py-2.5 text-xs shadow-sm dark:bg-neutral-800">
+                <p className="mb-1.5 font-medium text-neutral-500 dark:text-neutral-400">
+                  This Month Totals
+                </p>
+                <div className="grid grid-cols-3 gap-2 tabular-nums">
+                  <div>
+                    <p className="text-[10px] text-neutral-400">Expense</p>
+                    <p className="font-semibold text-rose-600 dark:text-rose-400">
+                      {formatRupiah(monthTotals.expense)}
+                    </p>
                   </div>
-                </CollapsibleDayGroup>
-              ))}
+                  <div>
+                    <p className="text-[10px] text-neutral-400">Income</p>
+                    <p className="font-semibold text-emerald-600 dark:text-emerald-400">
+                      {formatRupiah(monthTotals.income)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-neutral-400">Transfer</p>
+                    <p className="font-semibold text-violet-600 dark:text-violet-400">
+                      {formatRupiah(monthTotals.transfer)}
+                    </p>
+                  </div>
+                </div>
               </div>
-            </GroupedListFrame>
+              <GroupedListFrame
+                label="Monthly Estimates"
+                expanded={dayGroupsExpanded}
+                onToggle={(expanded) => {
+                  setDayGroupsExpanded(expanded)
+                  setDayGroupsVersion((v) => v + 1)
+                }}
+              >
+                <div className="space-y-5">
+                  {groupedBills.map((group) => (
+                    <CollapsibleDayGroup
+                      key={group.key}
+                      title={group.title}
+                      persistKey={
+                        group.key === 'estimate'
+                          ? 'settings:estimates:nodate'
+                          : `settings:recurring:day:${group.key.replace('day:', '')}`
+                      }
+                      forceOpen={
+                        dayGroupsVersion > 0 ? dayGroupsExpanded : undefined
+                      }
+                      forceVersion={dayGroupsVersion}
+                    >
+                      <div className="space-y-2">
+                        {group.items.map((bill) => {
+                          const display = getRecurringBillDisplayParts(
+                            bill,
+                            allById,
+                            bucketsById,
+                          )
+                          const planTag = estimatePlanTag(
+                            bill,
+                            allById,
+                            bucketsById,
+                          )
+                          const budgetGroup = estimatePlanBadgeGroup(planTag)
+                          const isHighlighted = highlightId === bill.id
+                          return (
+                            <SwipeDeleteRow
+                              key={bill.id}
+                              open={openSwipeId === bill.id}
+                              onOpenChange={(open) =>
+                                setOpenSwipeId(open ? bill.id : null)
+                              }
+                              onDelete={() => {
+                                setOpenSwipeId(bill.id)
+                                setDeleteTarget(bill)
+                              }}
+                              contentRef={
+                                isHighlighted ? highlightRef : undefined
+                              }
+                              highlighted={isHighlighted}
+                              onContentClick={() => openEditForm(bill)}
+                            >
+                              <RecurringBillRowContent
+                                bill={bill}
+                                display={display}
+                                displayAmount={resolveEstimateAmount(
+                                  bill,
+                                  null,
+                                  amountCtx,
+                                )}
+                                currentMonthDone={currentMonthDoneByBillId.has(
+                                  bill.id,
+                                )}
+                                budgetGroup={budgetGroup}
+                              />
+                            </SwipeDeleteRow>
+                          )
+                        })}
+                      </div>
+                    </CollapsibleDayGroup>
+                  ))}
+                </div>
+              </GroupedListFrame>
+            </>
           )}
         </div>
       ) : (
@@ -954,7 +1154,11 @@ export function RecurringBillsPanel({
           <span className="mb-1.5 block text-sm font-medium text-neutral-600 dark:text-neutral-300">
             Amount
           </span>
-          <div className="flex items-center gap-2 rounded-xl bg-white px-4 py-3 shadow-sm dark:bg-neutral-800">
+          <div
+            className={`flex items-center gap-2 rounded-xl bg-white px-4 py-3 shadow-sm dark:bg-neutral-800 ${
+              isFormPyfAuto ? 'opacity-80' : ''
+            }`}
+          >
             <span className="text-sm font-medium text-neutral-400">Rp</span>
             <input
               ref={amountRef}
@@ -964,33 +1168,62 @@ export function RecurringBillsPanel({
               enterKeyHint="next"
               autoComplete="off"
               value={displayAmount}
+              readOnly={isFormPyfAuto}
+              disabled={isFormPyfAuto}
               onChange={(e) => {
+                if (isFormPyfAuto) return
                 const digits = e.target.value.replace(/\D/g, '').slice(0, 11)
                 setAmountDigits(digits)
               }}
               onKeyDown={handleAmountKeyDown}
               placeholder="0"
-              className="w-full bg-transparent text-2xl font-semibold tabular-nums text-neutral-900 outline-none placeholder:text-neutral-300 dark:text-neutral-50"
+              className="w-full bg-transparent text-2xl font-semibold tabular-nums text-neutral-900 outline-none placeholder:text-neutral-300 disabled:cursor-not-allowed dark:text-neutral-50"
             />
           </div>
+          {isFormPyfAuto ? (
+            <p className="mt-1.5 text-xs text-neutral-400">
+              From Money Plan ({formPyfKind === 'emergency' ? emergencyPct : investmentPct}%
+              × this month&apos;s income).
+            </p>
+          ) : null}
         </label>
 
         <label className="flex cursor-pointer items-start gap-3 rounded-xl bg-white px-4 py-3 shadow-sm dark:bg-neutral-800">
           <input
             type="checkbox"
-            checked={variableAmount}
-            onChange={(e) => setVariableAmount(e.target.checked)}
-            className="mt-0.5 h-4 w-4 shrink-0 rounded border-neutral-300 text-amber-600 accent-amber-500"
+            checked={isRecurring}
+            onChange={(e) => setIsRecurring(e.target.checked)}
+            className="mt-0.5 h-4 w-4 shrink-0 rounded border-neutral-300 text-emerald-600 accent-emerald-500"
           />
           <span className="min-w-0">
             <span className="block text-sm font-medium text-neutral-700 dark:text-neutral-200">
-              Variable Amount
+              Recurring
             </span>
             <span className="mt-0.5 block text-xs text-neutral-400">
-              Amount may change each cycle. Plan will confirm before checking.
+              Has a due schedule and appears on the Due Checklist. Turn off for
+              estimates without a fixed date (e.g. fuel).
             </span>
           </span>
         </label>
+
+        {isRecurring && !isFormPyfAuto ? (
+          <label className="flex cursor-pointer items-start gap-3 rounded-xl bg-white px-4 py-3 shadow-sm dark:bg-neutral-800">
+            <input
+              type="checkbox"
+              checked={variableAmount}
+              onChange={(e) => setVariableAmount(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 rounded border-neutral-300 text-amber-600 accent-amber-500"
+            />
+            <span className="min-w-0">
+              <span className="block text-sm font-medium text-neutral-700 dark:text-neutral-200">
+                Variable Amount
+              </span>
+              <span className="mt-0.5 block text-xs text-neutral-400">
+                Amount may change each cycle. Plan will confirm before checking.
+              </span>
+            </span>
+          </label>
+        ) : null}
 
         <div className="space-y-3">
           <OwnerPicker
@@ -1094,6 +1327,7 @@ export function RecurringBillsPanel({
                     focusNoteField()
                   }}
                   highlighted={toOpen}
+                  showBudgetGroup
                 />
               </>
             )
@@ -1142,6 +1376,7 @@ export function RecurringBillsPanel({
                   transactionType={type}
                   onCategoriesChanged={reload}
                   highlighted={categoryOpen}
+                  showBudgetGroup={!isIncome}
                 />
               )}
             </>
@@ -1156,11 +1391,13 @@ export function RecurringBillsPanel({
             categoryId={isTransfer ? null : categoryId}
             owner={owner}
             onKeyDown={handleNoteKeyDown}
-            enterKeyHint="next"
+            enterKeyHint={isRecurring ? 'next' : 'done'}
             placeholder="Note (optional)"
           />
         </div>
 
+        {isRecurring ? (
+          <>
         <div
           className={`grid gap-2 ${intervalUnit === 'week' ? 'grid-cols-1' : 'grid-cols-2'}`}
         >
@@ -1341,6 +1578,10 @@ export function RecurringBillsPanel({
           </label>
         </div>
         <p className="text-[11px] text-neutral-400">{settingsDescription}</p>
+          </>
+        ) : (
+          <p className="text-[11px] text-neutral-400">{settingsDescription}</p>
+        )}
 
         <button
           type="button"
@@ -1368,8 +1609,8 @@ export function RecurringBillsPanel({
 
       <ConfirmDialog
         open={Boolean(deleteTarget)}
-        title="Delete recurring item?"
-        message={`“${deleteLabel}” will be removed from Plan. Past checklist logs stay linked.`}
+        title="Delete estimate?"
+        message={`“${deleteLabel}” will be removed from Monthly Estimates. Past checklist logs stay linked.`}
         confirmLabel="Delete"
         cancelLabel="Cancel"
         busy={deleting}

@@ -70,6 +70,8 @@ create table if not exists buckets (
   icon text not null default '🏦',
   target_amount numeric(14, 2),
   opening_balance numeric(14, 2) not null default 0,
+  -- Needs/Wants for sinking funds; null for emergency/investment.
+  budget_group budget_group,
   sort_order integer not null default 0,
   is_active boolean not null default true,
   is_system boolean not null default false,
@@ -182,6 +184,8 @@ create table if not exists recurring_bills (
   starts_on date,
   -- Amount may differ each cycle — Plan confirms before check
   variable_amount boolean not null default false,
+  -- false = monthly amount estimate only (no due dates / checklist)
+  is_recurring boolean not null default true,
   icon text not null default '📌',
   sort_order integer not null default 0,
   is_active boolean not null default true,

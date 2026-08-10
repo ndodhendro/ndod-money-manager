@@ -17,12 +17,17 @@ function normalizeBudgetGroup(
   return type === 'expense' ? (budgetGroup ?? null) : null
 }
 
+function mapBudgetGroup(value: unknown): BudgetGroup | null {
+  if (value === 'needs' || value === 'wants') return value
+  return null
+}
+
 function mapCategory(row: Record<string, unknown>): Category {
   return {
     id: String(row.id),
     name: String(row.name),
     type: row.type as CategoryType,
-    budget_group: (row.budget_group as BudgetGroup | null) ?? null,
+    budget_group: mapBudgetGroup(row.budget_group),
     icon: String(row.icon ?? '🏷️'),
     sort_order: Number(row.sort_order ?? 0),
     is_active: Boolean(row.is_active),

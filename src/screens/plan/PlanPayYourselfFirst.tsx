@@ -1,22 +1,30 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { CollapsibleDayGroup } from '../../components/CollapsibleDayGroup'
 import { GroupedListFrame } from '../../components/GroupedListFrame'
 import { MonthPager } from '../../components/MonthPager'
 import { PlanBudgetRow } from '../../components/PlanBudgetRow'
 import { PlanSubPage } from '../../components/PlanSubPage'
 import { useBuckets } from '../../hooks/useBuckets'
+import { useCategories } from '../../hooks/useCategories'
 import { useMonthCursor } from '../../hooks/useMonthCursor'
 import { usePyfSettings } from '../../hooks/usePyfSettings'
 import { useTransactions } from '../../hooks/useTransactions'
 import { groupBucketsByKind } from '../../lib/bucketsGroup'
 import { formatRupiah } from '../../lib/format'
+import { sumPlannedNeeds } from '../../lib/freeWants'
 import {
   buildMoneyPlan,
   makeMoneyPlanBucket,
   sumSavingsActuals,
   type MoneyPlanBucket,
 } from '../../lib/moneyPlan'
+import { monthCursorKey } from '../../lib/monthCursor'
 import { PlanIcon, PlanTitle } from '../../lib/planSections'
+import {
+  fetchRecurringBills,
+  isMissingRecurringSchema,
+  type RecurringBill,
+} from '../../lib/recurringBillsApi'
 import {
   BUCKET_KIND_LABELS,
   type BucketKind,
@@ -70,6 +78,7 @@ function rowForBucket(
 
 export function PlanPayYourselfFirst() {
   const {
+    cursor,
     range,
     monthLabel,
     canGoNext,
@@ -86,14 +95,41 @@ export function PlanPayYourselfFirst() {
   } = usePyfSettings()
   const {
     buckets,
+    byId: bucketsById,
     emergency,
     investment,
     loading: bucketsLoading,
     error: bucketsError,
   } = useBuckets()
+  const {
+    byId: categoriesById,
+    loading: categoriesLoading,
+  } = useCategories('expense', { includeInactive: true })
 
   const [kindGroupsExpanded, setKindGroupsExpanded] = useState(true)
   const [kindGroupsVersion, setKindGroupsVersion] = useState(0)
+  const [bills, setBills] = useState<RecurringBill[]>([])
+  const [billsLoading, setBillsLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    setBillsLoading(true)
+    void (async () => {
+      try {
+        const rows = await fetchRecurringBills()
+        if (!cancelled) setBills(rows)
+      } catch (err) {
+        if (cancelled) return
+        const message = err instanceof Error ? err.message : ''
+        if (isMissingRecurringSchema(message)) setBills([])
+      } finally {
+        if (!cancelled) setBillsLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const totalIncome = transactions
     .filter((t) => t.type === 'income' && !t.complete_later)
@@ -109,19 +145,33 @@ export function PlanPayYourselfFirst() {
     [transactions, emergency?.id, investment?.id],
   )
 
+  const viewYm = monthCursorKey(cursor)
+  const plannedNeeds = useMemo(
+    () =>
+      sumPlannedNeeds(
+        bills,
+        new Map(),
+        categoriesById,
+        viewYm,
+        undefined,
+        bucketsById,
+      ),
+    [bills, categoriesById, bucketsById, viewYm],
+  )
+
   const moneyPlan = useMemo(() => {
     if (!settings) return null
     return buildMoneyPlan({
       income: totalIncome,
       emergencyPct: settings.emergency_fund_pct,
       investmentPct: settings.investment_pct,
-      plannedNeeds: settings.planned_needs_amount,
+      plannedNeeds,
       needsActual: 0,
       wantsActual: 0,
       emergencyActual: savingsActuals.emergency,
       investmentActual: savingsActuals.investment,
     })
-  }, [settings, totalIncome, savingsActuals])
+  }, [settings, totalIncome, savingsActuals, plannedNeeds])
 
   const groupedBuckets = useMemo(() => groupBucketsByKind(buckets), [buckets])
   const inflowsByBucket = useMemo(
@@ -129,7 +179,8 @@ export function PlanPayYourselfFirst() {
     [transactions],
   )
 
-  const pageLoading = loading || planLoading || bucketsLoading
+  const pageLoading =
+    loading || planLoading || bucketsLoading || billsLoading || categoriesLoading
 
   return (
     <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>

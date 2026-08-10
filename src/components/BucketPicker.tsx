@@ -1,6 +1,11 @@
 import { useId, useRef } from 'react'
 import { useOverlayBack } from '../hooks/useBackButton'
-import { CASHFLOW_LABEL, type BucketWithBalance } from '../lib/types'
+import {
+  CASHFLOW_LABEL,
+  type BudgetGroup,
+  type BucketWithBalance,
+} from '../lib/types'
+import { BudgetGroupBadge } from './BudgetGroupBadge'
 
 /** null = Main Account (checking / available money). */
 export type BucketSelection = string | null
@@ -17,6 +22,18 @@ interface BucketPickerProps {
   onChange: (next: BucketSelection) => void
   allowCashflow?: boolean
   highlighted?: boolean
+  /** Settings Monthly Estimates: show Needs / Wants on sinking funds. */
+  showBudgetGroup?: boolean
+}
+
+function sinkingBudgetGroup(
+  bucket: BucketWithBalance | undefined,
+): BudgetGroup | null {
+  if (!bucket || bucket.kind !== 'sinking') return null
+  if (bucket.budget_group === 'needs' || bucket.budget_group === 'wants') {
+    return bucket.budget_group
+  }
+  return null
 }
 
 export function BucketPicker({
@@ -29,6 +46,7 @@ export function BucketPicker({
   onChange,
   allowCashflow = true,
   highlighted = false,
+  showBudgetGroup = false,
 }: BucketPickerProps) {
   const listId = useId()
   const rootRef = useRef<HTMLDivElement>(null)
@@ -41,6 +59,9 @@ export function BucketPicker({
     value && value.length > 0
       ? buckets.find((b) => b.id === value)
       : undefined
+  const selectedGroup = showBudgetGroup
+    ? sinkingBudgetGroup(selected)
+    : null
 
   const options = buckets.filter((b) => b.id !== excludeId)
 
@@ -63,16 +84,23 @@ export function BucketPicker({
           highlighted ? 'ring-2 ring-emerald-400' : ''
         }`}
       >
-        <span
-          className={
-            value === undefined
-              ? 'text-neutral-400'
-              : 'font-medium text-neutral-800 dark:text-neutral-100'
-          }
-        >
-          {displayLabel()}
+        <span className="min-w-0 flex-1">
+          <span
+            className={`block truncate ${
+              value === undefined
+                ? 'text-neutral-400'
+                : 'font-medium text-neutral-800 dark:text-neutral-100'
+            }`}
+          >
+            {displayLabel()}
+          </span>
+          {selectedGroup ? (
+            <span className="mt-0.5 inline-block">
+              <BudgetGroupBadge group={selectedGroup} />
+            </span>
+          ) : null}
         </span>
-        <span className="text-neutral-400">{open ? '▴' : '▾'}</span>
+        <span className="shrink-0 text-neutral-400">{open ? '▴' : '▾'}</span>
       </button>
 
       {open && (
@@ -99,25 +127,33 @@ export function BucketPicker({
               </button>
             </li>
           )}
-          {options.map((b) => (
-            <li key={b.id}>
-              <button
-                type="button"
-                onClick={() => {
-                  onChange(b.id)
-                  onOpenChange(false)
-                }}
-                className={`flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm ${
-                  value === b.id
-                    ? 'bg-emerald-50 font-medium text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200'
-                    : 'text-neutral-700 dark:text-neutral-200'
-                }`}
-              >
-                <span>{b.icon}</span>
-                <span className="min-w-0 flex-1 truncate">{b.name}</span>
-              </button>
-            </li>
-          ))}
+          {options.map((b) => {
+            const optionGroup = showBudgetGroup
+              ? sinkingBudgetGroup(b)
+              : null
+            return (
+              <li key={b.id}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onChange(b.id)
+                    onOpenChange(false)
+                  }}
+                  className={`flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm ${
+                    value === b.id
+                      ? 'bg-emerald-50 font-medium text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200'
+                      : 'text-neutral-700 dark:text-neutral-200'
+                  }`}
+                >
+                  <span>{b.icon}</span>
+                  <span className="min-w-0 flex-1 truncate">{b.name}</span>
+                  {optionGroup ? (
+                    <BudgetGroupBadge group={optionGroup} />
+                  ) : null}
+                </button>
+              </li>
+            )
+          })}
           {options.length === 0 && !allowCashflow && (
             <li className="px-4 py-2 text-xs text-neutral-400">
               No buckets yet. Add one in Settings.

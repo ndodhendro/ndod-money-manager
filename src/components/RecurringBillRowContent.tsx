@@ -1,3 +1,4 @@
+import { BudgetGroupBadge } from './BudgetGroupBadge'
 import { CircleBadge } from './CircleBadge'
 import { OwnerBadge } from './OwnerBadge'
 import {
@@ -11,7 +12,7 @@ import {
   formatRecurringMeta,
   type RecurringBill,
 } from '../lib/recurringBillsApi'
-import { isCircle, isOwner } from '../lib/types'
+import { isCircle, isOwner, type BudgetGroup } from '../lib/types'
 
 interface RecurringBillRowContentProps {
   bill: RecurringBill
@@ -26,6 +27,10 @@ interface RecurringBillRowContentProps {
   occurredOn?: string
   /** Calendar current month already logged — drives "X months left". */
   currentMonthDone?: boolean
+  /** Settings Monthly Estimates: Needs / Wants (Emergency & Investment show as Needs). */
+  budgetGroup?: BudgetGroup | null
+  /** When set, show this instead of bill.amount (e.g. PYF auto from Money Plan). */
+  displayAmount?: number
 }
 
 export function RecurringBillRowContent({
@@ -38,8 +43,13 @@ export function RecurringBillRowContent({
   monthCursor,
   occurredOn,
   currentMonthDone = false,
+  budgetGroup = null,
+  displayAmount,
 }: RecurringBillRowContentProps) {
-  const noteText = note ?? (bill.name.trim() || null)
+  const amount = displayAmount ?? bill.amount
+  const noteText = display.isTransfer
+    ? display.transferToLabel
+    : (note ?? (bill.name.trim() || null))
   const dim = inactive ? 'opacity-50' : done ? 'opacity-60' : ''
   const titleClass = done
     ? 'text-neutral-500 dark:text-neutral-400'
@@ -48,6 +58,10 @@ export function RecurringBillRowContent({
     ? 'text-neutral-500 dark:text-neutral-500'
     : 'text-neutral-500 dark:text-neutral-400'
   const owner = isOwner(bill.owner) ? bill.owner : 'suami'
+  const meta = formatRecurringMeta(bill, monthCursor, {
+    currentMonthDone,
+    occurredOn,
+  })
 
   return (
     <>
@@ -109,17 +123,15 @@ export function RecurringBillRowContent({
               : bill.type === 'income'
                 ? '+'
                 : ''}
-            {formatRupiah(bill.amount)}
+            {formatRupiah(amount)}
           </p>
         </div>
-        {showMeta && (
-          <p className="text-xs leading-tight text-neutral-400">
-            {formatRecurringMeta(bill, monthCursor, {
-              currentMonthDone,
-              occurredOn,
-            })}
+        {budgetGroup ? <BudgetGroupBadge group={budgetGroup} /> : null}
+        {showMeta ? (
+          <p className="min-w-0 truncate text-xs leading-tight text-neutral-400">
+            {meta}
           </p>
-        )}
+        ) : null}
       </div>
     </>
   )

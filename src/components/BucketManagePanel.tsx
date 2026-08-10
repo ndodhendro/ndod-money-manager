@@ -7,16 +7,27 @@ import {
   type MutableRefObject,
 } from 'react'
 import { useBuckets } from '../hooks/useBuckets'
+import { useCategories } from '../hooks/useCategories'
+import { usePyfSettings } from '../hooks/usePyfSettings'
 import { ActionEmoji } from '../lib/actionEmoji'
 import { showAppToast } from '../lib/appToast'
 import { createBucket, deleteBucket, updateBucket } from '../lib/bucketsApi'
 import { groupBucketsByKind } from '../lib/bucketsGroup'
 import { areAllCollapseOpen } from '../lib/collapseState'
+import { sumPlannedNeeds } from '../lib/freeWants'
 import { formatNumber, formatRupiah } from '../lib/format'
+import { emergencyFundTarget } from '../lib/moneyPlan'
+import { currentMonthCursor, monthCursorKey } from '../lib/monthCursor'
+import {
+  fetchRecurringBills,
+  isMissingRecurringSchema,
+  type RecurringBill,
+} from '../lib/recurringBillsApi'
 import {
   BUCKET_KIND_LABELS,
   type BucketWithBalance,
 } from '../lib/types'
+import { BudgetGroupBadge } from './BudgetGroupBadge'
 import { CollapsibleDayGroup } from './CollapsibleDayGroup'
 import { ConfirmDialog } from './ConfirmDialog'
 import { GroupedListFrame } from './GroupedListFrame'
@@ -43,12 +54,17 @@ export function BucketManagePanel({
   routeWantForm,
   routeEditId = null,
 }: BucketManagePanelProps = {}) {
-  const { buckets, loading, error, reload } = useBuckets()
+  const { buckets, byId: bucketsById, loading, error, reload } = useBuckets()
+  const { settings: pyfSettings } = usePyfSettings()
+  const { byId: categoriesById } = useCategories('expense', {
+    includeInactive: true,
+  })
 
   const [name, setName] = useState('')
   const [icon, setIcon] = useState('🎯')
   const [targetDigits, setTargetDigits] = useState('')
   const [openingDigits, setOpeningDigits] = useState('')
+  const [budgetGroup, setBudgetGroup] = useState<'needs' | 'wants'>('needs')
   const [saving, setSaving] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(
     () => routeEditId ?? null,
@@ -64,6 +80,7 @@ export function BucketManagePanel({
   const [kindGroupsExpanded, setKindGroupsExpanded] = useState(true)
   const [kindGroupsVersion, setKindGroupsVersion] = useState(0)
   const [highlightId, setHighlightId] = useState<string | null>(null)
+  const [bills, setBills] = useState<RecurringBill[]>([])
   const highlightRef = useRef<HTMLDivElement | null>(null)
   const hydratedEditIdRef = useRef<string | null>(null)
   const onViewChangeRef = useRef(onViewChange)
@@ -79,6 +96,58 @@ export function BucketManagePanel({
     () => groupedBuckets.map(([kind]) => `settings:buckets:kind:${kind}`),
     [groupedBuckets],
   )
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const rows = await fetchRecurringBills()
+        if (!cancelled) setBills(rows)
+      } catch (err) {
+        if (cancelled) return
+        const message = err instanceof Error ? err.message : ''
+        if (isMissingRecurringSchema(message)) setBills([])
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const viewYm = monthCursorKey(currentMonthCursor())
+  const plannedNeeds = useMemo(
+    () =>
+      sumPlannedNeeds(
+        bills,
+        new Map(),
+        categoriesById,
+        viewYm,
+        undefined,
+        bucketsById,
+      ),
+    [bills, categoriesById, bucketsById, viewYm],
+  )
+  const efMultiplier = pyfSettings?.emergency_fund_target_multiplier ?? 3
+  const emergencyAutoTarget = useMemo(
+    () => emergencyFundTarget(plannedNeeds, efMultiplier),
+    [plannedNeeds, efMultiplier],
+  )
+
+  const editingBucket =
+    editingId ? buckets.find((b) => b.id === editingId) ?? null : null
+  const isEditingEmergency = editingBucket?.kind === 'emergency'
+  const isEditingInvestment = editingBucket?.kind === 'investment'
+  const hideTargetField = isEditingEmergency || isEditingInvestment
+
+  // Keep the disabled emergency target field in sync with Money Plan / estimates.
+  useEffect(() => {
+    if (!isEditingEmergency) return
+    setTargetDigits(
+      emergencyAutoTarget > 0
+        ? String(Math.round(emergencyAutoTarget))
+        : '',
+    )
+  }, [isEditingEmergency, emergencyAutoTarget])
 
   useEffect(() => {
     onViewChangeRef.current?.({
@@ -160,6 +229,7 @@ export function BucketManagePanel({
     setIcon('🎯')
     setTargetDigits('')
     setOpeningDigits('')
+    setBudgetGroup('needs')
     setEditingId(null)
     hydratedEditIdRef.current = null
   }
@@ -169,11 +239,24 @@ export function BucketManagePanel({
     hydratedEditIdRef.current = b.id
     setName(b.name)
     setIcon(b.icon)
-    setTargetDigits(
-      b.target_amount != null ? String(Math.round(b.target_amount)) : '',
-    )
+    if (b.kind === 'emergency') {
+      setTargetDigits(
+        emergencyAutoTarget > 0
+          ? String(Math.round(emergencyAutoTarget))
+          : '',
+      )
+    } else {
+      setTargetDigits(
+        b.target_amount != null ? String(Math.round(b.target_amount)) : '',
+      )
+    }
     setOpeningDigits(
       b.opening_balance > 0 ? String(Math.round(b.opening_balance)) : '',
+    )
+    setBudgetGroup(
+      b.budget_group === 'wants' || b.budget_group === 'needs'
+        ? b.budget_group
+        : 'needs',
     )
     setOpenSwipeId(null)
   }
@@ -213,6 +296,7 @@ export function BucketManagePanel({
         icon: icon || '🎯',
         target_amount: target,
         opening_balance: openingDigits ? Number(openingDigits) : 0,
+        budget_group: budgetGroup,
       })
       resetForm()
       setKindGroupsExpanded(true)
@@ -240,20 +324,26 @@ export function BucketManagePanel({
       nameRef.current?.focus()
       return
     }
-    const target = Number(targetDigits)
-    if (!targetDigits || !Number.isFinite(target) || target <= 0) {
-      showAppToast('Enter a target amount')
-      targetRef.current?.focus()
-      return
-    }
     const updatedId = editingId
+    const current = buckets.find((b) => b.id === updatedId)
+    const skipTarget =
+      current?.kind === 'emergency' || current?.kind === 'investment'
+    if (!skipTarget) {
+      const target = Number(targetDigits)
+      if (!targetDigits || !Number.isFinite(target) || target <= 0) {
+        showAppToast('Enter a target amount')
+        targetRef.current?.focus()
+        return
+      }
+    }
     setSaving(true)
     try {
       await updateBucket(updatedId, {
         name: name.trim(),
         icon: icon || '🏦',
-        target_amount: target,
+        ...(skipTarget ? {} : { target_amount: Number(targetDigits) }),
         opening_balance: openingDigits ? Number(openingDigits) : 0,
+        ...(current?.kind === 'sinking' ? { budget_group: budgetGroup } : {}),
       })
       resetForm()
       setKindGroupsExpanded(true)
@@ -299,7 +389,16 @@ export function BucketManagePanel({
   function handleNameKeyDown(e: KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'Enter') {
       e.preventDefault()
-      targetRef.current?.focus()
+      const editing =
+        editingId ? buckets.find((b) => b.id === editingId) : null
+      if (
+        editing?.kind === 'emergency' ||
+        editing?.kind === 'investment'
+      ) {
+        openingRef.current?.focus()
+      } else {
+        targetRef.current?.focus()
+      }
     }
   }
 
@@ -317,8 +416,10 @@ export function BucketManagePanel({
     }
   }
 
-  const editingBucket =
-    editingId ? buckets.find((b) => b.id === editingId) ?? null : null
+  const emergencyTargetDisplay =
+    emergencyAutoTarget > 0
+      ? formatNumber(Math.round(emergencyAutoTarget))
+      : ''
 
   return (
     <div className="space-y-3">
@@ -364,7 +465,16 @@ export function BucketManagePanel({
                     <div className="space-y-2">
                       {items.map((b) => {
                         const isHighlighted = highlightId === b.id
-                        const row = <BucketRowContent bucket={b} />
+                        const row = (
+                          <BucketRowContent
+                            bucket={b}
+                            displayTarget={
+                              b.kind === 'emergency'
+                                ? emergencyAutoTarget
+                                : undefined
+                            }
+                          />
+                        )
 
                         if (!b.is_system) {
                           return (
@@ -444,24 +554,48 @@ export function BucketManagePanel({
                 className="min-w-0 flex-1 rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
               />
             </div>
-            <label className="block">
-              <span className="mb-1 block text-xs text-neutral-500">
-                Target amount
-              </span>
-              <input
-                ref={targetRef}
-                type="text"
-                inputMode="numeric"
-                enterKeyHint="next"
-                placeholder="0"
-                value={targetDigits ? formatNumber(Number(targetDigits)) : ''}
-                onChange={(e) =>
-                  setTargetDigits(e.target.value.replace(/\D/g, ''))
-                }
-                onKeyDown={handleTargetKeyDown}
-                className="w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
-              />
-            </label>
+            {isEditingEmergency ? (
+              <label className="block">
+                <span className="mb-1 block text-xs text-neutral-500">
+                  Target amount
+                </span>
+                <input
+                  ref={targetRef}
+                  type="text"
+                  inputMode="numeric"
+                  disabled
+                  readOnly
+                  value={emergencyTargetDisplay}
+                  aria-label="Target amount (auto-calculated)"
+                  className="w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm text-neutral-500 opacity-80 dark:bg-neutral-700 dark:text-neutral-400"
+                />
+                <span className="mt-1 block text-[11px] text-neutral-400">
+                  Auto-calculated from planned needs × emergency fund target
+                  in Money Plan ({efMultiplier}×).
+                </span>
+              </label>
+            ) : !hideTargetField ? (
+              <label className="block">
+                <span className="mb-1 block text-xs text-neutral-500">
+                  Target amount
+                </span>
+                <input
+                  ref={targetRef}
+                  type="text"
+                  inputMode="numeric"
+                  enterKeyHint="next"
+                  placeholder="0"
+                  value={
+                    targetDigits ? formatNumber(Number(targetDigits)) : ''
+                  }
+                  onChange={(e) =>
+                    setTargetDigits(e.target.value.replace(/\D/g, ''))
+                  }
+                  onKeyDown={handleTargetKeyDown}
+                  className="w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
+                />
+              </label>
+            ) : null}
             <label className="block">
               <span className="mb-1 block text-xs text-neutral-500">
                 Opening balance (optional)
@@ -482,6 +616,28 @@ export function BucketManagePanel({
                 className="w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
               />
             </label>
+            {(!editingBucket || editingBucket.kind === 'sinking') && (
+              <label className="block">
+                <span className="mb-1 block text-xs text-neutral-500">
+                  Needs or Wants
+                </span>
+                <select
+                  value={budgetGroup}
+                  onChange={(e) =>
+                    setBudgetGroup(e.target.value as 'needs' | 'wants')
+                  }
+                  aria-label="Needs or wants"
+                  className="w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
+                >
+                  <option value="needs">Needs</option>
+                  <option value="wants">Wants</option>
+                </select>
+                <span className="mt-1 block text-[11px] text-neutral-400">
+                  Transfers into this fund count toward planned Needs or
+                  committed Wants.
+                </span>
+              </label>
+            )}
             {editingBucket && (
               <p className="text-[11px] text-neutral-400">
                 {BUCKET_KIND_LABELS[editingBucket.kind]}
@@ -535,7 +691,27 @@ export function BucketManagePanel({
   )
 }
 
-function BucketRowContent({ bucket }: { bucket: BucketWithBalance }) {
+function BucketRowContent({
+  bucket,
+  displayTarget,
+}: {
+  bucket: BucketWithBalance
+  /** When set (Emergency Fund), overrides stored target_amount. */
+  displayTarget?: number
+}) {
+  const group =
+    bucket.kind === 'sinking' &&
+    (bucket.budget_group === 'needs' || bucket.budget_group === 'wants')
+      ? bucket.budget_group
+      : null
+  const target =
+    bucket.kind === 'investment'
+      ? null
+      : displayTarget != null
+        ? displayTarget
+        : bucket.target_amount != null
+          ? bucket.target_amount
+          : null
   return (
     <>
       <span className="text-xl leading-none" aria-hidden>
@@ -550,12 +726,13 @@ function BucketRowContent({ bucket }: { bucket: BucketWithBalance }) {
             {formatRupiah(bucket.balance)}
           </p>
         </div>
-        <p className="text-[11px] text-neutral-400">
-          {BUCKET_KIND_LABELS[bucket.kind]}
-          {bucket.is_system ? ' · system' : ''}
-          {bucket.target_amount != null && bucket.target_amount > 0
-            ? ` · target ${formatRupiah(bucket.target_amount)}`
-            : ''}
+        <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-neutral-400">
+          <span>{BUCKET_KIND_LABELS[bucket.kind]}</span>
+          {group ? <BudgetGroupBadge group={group} /> : null}
+          {bucket.is_system ? <span>· system</span> : null}
+          {target != null && target > 0 ? (
+            <span>· target {formatRupiah(target)}</span>
+          ) : null}
         </p>
       </div>
     </>

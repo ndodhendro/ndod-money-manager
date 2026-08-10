@@ -53,18 +53,18 @@ export function PlanBudgetRow({
           </div>
         </div>
       </div>
-      {bucket.target > 0 || bucket.actual > 0 ? (
+      {bucket.target > 0 ? (
         <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-neutral-100 dark:bg-neutral-700">
           <div
             className={`h-full rounded-full ${fillClass}`}
             style={{ width: `${pct}%` }}
           />
         </div>
-      ) : (
+      ) : bucket.actual <= 0 ? (
         <p className="mt-1 text-[11px] text-neutral-400">
           Transfer into this bucket to track progress
         </p>
-      )}
+      ) : null}
       {mode === 'ceiling' && bucket.target > 0 && (
         <p className="mt-1 text-[11px] text-neutral-400">
           {over

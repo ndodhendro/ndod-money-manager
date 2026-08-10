@@ -42,6 +42,11 @@ export interface RecurringBill {
    * amount before check and shows a gold highlight while unchecked.
    */
   variable_amount: boolean
+  /**
+   * When false, this is a monthly amount estimate only (no schedule /
+   * due dates / checklist). Still counts toward monthly totals & planned needs.
+   */
+  is_recurring: boolean
   icon: string
   sort_order: number
   is_active: boolean
@@ -273,6 +278,8 @@ export function occurrencesInMonth(
   yearMonth: string,
   override?: RecurringBillMonthOverride | null,
 ): string[] {
+  // Estimate-only rows have no dated occurrences (not on Due checklist).
+  if (!bill.is_recurring) return []
   if (bill.starts_year_month && bill.starts_year_month > yearMonth) return []
   if (bill.ends_year_month && bill.ends_year_month < yearMonth) return []
 
@@ -365,6 +372,8 @@ function mapBill(row: Record<string, unknown>): RecurringBill {
     ends_year_month: parseEndsYearMonth(row.ends_year_month),
     starts_on: parseStartsOn(row.starts_on),
     variable_amount: Boolean(row.variable_amount),
+    // Missing column (pre-migration) → treat as recurring templates.
+    is_recurring: row.is_recurring === false ? false : true,
     icon: String(row.icon ?? '📌'),
     sort_order: Number(row.sort_order ?? 0),
     is_active: Boolean(row.is_active),
@@ -449,12 +458,51 @@ export function countDueOrOverdueUnchecked(
   return count
 }
 
-/** Still appears on checklist for this YYYY-MM. */
+/** Still appears on checklist for this YYYY-MM (dated recurring only). */
 export function isRecurringActiveInMonth(
   bill: RecurringBill,
   yearMonth: string,
 ): boolean {
   return occurrencesInMonth(bill, yearMonth).length > 0
+}
+
+/**
+ * Counts toward monthly estimate totals / planned needs for YYYY-MM.
+ * Non-recurring estimates always count while active; recurring need dates.
+ */
+export function isEstimateActiveInMonth(
+  bill: RecurringBill,
+  yearMonth: string,
+  override?: RecurringBillMonthOverride | null,
+): boolean {
+  if (!bill.is_active) return false
+  if (!bill.is_recurring) return true
+  return occurrencesInMonth(bill, yearMonth, override).length > 0
+}
+
+/**
+ * How many times this estimate applies in the month (for summing amounts).
+ * Non-recurring → 1. Recurring → dated occurrence count (minus skips).
+ */
+export function estimateOccurrenceCount(
+  bill: RecurringBill,
+  yearMonth: string,
+  override?: RecurringBillMonthOverride | null,
+  skippedOccurrenceKeys?: Set<string>,
+): number {
+  if (!bill.is_active) return 0
+  if (isRecurringSkipped(override)) return 0
+  if (!bill.is_recurring) return 1
+  let count = 0
+  for (const occurredOn of occurrencesInMonth(bill, yearMonth, override)) {
+    if (
+      isOccurrenceSkipped(bill.id, occurredOn, skippedOccurrenceKeys, override)
+    ) {
+      continue
+    }
+    count += 1
+  }
+  return count
 }
 
 /** Due label for a specific ISO date, e.g. "Tue, 15 Aug 2026". */
@@ -555,6 +603,10 @@ export function formatRecurringMeta(
   cursor?: MonthCursor,
   options?: { currentMonthDone?: boolean; occurredOn?: string },
 ): string {
+  if (!bill.is_recurring) {
+    return 'Monthly estimate'
+  }
+
   const remaining = bill.ends_year_month
     ? remainingOccurrencesLeft(bill, options?.currentMonthDone === true)
     : null
@@ -684,6 +736,11 @@ function isMissingStartsOnColumn(message: string): boolean {
 function isMissingVariableAmountColumn(message: string): boolean {
   const lower = message.toLowerCase()
   return lower.includes('variable_amount')
+}
+
+function isMissingIsRecurringColumn(message: string): boolean {
+  const lower = message.toLowerCase()
+  return lower.includes('is_recurring')
 }
 
 function isMissingOccurredOnColumn(message: string): boolean {
@@ -1135,6 +1192,7 @@ export type NewRecurringBillInput = {
   ends_year_month: string | null
   starts_on: string | null
   variable_amount: boolean
+  is_recurring: boolean
   icon: string
 }
 
@@ -1148,6 +1206,7 @@ type InsertFlags = {
   includeEnds: boolean
   includeOwner: boolean
   includeVariableAmount: boolean
+  includeIsRecurring: boolean
 }
 
 function toInsertRow(
@@ -1155,8 +1214,11 @@ function toInsertRow(
   sortOrder: number,
   flags: InsertFlags,
 ): Record<string, unknown> {
-  const unit = input.interval_unit
-  const every = clampIntervalEvery(unit, input.interval_months)
+  const isRecurring = input.is_recurring !== false
+  const unit = isRecurring ? input.interval_unit : 'month'
+  const every = isRecurring
+    ? clampIntervalEvery(unit, input.interval_months)
+    : 1
   const base: Record<string, unknown> = {
     name: input.name.trim(),
     amount: input.amount,
@@ -1170,7 +1232,7 @@ function toInsertRow(
     base.owner = input.owner
   }
   if (flags.includeDueDay) {
-    base.due_day = input.due_day
+    base.due_day = isRecurring ? input.due_day : 1
   }
   if (flags.includeIntervalMonths) {
     base.interval_months = every
@@ -1179,16 +1241,19 @@ function toInsertRow(
     base.interval_unit = unit
   }
   if (flags.includeStarts) {
-    base.starts_year_month = input.starts_year_month
+    base.starts_year_month = isRecurring ? input.starts_year_month : null
   }
   if (flags.includeStartsOn) {
-    base.starts_on = input.starts_on
+    base.starts_on = isRecurring ? input.starts_on : null
   }
   if (flags.includeEnds) {
-    base.ends_year_month = input.ends_year_month
+    base.ends_year_month = isRecurring ? input.ends_year_month : null
   }
   if (flags.includeVariableAmount) {
-    base.variable_amount = input.variable_amount === true
+    base.variable_amount = isRecurring && input.variable_amount === true
+  }
+  if (flags.includeIsRecurring) {
+    base.is_recurring = isRecurring
   }
   if (!flags.includeTypeColumns) return base
   return {
@@ -1201,6 +1266,20 @@ function toInsertRow(
 
 function validateRecurringInput(input: NewRecurringBillInput): void {
   if (input.amount <= 0) throw new Error('Amount must be greater than 0')
+
+  if (input.type === 'transfer') {
+    if (input.from_bucket_id === input.to_bucket_id) {
+      throw new Error('Pick different from and to')
+    }
+    if (!input.from_bucket_id && !input.to_bucket_id) {
+      throw new Error('Transfer needs at least one bucket')
+    }
+  } else if (!input.category_id) {
+    throw new Error('Category is required')
+  }
+
+  if (input.is_recurring === false) return
+
   if (input.due_day < 1 || input.due_day > 31) {
     throw new Error('Due day must be between 1 and 31')
   }
@@ -1245,18 +1324,6 @@ function validateRecurringInput(input: NewRecurringBillInput): void {
   ) {
     throw new Error('Starts month must be before or same as Ends month')
   }
-
-  if (input.type === 'transfer') {
-    if (input.from_bucket_id === input.to_bucket_id) {
-      throw new Error('Pick different from and to')
-    }
-    if (!input.from_bucket_id && !input.to_bucket_id) {
-      throw new Error('Transfer needs at least one bucket')
-    }
-    return
-  }
-
-  if (!input.category_id) throw new Error('Category is required')
 }
 
 async function insertRecurringBill(
@@ -1266,7 +1333,8 @@ async function insertRecurringBill(
   data: Record<string, unknown> | null
   error: { message: string } | null
 }> {
-  const isWeek = input.interval_unit === 'week'
+  const isRecurring = input.is_recurring !== false
+  const isWeek = isRecurring && input.interval_unit === 'week'
   const attempts: InsertFlags[] = [
     {
       includeTypeColumns: true,
@@ -1278,6 +1346,19 @@ async function insertRecurringBill(
       includeEnds: true,
       includeOwner: true,
       includeVariableAmount: true,
+      includeIsRecurring: true,
+    },
+    {
+      includeTypeColumns: true,
+      includeDueDay: true,
+      includeIntervalMonths: true,
+      includeIntervalUnit: true,
+      includeStarts: true,
+      includeStartsOn: true,
+      includeEnds: true,
+      includeOwner: true,
+      includeVariableAmount: true,
+      includeIsRecurring: false,
     },
     {
       includeTypeColumns: true,
@@ -1289,6 +1370,7 @@ async function insertRecurringBill(
       includeEnds: true,
       includeOwner: true,
       includeVariableAmount: false,
+      includeIsRecurring: false,
     },
     {
       includeTypeColumns: true,
@@ -1300,6 +1382,7 @@ async function insertRecurringBill(
       includeEnds: true,
       includeOwner: true,
       includeVariableAmount: false,
+      includeIsRecurring: false,
     },
     {
       includeTypeColumns: true,
@@ -1311,6 +1394,7 @@ async function insertRecurringBill(
       includeEnds: true,
       includeOwner: true,
       includeVariableAmount: false,
+      includeIsRecurring: false,
     },
     {
       includeTypeColumns: true,
@@ -1322,6 +1406,7 @@ async function insertRecurringBill(
       includeEnds: true,
       includeOwner: true,
       includeVariableAmount: false,
+      includeIsRecurring: false,
     },
     {
       includeTypeColumns: true,
@@ -1333,6 +1418,7 @@ async function insertRecurringBill(
       includeEnds: false,
       includeOwner: true,
       includeVariableAmount: false,
+      includeIsRecurring: false,
     },
     {
       includeTypeColumns: true,
@@ -1344,6 +1430,7 @@ async function insertRecurringBill(
       includeEnds: false,
       includeOwner: true,
       includeVariableAmount: false,
+      includeIsRecurring: false,
     },
     {
       includeTypeColumns: false,
@@ -1355,22 +1442,25 @@ async function insertRecurringBill(
       includeEnds: false,
       includeOwner: true,
       includeVariableAmount: false,
+      includeIsRecurring: false,
     },
   ]
 
   let lastError: { message: string } | null = null
   const needsInterval =
-    isWeek || clampIntervalMonths(input.interval_months) > 1
+    isWeek ||
+    (isRecurring && clampIntervalMonths(input.interval_months) > 1)
 
   for (const flags of attempts) {
     if (input.type !== 'expense' && !flags.includeTypeColumns) continue
-    if (input.starts_year_month && !flags.includeStarts) continue
-    if (input.ends_year_month && !flags.includeEnds) continue
+    if (isRecurring && input.starts_year_month && !flags.includeStarts) continue
+    if (isRecurring && input.ends_year_month && !flags.includeEnds) continue
     if (needsInterval && !flags.includeIntervalMonths) continue
     if (isWeek && (!flags.includeIntervalUnit || !flags.includeStartsOn)) {
       continue
     }
     if (input.variable_amount && !flags.includeVariableAmount) continue
+    if (!isRecurring && !flags.includeIsRecurring) continue
 
     const result = await supabase
       .from('recurring_bills')
@@ -1386,6 +1476,13 @@ async function insertRecurringBill(
     const message = result.error.message
 
     if (flags.includeOwner && isMissingOwnerColumn(message)) break
+    if (
+      flags.includeIsRecurring &&
+      isMissingIsRecurringColumn(message)
+    ) {
+      if (!isRecurring) break
+      continue
+    }
     if (
       flags.includeVariableAmount &&
       isMissingVariableAmountColumn(message)
@@ -1460,6 +1557,14 @@ export async function createRecurringBill(
         'Run migrate_recurring_variable_amount.sql in Supabase to enable variable amount',
       )
     }
+    if (
+      input.is_recurring === false &&
+      isMissingIsRecurringColumn(result.error.message)
+    ) {
+      throw new Error(
+        'Run migrate_monthly_estimates_is_recurring.sql in Supabase to enable non-recurring estimates',
+      )
+    }
     if (isMissingIntervalMonthsColumn(result.error.message)) {
       throw new Error(
         'Run migrate_recurring_interval_months.sql in Supabase to enable Every N months',
@@ -1503,27 +1608,42 @@ export async function updateRecurringBill(
     ends_year_month: string | null
     starts_on: string | null
     variable_amount: boolean
+    is_recurring: boolean
     icon: string
     is_active: boolean
   }>,
 ): Promise<RecurringBill> {
   const nextPatch = { ...patch }
-  const unit = nextPatch.interval_unit ?? 'month'
-  if (nextPatch.interval_months != null) {
-    nextPatch.interval_months = clampIntervalEvery(
-      unit,
-      nextPatch.interval_months,
-    )
-    if (unit === 'week') {
-      if ('starts_on' in nextPatch && !nextPatch.starts_on) {
-        throw new Error('Starts date is required when Every is weekly')
+  const isRecurring = nextPatch.is_recurring !== false
+
+  if (nextPatch.is_recurring === false) {
+    nextPatch.interval_unit = 'month'
+    nextPatch.interval_months = 1
+    nextPatch.due_day = 1
+    nextPatch.starts_year_month = null
+    nextPatch.ends_year_month = null
+    nextPatch.starts_on = null
+    nextPatch.variable_amount = false
+  } else if (isRecurring) {
+    const unit = nextPatch.interval_unit ?? 'month'
+    if (nextPatch.interval_months != null) {
+      nextPatch.interval_months = clampIntervalEvery(
+        unit,
+        nextPatch.interval_months,
+      )
+      if (unit === 'week') {
+        if ('starts_on' in nextPatch && !nextPatch.starts_on) {
+          throw new Error('Starts date is required when Every is weekly')
+        }
+      } else if (
+        nextPatch.interval_months > 1 &&
+        'starts_year_month' in nextPatch &&
+        !nextPatch.starts_year_month
+      ) {
+        throw new Error(
+          'Starts month is required when Every is more than 1 month',
+        )
       }
-    } else if (
-      nextPatch.interval_months > 1 &&
-      'starts_year_month' in nextPatch &&
-      !nextPatch.starts_year_month
-    ) {
-      throw new Error('Starts month is required when Every is more than 1 month')
     }
   }
 
@@ -1537,6 +1657,14 @@ export async function updateRecurringBill(
     if (isMissingOwnerColumn(error.message) && 'owner' in nextPatch) {
       throw new Error(
         'Run migrate_recurring_owner.sql in Supabase to enable profile',
+      )
+    }
+    if (
+      isMissingIsRecurringColumn(error.message) &&
+      'is_recurring' in nextPatch
+    ) {
+      throw new Error(
+        'Run migrate_monthly_estimates_is_recurring.sql in Supabase to enable non-recurring estimates',
       )
     }
     if (

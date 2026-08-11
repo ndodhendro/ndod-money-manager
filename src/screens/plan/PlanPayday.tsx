@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { GroupedListFrame } from '../../components/GroupedListFrame'
 import { MonthPager } from '../../components/MonthPager'
 import { OwnerBadge } from '../../components/OwnerBadge'
+import { PlanBudgetRow } from '../../components/PlanBudgetRow'
 import { PlanSubPage } from '../../components/PlanSubPage'
 import { useBuckets } from '../../hooks/useBuckets'
 import { useCategories } from '../../hooks/useCategories'
@@ -9,9 +10,18 @@ import { useMonthCursor } from '../../hooks/useMonthCursor'
 import { usePyfSettings } from '../../hooks/usePyfSettings'
 import { useRecurringBills } from '../../hooks/useRecurringBills'
 import { useTransactions } from '../../hooks/useTransactions'
+import {
+  buildEstimateProgressRows,
+  sumEstimateOverspend,
+} from '../../lib/estimateProgress'
 import { formatRupiah } from '../../lib/format'
+import {
+  buildFreeGuiltyProgress,
+  checkingBucketIdsByOwner,
+  sumFreeGuiltySpentFromAccount,
+} from '../../lib/freeGuiltyProgress'
+import { makeMoneyPlanBucket, sumMonthIncomeParts } from '../../lib/moneyPlan'
 import { monthCursorKey } from '../../lib/monthCursor'
-import { sumMonthIncomeParts } from '../../lib/moneyPlan'
 import { buildPaydayAllocation } from '../../lib/paydayAllocation'
 import { PlanIcon, PlanTitle } from '../../lib/planSections'
 import {
@@ -102,6 +112,7 @@ export function PlanPayday() {
     error: categoriesError,
   } = useCategories('expense', { includeInactive: true })
   const {
+    buckets,
     byId: bucketsById,
     loading: bucketsLoading,
     error: bucketsError,
@@ -161,6 +172,47 @@ export function PlanPayday() {
     bucketsById,
     yearMonth,
   ])
+
+  const estimateOverspend = useMemo(() => {
+    const rows = buildEstimateProgressRows({
+      bills,
+      overridesByBillId: overrideByBillId,
+      skippedOccurrenceKeys,
+      categoriesById,
+      bucketsById,
+      yearMonth,
+      transactions,
+    })
+    return sumEstimateOverspend(rows)
+  }, [
+    bills,
+    overrideByBillId,
+    skippedOccurrenceKeys,
+    categoriesById,
+    bucketsById,
+    yearMonth,
+    transactions,
+  ])
+
+  const freeGuiltyProgress = useMemo(() => {
+    if (!allocation) return null
+    const accountIds = checkingBucketIdsByOwner(buckets)
+    return buildFreeGuiltyProgress({
+      allowanceSuami: allocation.freeGuiltySuami,
+      allowanceIstri: allocation.freeGuiltyIstri,
+      spentSuami: sumFreeGuiltySpentFromAccount(
+        transactions,
+        accountIds.suami,
+        'suami',
+      ),
+      spentIstri: sumFreeGuiltySpentFromAccount(
+        transactions,
+        accountIds.istri,
+        'istri',
+      ),
+      borrowedTotal: estimateOverspend,
+    })
+  }, [allocation, buckets, transactions, estimateOverspend])
 
   const pageLoading =
     loading ||
@@ -235,6 +287,29 @@ export function PlanPayday() {
                 <SplitRow owner="istri" amount={allocation.freeGuiltyIstri} />
               </div>
             </section>
+
+            {freeGuiltyProgress && (
+              <section className="space-y-2">
+                <p className="text-[11px] font-medium uppercase tracking-wide text-neutral-400">
+                  Free Guilty Remaining
+                </p>
+                <FreeGuiltyRemainingRow
+                  owner="suami"
+                  progress={freeGuiltyProgress.suami}
+                />
+                <FreeGuiltyRemainingRow
+                  owner="istri"
+                  progress={freeGuiltyProgress.istri}
+                />
+                {freeGuiltyProgress.borrowedTotal > 0 && (
+                  <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                    Borrowed from Free Guilty{' '}
+                    {formatRupiah(freeGuiltyProgress.borrowedTotal)} for
+                    estimate overspend (split 50/50).
+                  </p>
+                )}
+              </section>
+            )}
 
             {allocation.bonusAllocation && (
               <GroupedListFrame
@@ -335,6 +410,43 @@ export function PlanPayday() {
           </div>
         )}
       </PlanSubPage>
+    </div>
+  )
+}
+
+function FreeGuiltyRemainingRow({
+  owner,
+  progress,
+}: {
+  owner: Owner
+  progress: {
+    allowance: number
+    spent: number
+    borrowed: number
+    remaining: number
+  }
+}) {
+  const used = progress.spent + progress.borrowed
+  const hintParts = [`Spent ${formatRupiah(progress.spent)}`]
+  if (progress.borrowed > 0) {
+    hintParts.push(`borrowed ${formatRupiah(progress.borrowed)}`)
+  }
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-2 px-0.5">
+        <OwnerBadge owner={owner} size="inline" />
+      </div>
+      <PlanBudgetRow
+        bucket={makeMoneyPlanBucket(
+          owner === 'suami' ? 'Ndod' : 'Devi',
+          progress.allowance,
+          used,
+          'ceiling',
+        )}
+        hint={hintParts.join(' · ')}
+        barClass="bg-emerald-500"
+        mode="ceiling"
+      />
     </div>
   )
 }

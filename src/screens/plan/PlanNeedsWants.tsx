@@ -9,6 +9,11 @@ import { usePyfSettings } from '../../hooks/usePyfSettings'
 import { useTransactions } from '../../hooks/useTransactions'
 import { formatRupiah, todayIso } from '../../lib/format'
 import {
+  buildEstimateProgressRows,
+  sumEstimateOverspend,
+  type EstimateProgressStatus,
+} from '../../lib/estimateProgress'
+import {
   buildFreeWantsPace,
   budgetGroupOfTransferTo,
   freeWantsLookbackMonths,
@@ -28,7 +33,10 @@ import {
 } from '../../lib/moneyPlan'
 import { monthCursorKey, monthCursorRange } from '../../lib/monthCursor'
 import { PlanIcon, PlanTitle } from '../../lib/planSections'
-import { BUDGET_GROUP_BAR_CLASS } from '../../lib/types'
+import {
+  BUDGET_GROUP_BAR_CLASS,
+  BUDGET_GROUP_LABELS,
+} from '../../lib/types'
 import {
   fetchRecurringBillMonthOverridesInRange,
   fetchRecurringBillOccurrenceSkipsInRange,
@@ -340,6 +348,46 @@ export function PlanNeedsWants() {
         )
       : null
 
+  const estimateProgress = useMemo(() => {
+    const overridesByBill = new Map(
+      overrides
+        .filter((o) => o.year_month === viewYm)
+        .map((o) => [o.bill_id, o]),
+    )
+    const skipKeys = new Set(
+      occurrenceSkips
+        .filter((s) => s.year_month === viewYm)
+        .map((s) => occurrenceLogKey(s.bill_id, s.occurred_on)),
+    )
+    return buildEstimateProgressRows({
+      bills,
+      overridesByBillId: overridesByBill,
+      skippedOccurrenceKeys: skipKeys,
+      categoriesById,
+      bucketsById,
+      yearMonth: viewYm,
+      transactions: monthTx,
+    })
+  }, [
+    bills,
+    overrides,
+    occurrenceSkips,
+    categoriesById,
+    bucketsById,
+    viewYm,
+    monthTx,
+  ])
+
+  const estimateBorrowed = sumEstimateOverspend(estimateProgress)
+  const estimatePlannedTotal = estimateProgress.reduce(
+    (sum, row) => sum + row.planned,
+    0,
+  )
+  const estimateActualTotal = estimateProgress.reduce(
+    (sum, row) => sum + row.actual,
+    0,
+  )
+
   return (
     <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
       <PlanSubPage
@@ -465,11 +513,53 @@ export function PlanNeedsWants() {
                 )}
               </>
             )}
+
+            {estimateProgress.length > 0 && (
+              <div className="space-y-2 pt-3">
+                <p className="text-[11px] font-medium uppercase tracking-wide text-neutral-400">
+                  Estimate Progress
+                </p>
+                <p className="text-[11px] text-neutral-400">
+                  Planned {formatRupiah(estimatePlannedTotal)} · Actual{' '}
+                  {formatRupiah(estimateActualTotal)}
+                  {estimateBorrowed > 0
+                    ? ` · Over ${formatRupiah(estimateBorrowed)}`
+                    : ''}
+                </p>
+                {estimateBorrowed > 0 && (
+                  <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                    Borrowed from Free Guilty {formatRupiah(estimateBorrowed)}{' '}
+                    (see Payday Allocation).
+                  </p>
+                )}
+                {estimateProgress.map((row) => (
+                  <PlanBudgetRow
+                    key={row.billId}
+                    icon={row.icon}
+                    bucket={makeMoneyPlanBucket(
+                      row.name,
+                      row.planned,
+                      row.actual,
+                      'ceiling',
+                    )}
+                    hint={`${BUDGET_GROUP_LABELS[row.group]} · ${estimateStatusLabel(row.status)}`}
+                    barClass={BUDGET_GROUP_BAR_CLASS[row.group]}
+                    mode="ceiling"
+                  />
+                ))}
+              </div>
+            )}
           </div>
         )}
       </PlanSubPage>
     </div>
   )
+}
+
+function estimateStatusLabel(status: EstimateProgressStatus): string {
+  if (status === 'over') return 'Over'
+  if (status === 'under') return 'Under'
+  return 'On Track'
 }
 
 function isCurrentWeekLabel(

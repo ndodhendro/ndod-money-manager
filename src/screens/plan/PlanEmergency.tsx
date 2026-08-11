@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import { CollapseChevron } from '../../components/CollapseChevron'
-import { CollapsibleDayGroup } from '../../components/CollapsibleDayGroup'
 import { GroupedListFrame } from '../../components/GroupedListFrame'
 import { PlanBudgetRow } from '../../components/PlanBudgetRow'
 import { PlanSubPage } from '../../components/PlanSubPage'
@@ -56,13 +55,13 @@ function overallRowForBucket(
   if (b.kind === 'investment') {
     return {
       bucket: makeMoneyPlanBucket(b.name, 0, b.balance, 'floor'),
-      hint: 'Funded from monthly investment %',
+      hint: '',
     }
   }
   const target = b.target_amount ?? 0
   return {
     bucket: makeMoneyPlanBucket(b.name, target, b.balance, 'floor'),
-    hint: target > 0 ? 'Balance vs target' : 'No overall target set',
+    hint: target > 0 ? 'Balance vs target' : '',
   }
 }
 
@@ -85,7 +84,6 @@ export function PlanEmergency() {
   } = useCategories('expense', { includeInactive: true })
 
   const [kindGroupsExpanded, setKindGroupsExpanded] = useState(true)
-  const [kindGroupsVersion, setKindGroupsVersion] = useState(0)
   const [expandedParentIds, setExpandedParentIds] = useState<Set<string>>(
     () => new Set(),
   )
@@ -136,7 +134,10 @@ export function PlanEmergency() {
 
   const efMultiplier = settings?.emergency_fund_target_multiplier ?? 3
   const groupedBuckets = useMemo(
-    () => groupBucketsByKindAsTree(buckets, categoriesById),
+    () =>
+      groupBucketsByKindAsTree(buckets, categoriesById).filter(
+        ([kind]) => kind !== 'checking',
+      ),
     [buckets, categoriesById],
   )
 
@@ -307,7 +308,6 @@ export function PlanEmergency() {
             expanded={kindGroupsExpanded}
             onToggle={(expanded) => {
               setKindGroupsExpanded(expanded)
-              setKindGroupsVersion((v) => v + 1)
               setAllSinkingCatsExpanded(expanded)
             }}
           >
@@ -342,15 +342,10 @@ export function PlanEmergency() {
                     </div>
                   </div>
                 ) : (
-                  <CollapsibleDayGroup
-                    key={kind}
-                    title={BUCKET_KIND_LABELS[kind]}
-                    persistKey={`plan:goals:kind:${kind}`}
-                    forceOpen={
-                      kindGroupsVersion > 0 ? kindGroupsExpanded : undefined
-                    }
-                    forceVersion={kindGroupsVersion}
-                  >
+                  <div key={kind}>
+                    <p className="mb-2 text-xs font-semibold tracking-wide text-neutral-400">
+                      {BUCKET_KIND_LABELS[kind]}
+                    </p>
                     <div className="space-y-2">
                       {items.map((node) => {
                         const { bucket, hint } = overallRowForBucket(
@@ -381,7 +376,7 @@ export function PlanEmergency() {
                         )
                       })}
                     </div>
-                  </CollapsibleDayGroup>
+                  </div>
                 ),
               )}
             </div>

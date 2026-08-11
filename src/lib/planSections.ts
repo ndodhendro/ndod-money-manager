@@ -29,7 +29,7 @@ export const PLAN_PROGRESS_SECTIONS = [
     to: '/rencana/needs-wants',
     icon: '⚖️',
     title: 'Needs vs Wants Budget',
-    subtitle: 'Actual spending vs your budget',
+    subtitle: 'Actual Spending, Estimates, and Free Wants Pace',
   },
 ] as const
 

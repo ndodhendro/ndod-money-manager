@@ -19,7 +19,6 @@ import {
 } from '../lib/bucketsApi'
 import { groupBucketsByKindAsTree } from '../lib/bucketsGroup'
 import {
-  areAllCollapseOpen,
   getCollapseOpen,
   setCollapseOpen,
 } from '../lib/collapseState'
@@ -41,7 +40,6 @@ import {
 import { BudgetGroupBadge } from './BudgetGroupBadge'
 import { CategoryPicker } from './CategoryPicker'
 import { CollapseChevron } from './CollapseChevron'
-import { CollapsibleDayGroup } from './CollapsibleDayGroup'
 import { ConfirmDialog } from './ConfirmDialog'
 import { GroupedListFrame } from './GroupedListFrame'
 import { SwipeDeleteRow } from './SwipeDeleteRow'
@@ -90,7 +88,6 @@ export function BucketManagePanel({
   )
   const [deleting, setDeleting] = useState(false)
   const [kindGroupsExpanded, setKindGroupsExpanded] = useState(true)
-  const [kindGroupsVersion, setKindGroupsVersion] = useState(0)
   /** Parent sinking buckets with children — default collapsed. */
   const [expandedParentIds, setExpandedParentIds] = useState<Set<string>>(
     () => new Set(),
@@ -146,14 +143,6 @@ export function BucketManagePanel({
       setCollapseOpen(`settings:buckets:parent:${id}`, expanded)
     }
   }
-
-  const kindPersistKeys = useMemo(
-    () =>
-      displayGroups
-        .filter(([kind]) => kind !== 'sinking')
-        .map(([kind]) => `settings:buckets:kind:${kind}`),
-    [displayGroups],
-  )
 
   const categoriesLinked = useMemo(() => {
     const set = new Set<string>()
@@ -295,11 +284,6 @@ export function BucketManagePanel({
       backToListRef.current = null
     }
   })
-
-  useEffect(() => {
-    if (kindGroupsVersion > 0) return
-    setKindGroupsExpanded(areAllCollapseOpen(kindPersistKeys, true))
-  }, [kindPersistKeys, kindGroupsVersion])
 
   useEffect(() => {
     if (!highlightId) return
@@ -452,7 +436,6 @@ export function BucketManagePanel({
       })
       resetForm()
       setKindGroupsExpanded(true)
-      setKindGroupsVersion((v) => v + 1)
       showAppToast(`Saved ${ActionEmoji.save}`)
       setView('list')
       await refresh()
@@ -492,7 +475,6 @@ export function BucketManagePanel({
       })
       resetForm()
       setKindGroupsExpanded(true)
-      setKindGroupsVersion((v) => v + 1)
       showAppToast(`Updated ${ActionEmoji.edit}`)
       setView('list')
       await refresh()
@@ -576,7 +558,6 @@ export function BucketManagePanel({
             expanded={kindGroupsExpanded}
             onToggle={(expanded) => {
               setKindGroupsExpanded(expanded)
-              setKindGroupsVersion((v) => v + 1)
               setAllSinkingCatsExpanded(expanded)
             }}
           >
@@ -645,15 +626,10 @@ export function BucketManagePanel({
                     </div>
                   </div>
                 ) : (
-                  <CollapsibleDayGroup
-                    key={kind}
-                    title={BUCKET_KIND_LABELS[kind]}
-                    persistKey={`settings:buckets:kind:${kind}`}
-                    forceOpen={
-                      kindGroupsVersion > 0 ? kindGroupsExpanded : undefined
-                    }
-                    forceVersion={kindGroupsVersion}
-                  >
+                  <div key={kind}>
+                    <p className="mb-2 text-xs font-semibold tracking-wide text-neutral-400">
+                      {BUCKET_KIND_LABELS[kind]}
+                    </p>
                     <div className="space-y-2">
                       {nodes.map((node) => (
                         <BucketTreeRows
@@ -676,7 +652,7 @@ export function BucketManagePanel({
                         />
                       ))}
                     </div>
-                  </CollapsibleDayGroup>
+                  </div>
                 ),
               )}
             </div>

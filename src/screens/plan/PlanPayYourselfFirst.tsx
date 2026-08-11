@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import { CollapseChevron } from '../../components/CollapseChevron'
-import { CollapsibleDayGroup } from '../../components/CollapsibleDayGroup'
 import { GroupedListFrame } from '../../components/GroupedListFrame'
 import { MonthPager } from '../../components/MonthPager'
 import { PlanBudgetRow } from '../../components/PlanBudgetRow'
@@ -115,7 +114,6 @@ export function PlanPayYourselfFirst() {
   } = useCategories('expense', { includeInactive: true })
 
   const [kindGroupsExpanded, setKindGroupsExpanded] = useState(true)
-  const [kindGroupsVersion, setKindGroupsVersion] = useState(0)
   const [expandedParentIds, setExpandedParentIds] = useState<Set<string>>(
     () => new Set(),
   )
@@ -377,7 +375,6 @@ export function PlanPayYourselfFirst() {
               expanded={kindGroupsExpanded}
               onToggle={(expanded) => {
                 setKindGroupsExpanded(expanded)
-                setKindGroupsVersion((v) => v + 1)
                 setAllSinkingCatsExpanded(expanded)
               }}
             >
@@ -412,15 +409,10 @@ export function PlanPayYourselfFirst() {
                       </div>
                     </div>
                   ) : (
-                    <CollapsibleDayGroup
-                      key={kind}
-                      title={BUCKET_KIND_LABELS[kind]}
-                      persistKey={`plan:pyf:kind:${kind}`}
-                      forceOpen={
-                        kindGroupsVersion > 0 ? kindGroupsExpanded : undefined
-                      }
-                      forceVersion={kindGroupsVersion}
-                    >
+                    <div key={kind}>
+                      <p className="mb-2 text-xs font-semibold tracking-wide text-neutral-400">
+                        {BUCKET_KIND_LABELS[kind]}
+                      </p>
                       <div className="space-y-2">
                         {items.map((node) => {
                           const b = node.bucket
@@ -458,7 +450,7 @@ export function PlanPayYourselfFirst() {
                           )
                         })}
                       </div>
-                    </CollapsibleDayGroup>
+                    </div>
                   ),
                 )}
               </div>

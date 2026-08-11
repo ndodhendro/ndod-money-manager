@@ -10,8 +10,8 @@ export const PLAN_PROGRESS_SECTIONS = [
   {
     to: '/rencana/recurring',
     icon: '📆',
-    title: 'Due Checklist',
-    subtitle: 'Upcoming, checked, and skipped this month',
+    title: 'Skipped Items',
+    subtitle: 'Restore items skipped this month',
   },
   {
     to: '/rencana/pay-yourself-first',
@@ -33,7 +33,7 @@ export const PLAN_PROGRESS_SECTIONS = [
   },
 ] as const
 
-/** Flat list for icons / FAB lookup. */
+/** Flat list for icons / section lookup. */
 export const PLAN_SECTIONS = [...PLAN_PROGRESS_SECTIONS] as const
 
 export const PlanIcon = {

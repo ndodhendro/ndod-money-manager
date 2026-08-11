@@ -2,6 +2,7 @@ import {
   formatRupiah,
 } from '../lib/format'
 import type { MoneyPlanBucket } from '../lib/moneyPlan'
+import type { ReactNode } from 'react'
 
 export function PlanBudgetRow({
   bucket,
@@ -9,12 +10,18 @@ export function PlanBudgetRow({
   barClass,
   mode,
   icon,
+  surfaceClassName,
+  leading,
 }: {
   bucket: MoneyPlanBucket
   hint: string
   barClass: string
   mode: 'floor' | 'ceiling'
   icon?: string
+  /** Override card background (default white / dark neutral-800). */
+  surfaceClassName?: string
+  /** Optional control before the icon (e.g. collapse chevron). */
+  leading?: ReactNode
 }) {
   const pct =
     bucket.target > 0
@@ -27,8 +34,13 @@ export function PlanBudgetRow({
   const fillClass = over ? 'bg-red-500' : barClass
 
   return (
-    <div className="rounded-xl bg-white px-3 py-2.5 shadow-sm dark:bg-neutral-800">
+    <div
+      className={`rounded-xl px-3 py-2.5 shadow-sm ${
+        surfaceClassName ?? 'bg-white dark:bg-neutral-800'
+      }`}
+    >
       <div className="flex items-start gap-2">
+        {leading}
         {icon != null && (
           <span className="mt-0.5 text-xl leading-none" aria-hidden>
             {icon}

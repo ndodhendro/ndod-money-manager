@@ -8,7 +8,6 @@ import {
 } from 'react-router-dom'
 import { AppToast } from './components/AppToast'
 import { BottomNav } from './components/BottomNav'
-import { RecurringChecklistFab } from './components/RecurringChecklistFab'
 import { UpdateRequired } from './components/UpdateRequired'
 import { useBackButtonTrap } from './hooks/useBackButton'
 import { isDeviceUnlocked } from './lib/deviceUnlock'
@@ -110,7 +109,6 @@ function AppShell({ onProfileReset }: { onProfileReset: () => void }) {
         />
       </Routes>
       <BottomNav />
-      <RecurringChecklistFab />
       <AppToast />
     </div>
   )

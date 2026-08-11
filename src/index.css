@@ -59,25 +59,6 @@ textarea {
   animation: tx-just-saved 1.6s ease-out forwards;
 }
 
-/* Soft pulse so overdue recurring checklist FAB stays noticeable. */
-@keyframes recurring-fab-glow {
-  0%,
-  100% {
-    box-shadow:
-      0 0 0 0 rgb(16 185 129 / 0.5),
-      0 2px 8px rgb(16 185 129 / 0.35);
-  }
-  50% {
-    box-shadow:
-      0 0 0 6px rgb(16 185 129 / 0),
-      0 3px 10px rgb(16 185 129 / 0.45);
-  }
-}
-
-.recurring-checklist-fab {
-  animation: recurring-fab-glow 2s ease-in-out infinite;
-}
-
 /* Soft glow pulse for due / overdue checklist rows. */
 @keyframes recurring-due-glow {
   0%,

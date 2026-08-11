@@ -22,6 +22,9 @@ import { PageTitle } from '../components/PageTitle'
 import { useBuckets } from '../hooks/useBuckets'
 import { useCategories } from '../hooks/useCategories'
 import { ActionEmoji } from '../lib/actionEmoji'
+import { showAppToast } from '../lib/appToast'
+import { resolveExpenseFromBucketId } from '../lib/bucketsApi'
+import { isExpenseOtherCategory } from '../lib/categoriesApi'
 import {
   bumpCategoryUsage,
   getStoredCircle,
@@ -29,7 +32,6 @@ import {
   setStoredCircle,
 } from '../lib/profile'
 import { formatNumber, todayIso } from '../lib/format'
-import { showAppToast } from '../lib/appToast'
 import {
   claimNumericKeyboard,
   dismissNumericKeyboard,
@@ -119,6 +121,9 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     type === 'transfer' ? undefined : type
   const { treeByUsage, byId, loading: loadingCategories, reload } =
     useCategories(categoryType)
+  const { byId: expenseCategoriesById } = useCategories('expense', {
+    includeInactive: true,
+  })
   const { buckets, loading: loadingBuckets, reload: reloadBuckets } =
     useBuckets()
 
@@ -552,6 +557,13 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     } else if (!categoryId) {
       focusCategoryField('Pick a category')
       return
+    } else if (
+      isExpenseOtherCategory(categoryId, byId) &&
+      !description.trim()
+    ) {
+      showAppToast('Enter a note first')
+      descriptionRef.current?.focus()
+      return
     }
 
     const numericAmount = Number(amountDigits) || 0
@@ -578,7 +590,10 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         : {
             type,
             category_id: categoryId,
-            from_bucket_id: null,
+            from_bucket_id:
+              type === 'expense'
+                ? resolveExpenseFromBucketId(categoryId, buckets)
+                : null,
             to_bucket_id: null,
             amount: numericAmount,
             description,
@@ -775,6 +790,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
                 label="From"
                 value={fromBucket}
                 buckets={buckets}
+                categoriesById={expenseCategoriesById}
                 excludeId={toBucket ?? undefined}
                 open={fromOpen}
                 onOpenChange={handleFromOpenChange}
@@ -785,6 +801,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
                 label="To"
                 value={toBucket}
                 buckets={buckets}
+                categoriesById={expenseCategoriesById}
                 excludeId={fromBucket ?? undefined}
                 open={toOpen}
                 onOpenChange={handleToOpenChange}
@@ -831,7 +848,10 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
           owner={owner}
           onKeyDown={handleDescriptionKeyDown}
           placeholder={
-            completeLater ? 'Note (required)' : 'Note (optional)'
+            completeLater ||
+            (type === 'expense' && isExpenseOtherCategory(categoryId, byId))
+              ? 'Note (required)'
+              : 'Note (optional)'
           }
         />
       </div>

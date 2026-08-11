@@ -84,8 +84,8 @@ export type BucketKind = 'checking' | 'emergency' | 'investment' | 'sinking'
 export const BUCKET_KIND_LABELS: Record<BucketKind, string> = {
   checking: 'Account',
   emergency: 'Emergency',
-  investment: 'Investment',
-  sinking: 'Sinking fund',
+  investment: 'Investment Transit',
+  sinking: 'Sinking Fund',
 }
 
 /** Sentinel: null bucket id = shared main account (checking / available money). */
@@ -109,6 +109,16 @@ export interface Bucket {
    * Null for emergency/investment system buckets.
    */
   budget_group: BudgetGroup | null
+  /**
+   * Optional parent sinking fund (max depth 2).
+   * Null = top-level / bank-mirror bucket.
+   */
+  parent_id: string | null
+  /**
+   * Linked expense category for sinking funds.
+   * Subcategory → leaf bucket; parent category → bank-mirror parent.
+   */
+  category_id: string | null
   sort_order: number
   is_active: boolean
   is_system: boolean
@@ -116,7 +126,18 @@ export interface Bucket {
 }
 
 export interface BucketWithBalance extends Bucket {
+  /**
+   * Leaves-only display balance: own ledger for leaves;
+   * sum of active children for parents that have children.
+   */
   balance: number
+  /** Own ledger balance (opening + net transfers), never rolled up. */
+  own_balance: number
+}
+
+export interface BucketTreeNode {
+  bucket: BucketWithBalance
+  children: BucketWithBalance[]
 }
 
 export interface Category {

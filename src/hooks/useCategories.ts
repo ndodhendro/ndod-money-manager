@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import type { Category, CategoryType } from '../lib/types'
-import { getCategoryUsage } from '../lib/profile'
 
 export interface CategoryTreeNode extends Category {
   children: Category[]
 }
 
 const EMPTY_CATEGORIES: Category[] = []
+
+function bySortOrder(a: Category, b: Category): number {
+  if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order
+  return a.name.localeCompare(b.name)
+}
 
 export function useCategories(
   type?: CategoryType,
@@ -58,7 +62,8 @@ export function useCategories(
   const visibleCategories = dataMatchesRequest ? categories : EMPTY_CATEGORIES
 
   const parents = useMemo(
-    () => visibleCategories.filter((c) => !c.parent_id),
+    () =>
+      visibleCategories.filter((c) => !c.parent_id).sort(bySortOrder),
     [visibleCategories],
   )
 
@@ -69,6 +74,9 @@ export function useCategories(
       const list = map.get(c.parent_id) ?? []
       list.push(c)
       map.set(c.parent_id, list)
+    }
+    for (const list of map.values()) {
+      list.sort(bySortOrder)
     }
     return map
   }, [visibleCategories])
@@ -84,23 +92,17 @@ export function useCategories(
 
   // Picker: visibilitas efektif = is_active AND (no parent OR parent is_active).
   // Parent inactive → hilang dari tree; anak ikut tidak tampil meski is_active sendiri true.
-  const treeByUsage = useMemo(() => {
-    const activeTree = tree
-      .filter((p) => p.is_active)
-      .map((p) => ({
-        ...p,
-        children: p.children.filter((c) => c.is_active),
-      }))
-    return [...activeTree].sort((a, b) => {
-      const usageA =
-        getCategoryUsage(a.id) +
-        a.children.reduce((s, c) => s + getCategoryUsage(c.id), 0)
-      const usageB =
-        getCategoryUsage(b.id) +
-        b.children.reduce((s, c) => s + getCategoryUsage(c.id), 0)
-      return usageB - usageA
-    })
-  }, [tree])
+  // Order follows Settings sequence (sort_order), not usage frequency.
+  const treeByUsage = useMemo(
+    () =>
+      tree
+        .filter((p) => p.is_active)
+        .map((p) => ({
+          ...p,
+          children: p.children.filter((c) => c.is_active),
+        })),
+    [tree],
+  )
 
   const byId = useMemo(() => {
     const map = new Map<string, Category>()

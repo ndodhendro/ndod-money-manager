@@ -11,9 +11,18 @@ import { useCategories } from '../hooks/useCategories'
 import { usePyfSettings } from '../hooks/usePyfSettings'
 import { ActionEmoji } from '../lib/actionEmoji'
 import { showAppToast } from '../lib/appToast'
-import { createBucket, deleteBucket, updateBucket } from '../lib/bucketsApi'
-import { groupBucketsByKind } from '../lib/bucketsGroup'
-import { areAllCollapseOpen } from '../lib/collapseState'
+import {
+  createSinkingBucketFromCategory,
+  deleteBucket,
+  findActiveBucketForCategory,
+  updateBucket,
+} from '../lib/bucketsApi'
+import { groupBucketsByKindAsTree } from '../lib/bucketsGroup'
+import {
+  areAllCollapseOpen,
+  getCollapseOpen,
+  setCollapseOpen,
+} from '../lib/collapseState'
 import { sumPlannedNeeds } from '../lib/freeWants'
 import { formatNumber, formatRupiah } from '../lib/format'
 import { emergencyFundTarget } from '../lib/moneyPlan'
@@ -25,9 +34,13 @@ import {
 } from '../lib/recurringBillsApi'
 import {
   BUCKET_KIND_LABELS,
+  type BucketKind,
+  type BucketTreeNode,
   type BucketWithBalance,
 } from '../lib/types'
 import { BudgetGroupBadge } from './BudgetGroupBadge'
+import { CategoryPicker } from './CategoryPicker'
+import { CollapseChevron } from './CollapseChevron'
 import { CollapsibleDayGroup } from './CollapsibleDayGroup'
 import { ConfirmDialog } from './ConfirmDialog'
 import { GroupedListFrame } from './GroupedListFrame'
@@ -40,9 +53,7 @@ interface BucketManagePanelProps {
     editing: boolean
     editingId: string | null
   }) => void
-  /** Parent can call this to leave the form and return to the list. */
   backToListRef?: MutableRefObject<(() => void) | null>
-  /** When set by the route, keep the panel form in sync with the URL. */
   routeWantForm?: boolean
   routeEditId?: string | null
 }
@@ -56,15 +67,16 @@ export function BucketManagePanel({
 }: BucketManagePanelProps = {}) {
   const { buckets, byId: bucketsById, loading, error, reload } = useBuckets()
   const { settings: pyfSettings } = usePyfSettings()
-  const { byId: categoriesById } = useCategories('expense', {
-    includeInactive: true,
-  })
+  const {
+    tree: expenseTree,
+    byId: categoriesById,
+    reload: reloadCategories,
+  } = useCategories('expense', { includeInactive: true })
 
-  const [name, setName] = useState('')
-  const [icon, setIcon] = useState('🎯')
+  const [categoryId, setCategoryId] = useState<string | null>(null)
+  const [categoryOpen, setCategoryOpen] = useState(false)
   const [targetDigits, setTargetDigits] = useState('')
   const [openingDigits, setOpeningDigits] = useState('')
-  const [budgetGroup, setBudgetGroup] = useState<'needs' | 'wants'>('needs')
   const [saving, setSaving] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(
     () => routeEditId ?? null,
@@ -79,6 +91,10 @@ export function BucketManagePanel({
   const [deleting, setDeleting] = useState(false)
   const [kindGroupsExpanded, setKindGroupsExpanded] = useState(true)
   const [kindGroupsVersion, setKindGroupsVersion] = useState(0)
+  /** Parent sinking buckets with children — default collapsed. */
+  const [expandedParentIds, setExpandedParentIds] = useState<Set<string>>(
+    () => new Set(),
+  )
   const [highlightId, setHighlightId] = useState<string | null>(null)
   const [bills, setBills] = useState<RecurringBill[]>([])
   const highlightRef = useRef<HTMLDivElement | null>(null)
@@ -86,16 +102,76 @@ export function BucketManagePanel({
   const onViewChangeRef = useRef(onViewChange)
   onViewChangeRef.current = onViewChange
 
-  const nameRef = useRef<HTMLInputElement>(null)
-  const iconRef = useRef<HTMLInputElement>(null)
   const targetRef = useRef<HTMLInputElement>(null)
   const openingRef = useRef<HTMLInputElement>(null)
 
-  const groupedBuckets = useMemo(() => groupBucketsByKind(buckets), [buckets])
-  const kindPersistKeys = useMemo(
-    () => groupedBuckets.map(([kind]) => `settings:buckets:kind:${kind}`),
-    [groupedBuckets],
+  const groupedTree = useMemo(
+    () => groupBucketsByKindAsTree(buckets, categoriesById),
+    [buckets, categoriesById],
   )
+
+  /** Always show Sinking Fund section (even empty) so Add New stays discoverable. */
+  const displayGroups = useMemo(() => {
+    const groups = [...groupedTree]
+    if (!groups.some(([kind]) => kind === 'sinking')) {
+      groups.push(['sinking', []])
+    }
+    const order: BucketKind[] = [
+      'checking',
+      'emergency',
+      'investment',
+      'sinking',
+    ]
+    return groups.sort(
+      (a, b) => order.indexOf(a[0]) - order.indexOf(b[0]),
+    )
+  }, [groupedTree])
+
+  const expandableSinkingParentIds = useMemo(() => {
+    const sinking = displayGroups.find(([kind]) => kind === 'sinking')
+    if (!sinking) return [] as string[]
+    return sinking[1]
+      .filter((node) => node.children.length > 0)
+      .map((node) => node.bucket.id)
+  }, [displayGroups])
+
+  const allSinkingCatsExpanded =
+    expandableSinkingParentIds.length > 0 &&
+    expandableSinkingParentIds.every((id) => expandedParentIds.has(id))
+
+  function setAllSinkingCatsExpanded(expanded: boolean) {
+    const next = expanded ? new Set(expandableSinkingParentIds) : new Set<string>()
+    setExpandedParentIds(next)
+    for (const id of expandableSinkingParentIds) {
+      setCollapseOpen(`settings:buckets:parent:${id}`, expanded)
+    }
+  }
+
+  const kindPersistKeys = useMemo(
+    () =>
+      displayGroups
+        .filter(([kind]) => kind !== 'sinking')
+        .map(([kind]) => `settings:buckets:kind:${kind}`),
+    [displayGroups],
+  )
+
+  const categoriesLinked = useMemo(() => {
+    const set = new Set<string>()
+    for (const b of buckets) {
+      if (b.kind === 'sinking' && b.category_id) set.add(b.category_id)
+    }
+    return set
+  }, [buckets])
+
+  /** Tree with subcategories that already have a sinking fund filtered out (add form). */
+  const availableExpenseTree = useMemo(() => {
+    return expenseTree
+      .map((parent) => ({
+        ...parent,
+        children: parent.children.filter((c) => !categoriesLinked.has(c.id)),
+      }))
+      .filter((p) => p.children.length > 0)
+  }, [expenseTree, categoriesLinked])
 
   useEffect(() => {
     let cancelled = false
@@ -138,8 +214,28 @@ export function BucketManagePanel({
   const isEditingEmergency = editingBucket?.kind === 'emergency'
   const isEditingInvestment = editingBucket?.kind === 'investment'
   const hideTargetField = isEditingEmergency || isEditingInvestment
+  const editingHasChildren = useMemo(() => {
+    if (!editingId) return false
+    return buckets.some((b) => b.parent_id === editingId)
+  }, [buckets, editingId])
+  const isCategoryLinkedSinking =
+    editingBucket?.kind === 'sinking' && Boolean(editingBucket.category_id)
+  const linkedCategory =
+    editingBucket?.category_id
+      ? categoriesById.get(editingBucket.category_id) ?? null
+      : null
+  const selectedCategory = categoryId
+    ? categoriesById.get(categoryId) ?? null
+    : null
+  const selectedBudgetGroup =
+    selectedCategory?.budget_group === 'needs' ||
+    selectedCategory?.budget_group === 'wants'
+      ? selectedCategory.budget_group
+      : linkedCategory?.budget_group === 'needs' ||
+          linkedCategory?.budget_group === 'wants'
+        ? linkedCategory.budget_group
+        : null
 
-  // Keep the disabled emergency target field in sync with Money Plan / estimates.
   useEffect(() => {
     if (!isEditingEmergency) return
     setTargetDigits(
@@ -211,6 +307,57 @@ export function BucketManagePanel({
     return () => window.clearTimeout(t)
   }, [highlightId])
 
+  // Expand parent when a child (or the parent itself) is highlighted after save.
+  useEffect(() => {
+    if (!highlightId) return
+    const highlighted = buckets.find((b) => b.id === highlightId)
+    if (!highlighted) return
+    const parentId = highlighted.parent_id ?? highlightId
+    const hasChildren = buckets.some((b) => b.parent_id === parentId)
+    if (!hasChildren && !highlighted.parent_id) return
+    setExpandedParentIds((prev) => {
+      if (prev.has(parentId)) return prev
+      const next = new Set(prev)
+      next.add(parentId)
+      setCollapseOpen(`settings:buckets:parent:${parentId}`, true)
+      return next
+    })
+  }, [highlightId, buckets])
+
+  function toggleParentExpanded(parentId: string) {
+    setExpandedParentIds((prev) => {
+      const next = new Set(prev)
+      const open = !next.has(parentId)
+      if (open) next.add(parentId)
+      else next.delete(parentId)
+      setCollapseOpen(`settings:buckets:parent:${parentId}`, open)
+      return next
+    })
+  }
+
+  // Hydrate parent collapse from session (default collapsed).
+  useEffect(() => {
+    const parentsWithKids = buckets.filter(
+      (b) =>
+        b.kind === 'sinking' &&
+        !b.parent_id &&
+        buckets.some((c) => c.parent_id === b.id),
+    )
+    if (parentsWithKids.length === 0) return
+    setExpandedParentIds((prev) => {
+      const next = new Set(prev)
+      let changed = false
+      for (const p of parentsWithKids) {
+        const key = `settings:buckets:parent:${p.id}`
+        if (getCollapseOpen(key, false) && !next.has(p.id)) {
+          next.add(p.id)
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [buckets])
+
   useEffect(() => {
     if (!highlightId || loading || view !== 'list') return
     highlightRef.current?.scrollIntoView({
@@ -225,11 +372,10 @@ export function BucketManagePanel({
   }
 
   function resetForm() {
-    setName('')
-    setIcon('🎯')
+    setCategoryId(null)
+    setCategoryOpen(false)
     setTargetDigits('')
     setOpeningDigits('')
-    setBudgetGroup('needs')
     setEditingId(null)
     hydratedEditIdRef.current = null
   }
@@ -237,8 +383,8 @@ export function BucketManagePanel({
   function startEdit(b: BucketWithBalance) {
     setEditingId(b.id)
     hydratedEditIdRef.current = b.id
-    setName(b.name)
-    setIcon(b.icon)
+    setCategoryId(b.category_id)
+    setCategoryOpen(false)
     if (b.kind === 'emergency') {
       setTargetDigits(
         emergencyAutoTarget > 0
@@ -253,11 +399,6 @@ export function BucketManagePanel({
     setOpeningDigits(
       b.opening_balance > 0 ? String(Math.round(b.opening_balance)) : '',
     )
-    setBudgetGroup(
-      b.budget_group === 'wants' || b.budget_group === 'needs'
-        ? b.budget_group
-        : 'needs',
-    )
     setOpenSwipeId(null)
   }
 
@@ -271,15 +412,29 @@ export function BucketManagePanel({
     setView('form')
   }
 
-  async function handleAdd() {
-    if (!icon.trim()) {
-      showAppToast('Enter an icon')
-      iconRef.current?.focus()
+  function handleCategorySelect(id: string) {
+    const cat = categoriesById.get(id)
+    if (!cat?.parent_id) {
+      showAppToast('Pick a subcategory')
       return
     }
-    if (!name.trim()) {
-      showAppToast('Name is required')
-      nameRef.current?.focus()
+    if (findActiveBucketForCategory(buckets, id)) {
+      showAppToast('This subcategory already has a sinking fund')
+      return
+    }
+    setCategoryId(id)
+    setCategoryOpen(false)
+  }
+
+  async function handleAdd() {
+    if (!categoryId) {
+      showAppToast('Pick a subcategory')
+      setCategoryOpen(true)
+      return
+    }
+    const cat = categoriesById.get(categoryId)
+    if (!cat?.parent_id) {
+      showAppToast('Pick a subcategory')
       return
     }
     const target = Number(targetDigits)
@@ -290,13 +445,10 @@ export function BucketManagePanel({
     }
     setSaving(true)
     try {
-      const created = await createBucket({
-        name: name.trim(),
-        kind: 'sinking',
-        icon: icon || '🎯',
+      const created = await createSinkingBucketFromCategory({
+        category_id: categoryId,
         target_amount: target,
         opening_balance: openingDigits ? Number(openingDigits) : 0,
-        budget_group: budgetGroup,
       })
       resetForm()
       setKindGroupsExpanded(true)
@@ -314,21 +466,11 @@ export function BucketManagePanel({
 
   async function handleUpdate() {
     if (!editingId) return
-    if (!icon.trim()) {
-      showAppToast('Enter an icon')
-      iconRef.current?.focus()
-      return
-    }
-    if (!name.trim()) {
-      showAppToast('Name is required')
-      nameRef.current?.focus()
-      return
-    }
     const updatedId = editingId
     const current = buckets.find((b) => b.id === updatedId)
     const skipTarget =
       current?.kind === 'emergency' || current?.kind === 'investment'
-    if (!skipTarget) {
+    if (!skipTarget && !editingHasChildren) {
       const target = Number(targetDigits)
       if (!targetDigits || !Number.isFinite(target) || target <= 0) {
         showAppToast('Enter a target amount')
@@ -339,11 +481,14 @@ export function BucketManagePanel({
     setSaving(true)
     try {
       await updateBucket(updatedId, {
-        name: name.trim(),
-        icon: icon || '🏦',
-        ...(skipTarget ? {} : { target_amount: Number(targetDigits) }),
-        opening_balance: openingDigits ? Number(openingDigits) : 0,
-        ...(current?.kind === 'sinking' ? { budget_group: budgetGroup } : {}),
+        ...(skipTarget || (editingHasChildren && current?.kind === 'sinking')
+          ? editingHasChildren && current?.kind === 'sinking' && targetDigits
+            ? { target_amount: Number(targetDigits) }
+            : {}
+          : { target_amount: Number(targetDigits) }),
+        ...(editingHasChildren
+          ? {}
+          : { opening_balance: openingDigits ? Number(openingDigits) : 0 }),
       })
       resetForm()
       setKindGroupsExpanded(true)
@@ -386,26 +531,14 @@ export function BucketManagePanel({
     }
   }
 
-  function handleNameKeyDown(e: KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Enter') {
-      e.preventDefault()
-      const editing =
-        editingId ? buckets.find((b) => b.id === editingId) : null
-      if (
-        editing?.kind === 'emergency' ||
-        editing?.kind === 'investment'
-      ) {
-        openingRef.current?.focus()
-      } else {
-        targetRef.current?.focus()
-      }
-    }
-  }
-
   function handleTargetKeyDown(e: KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'Enter') {
       e.preventDefault()
-      openingRef.current?.focus()
+      if (!editingHasChildren) {
+        openingRef.current?.focus()
+      } else {
+        void (editingId ? handleUpdate() : handleAdd())
+      }
     }
   }
 
@@ -421,6 +554,10 @@ export function BucketManagePanel({
       ? formatNumber(Math.round(emergencyAutoTarget))
       : ''
 
+  const deleteChildCount = deleteTarget
+    ? buckets.filter((b) => b.parent_id === deleteTarget.id).length
+    : 0
+
   return (
     <div className="space-y-3">
       {loading && <p className="text-sm text-neutral-400">Loading…</p>}
@@ -428,31 +565,86 @@ export function BucketManagePanel({
 
       {view === 'list' ? (
         <div className="space-y-3">
-          <div className="flex items-center justify-end">
-            <button
-              type="button"
-              onClick={openAddForm}
-              className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white active:bg-emerald-600"
-            >
-              {ActionEmoji.add} Add New
-            </button>
-          </div>
-
           {!loading && buckets.length === 0 ? (
             <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
-              No buckets yet. Tap Add New to create one.
+              No buckets yet. Add a sinking fund under Sinking Fund below.
             </p>
-          ) : (
-            <GroupedListFrame
-              label="Buckets List"
-              expanded={kindGroupsExpanded}
-              onToggle={(expanded) => {
-                setKindGroupsExpanded(expanded)
-                setKindGroupsVersion((v) => v + 1)
-              }}
-            >
-              <div className="space-y-5">
-                {groupedBuckets.map(([kind, items]) => (
+          ) : null}
+
+          <GroupedListFrame
+            label="Buckets List"
+            expanded={kindGroupsExpanded}
+            onToggle={(expanded) => {
+              setKindGroupsExpanded(expanded)
+              setKindGroupsVersion((v) => v + 1)
+              setAllSinkingCatsExpanded(expanded)
+            }}
+          >
+            <div className="space-y-5">
+              {displayGroups.map(([kind, nodes]) =>
+                kind === 'sinking' ? (
+                  <div key={kind}>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setAllSinkingCatsExpanded(!allSinkingCatsExpanded)
+                      }
+                      aria-expanded={allSinkingCatsExpanded}
+                      aria-label={
+                        allSinkingCatsExpanded
+                          ? 'Collapse all sinking categories'
+                          : 'Expand all sinking categories'
+                      }
+                      className="mb-2 flex w-full items-center gap-1.5 text-left"
+                    >
+                      <CollapseChevron
+                        expanded={allSinkingCatsExpanded}
+                        size={14}
+                        className="shrink-0 text-neutral-400"
+                      />
+                      <p className="min-w-0 flex-1 text-xs font-semibold tracking-wide text-neutral-400">
+                        {BUCKET_KIND_LABELS[kind]}
+                      </p>
+                    </button>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-end">
+                        <button
+                          type="button"
+                          onClick={openAddForm}
+                          className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white active:bg-emerald-600"
+                        >
+                          {ActionEmoji.add} Add New
+                        </button>
+                      </div>
+                      {nodes.length === 0 ? (
+                        <p className="rounded-xl bg-white px-3 py-2.5 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
+                          No sinking funds yet. Tap Add New and pick a
+                          subcategory.
+                        </p>
+                      ) : null}
+                      {nodes.map((node) => (
+                        <BucketTreeRows
+                          key={node.bucket.id}
+                          node={node}
+                          openSwipeId={openSwipeId}
+                          setOpenSwipeId={setOpenSwipeId}
+                          highlightId={highlightId}
+                          highlightRef={highlightRef}
+                          emergencyAutoTarget={emergencyAutoTarget}
+                          expanded={expandedParentIds.has(node.bucket.id)}
+                          onToggleExpand={() =>
+                            toggleParentExpanded(node.bucket.id)
+                          }
+                          onEdit={openEditForm}
+                          onDelete={(b) => {
+                            setOpenSwipeId(b.id)
+                            setDeleteTarget(b)
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ) : (
                   <CollapsibleDayGroup
                     key={kind}
                     title={BUCKET_KIND_LABELS[kind]}
@@ -463,97 +655,94 @@ export function BucketManagePanel({
                     forceVersion={kindGroupsVersion}
                   >
                     <div className="space-y-2">
-                      {items.map((b) => {
-                        const isHighlighted = highlightId === b.id
-                        const row = (
-                          <BucketRowContent
-                            bucket={b}
-                            displayTarget={
-                              b.kind === 'emergency'
-                                ? emergencyAutoTarget
-                                : undefined
-                            }
-                          />
-                        )
-
-                        if (!b.is_system) {
-                          return (
-                            <SwipeDeleteRow
-                              key={b.id}
-                              open={openSwipeId === b.id}
-                              onOpenChange={(open) =>
-                                setOpenSwipeId(open ? b.id : null)
-                              }
-                              onDelete={() => {
-                                setOpenSwipeId(b.id)
-                                setDeleteTarget(b)
-                              }}
-                              contentRef={
-                                isHighlighted ? highlightRef : undefined
-                              }
-                              highlighted={isHighlighted}
-                              onContentClick={() => openEditForm(b)}
-                            >
-                              {row}
-                            </SwipeDeleteRow>
-                          )
-                        }
-
-                        return (
-                          <div
-                            key={b.id}
-                            role="button"
-                            tabIndex={0}
-                            ref={isHighlighted ? highlightRef : undefined}
-                            onClick={() => openEditForm(b)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' || e.key === ' ') {
-                                e.preventDefault()
-                                openEditForm(b)
-                              }
-                            }}
-                            className={`flex w-full cursor-pointer items-start gap-3 rounded-xl px-3 py-2.5 text-left shadow-sm ${
-                              isHighlighted
-                                ? 'tx-row-highlight'
-                                : 'bg-white dark:bg-neutral-800'
-                            }`}
-                          >
-                            {row}
-                          </div>
-                        )
-                      })}
+                      {nodes.map((node) => (
+                        <BucketTreeRows
+                          key={node.bucket.id}
+                          node={node}
+                          openSwipeId={openSwipeId}
+                          setOpenSwipeId={setOpenSwipeId}
+                          highlightId={highlightId}
+                          highlightRef={highlightRef}
+                          emergencyAutoTarget={emergencyAutoTarget}
+                          expanded={expandedParentIds.has(node.bucket.id)}
+                          onToggleExpand={() =>
+                            toggleParentExpanded(node.bucket.id)
+                          }
+                          onEdit={openEditForm}
+                          onDelete={(b) => {
+                            setOpenSwipeId(b.id)
+                            setDeleteTarget(b)
+                          }}
+                        />
+                      ))}
                     </div>
                   </CollapsibleDayGroup>
-                ))}
-              </div>
-            </GroupedListFrame>
-          )}
+                ),
+              )}
+            </div>
+          </GroupedListFrame>
         </div>
       ) : (
         <div className="space-y-3">
           <div className="space-y-2 rounded-xl bg-white p-4 shadow-sm dark:bg-neutral-800">
             <p className="text-sm font-medium text-neutral-700 dark:text-neutral-200">
-              {editingId ? 'Edit bucket' : 'Add sinking fund'}
+              {editingId
+                ? editingBucket?.kind === 'sinking'
+                  ? 'Edit Sinking Fund'
+                  : 'Edit Bucket'
+                : 'Add Sinking Fund'}
             </p>
-            <div className="flex gap-2">
-              <input
-                ref={iconRef}
-                value={icon}
-                onChange={(e) => setIcon(e.target.value.slice(0, 4))}
-                className="w-14 rounded-lg bg-neutral-100 px-2 py-2 text-center text-lg dark:bg-neutral-700"
-                aria-label="Icon"
-                maxLength={4}
-              />
-              <input
-                ref={nameRef}
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                onKeyDown={handleNameKeyDown}
-                placeholder="Name"
-                enterKeyHint="next"
-                className="min-w-0 flex-1 rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
-              />
-            </div>
+
+            {!editingId ? (
+              <div>
+                <CategoryPicker
+                  tree={availableExpenseTree}
+                  selectedId={categoryId}
+                  byId={categoriesById}
+                  open={categoryOpen}
+                  onOpenChange={setCategoryOpen}
+                  onSelect={handleCategorySelect}
+                  transactionType="expense"
+                  onCategoriesChanged={() => void reloadCategories()}
+                  showBudgetGroup
+                />
+                {selectedBudgetGroup ? (
+                  <p className="mt-1 text-[11px] text-neutral-400">
+                    Needs or Wants comes from the subcategory (
+                    {selectedBudgetGroup === 'wants' ? 'Wants' : 'Needs'}).
+                  </p>
+                ) : (
+                  <p className="mt-1 text-[11px] text-neutral-400">
+                    Pick a subcategory. Parent category becomes the bank
+                    mirror automatically.
+                  </p>
+                )}
+              </div>
+            ) : isCategoryLinkedSinking ? (
+              <div className="rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700">
+                <span className="text-neutral-800 dark:text-neutral-100">
+                  {editingBucket?.icon} {editingBucket?.name}
+                </span>
+                {linkedCategory?.parent_id ? (
+                  <p className="mt-0.5 text-[11px] text-neutral-400">
+                    Subcategory
+                    {categoriesById.get(linkedCategory.parent_id)
+                      ? ` · ${categoriesById.get(linkedCategory.parent_id)?.name}`
+                      : ''}
+                  </p>
+                ) : (
+                  <p className="mt-0.5 text-[11px] text-neutral-400">
+                    Bank mirror (parent category)
+                  </p>
+                )}
+                {selectedBudgetGroup ? (
+                  <span className="mt-1 inline-block">
+                    <BudgetGroupBadge group={selectedBudgetGroup} />
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+
             {isEditingEmergency ? (
               <label className="block">
                 <span className="mb-1 block text-xs text-neutral-500">
@@ -578,6 +767,7 @@ export function BucketManagePanel({
               <label className="block">
                 <span className="mb-1 block text-xs text-neutral-500">
                   Target amount
+                  {editingHasChildren ? ' (optional group goal)' : ''}
                 </span>
                 <input
                   ref={targetRef}
@@ -596,48 +786,35 @@ export function BucketManagePanel({
                 />
               </label>
             ) : null}
-            <label className="block">
-              <span className="mb-1 block text-xs text-neutral-500">
-                Opening balance (optional)
-              </span>
-              <input
-                ref={openingRef}
-                type="text"
-                inputMode="numeric"
-                enterKeyHint="done"
-                placeholder="0"
-                value={
-                  openingDigits ? formatNumber(Number(openingDigits)) : ''
-                }
-                onChange={(e) =>
-                  setOpeningDigits(e.target.value.replace(/\D/g, ''))
-                }
-                onKeyDown={handleOpeningKeyDown}
-                className="w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
-              />
-            </label>
-            {(!editingBucket || editingBucket.kind === 'sinking') && (
+
+            {!editingHasChildren ? (
               <label className="block">
                 <span className="mb-1 block text-xs text-neutral-500">
-                  Needs or Wants
+                  Opening balance (optional)
                 </span>
-                <select
-                  value={budgetGroup}
-                  onChange={(e) =>
-                    setBudgetGroup(e.target.value as 'needs' | 'wants')
+                <input
+                  ref={openingRef}
+                  type="text"
+                  inputMode="numeric"
+                  enterKeyHint="done"
+                  placeholder="0"
+                  value={
+                    openingDigits ? formatNumber(Number(openingDigits)) : ''
                   }
-                  aria-label="Needs or wants"
+                  onChange={(e) =>
+                    setOpeningDigits(e.target.value.replace(/\D/g, ''))
+                  }
+                  onKeyDown={handleOpeningKeyDown}
                   className="w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
-                >
-                  <option value="needs">Needs</option>
-                  <option value="wants">Wants</option>
-                </select>
-                <span className="mt-1 block text-[11px] text-neutral-400">
-                  Transfers into this fund count toward planned Needs or
-                  committed Wants.
-                </span>
+                />
               </label>
+            ) : (
+              <p className="text-[11px] text-neutral-400">
+                Opening balance lives on children. Parent balance is the sum
+                of child balances.
+              </p>
             )}
+
             {editingBucket && (
               <p className="text-[11px] text-neutral-400">
                 {BUCKET_KIND_LABELS[editingBucket.kind]}
@@ -675,7 +852,9 @@ export function BucketManagePanel({
         title="Delete bucket?"
         message={
           deleteTarget
-            ? `“${deleteTarget.name}” will be removed from pickers. Balances and history stay.`
+            ? deleteChildCount > 0
+              ? `“${deleteTarget.name}” and its ${deleteChildCount} child bucket${deleteChildCount === 1 ? '' : 's'} will be removed from pickers. Balances and history stay.`
+              : `“${deleteTarget.name}” will be removed from pickers. Balances and history stay.`
             : ''
         }
         confirmLabel="Delete"
@@ -691,13 +870,169 @@ export function BucketManagePanel({
   )
 }
 
+function BucketTreeRows({
+  node,
+  openSwipeId,
+  setOpenSwipeId,
+  highlightId,
+  highlightRef,
+  emergencyAutoTarget,
+  expanded,
+  onToggleExpand,
+  onEdit,
+  onDelete,
+}: {
+  node: BucketTreeNode
+  openSwipeId: string | null
+  setOpenSwipeId: (id: string | null) => void
+  highlightId: string | null
+  highlightRef: MutableRefObject<HTMLDivElement | null>
+  emergencyAutoTarget: number
+  expanded: boolean
+  onToggleExpand: () => void
+  onEdit: (b: BucketWithBalance) => void
+  onDelete: (b: BucketWithBalance) => void
+}) {
+  const hasChildren = node.children.length > 0
+  return (
+    <div className="space-y-2">
+      <BucketListRow
+        bucket={node.bucket}
+        indent={0}
+        childCount={node.children.length}
+        openSwipeId={openSwipeId}
+        setOpenSwipeId={setOpenSwipeId}
+        highlightId={highlightId}
+        highlightRef={highlightRef}
+        emergencyAutoTarget={emergencyAutoTarget}
+        expandable={hasChildren}
+        expanded={expanded}
+        onToggleExpand={hasChildren ? onToggleExpand : undefined}
+        onEdit={onEdit}
+        onDelete={onDelete}
+      />
+      {hasChildren && expanded
+        ? node.children.map((child) => (
+            <div key={child.id} className="pl-5">
+              <BucketListRow
+                bucket={child}
+                indent={1}
+                childCount={0}
+                openSwipeId={openSwipeId}
+                setOpenSwipeId={setOpenSwipeId}
+                highlightId={highlightId}
+                highlightRef={highlightRef}
+                emergencyAutoTarget={emergencyAutoTarget}
+                onEdit={onEdit}
+                onDelete={onDelete}
+              />
+            </div>
+          ))
+        : null}
+    </div>
+  )
+}
+
+function BucketListRow({
+  bucket,
+  indent,
+  childCount,
+  openSwipeId,
+  setOpenSwipeId,
+  highlightId,
+  highlightRef,
+  emergencyAutoTarget,
+  expandable = false,
+  expanded = false,
+  onToggleExpand,
+  onEdit,
+  onDelete,
+}: {
+  bucket: BucketWithBalance
+  indent: number
+  childCount: number
+  openSwipeId: string | null
+  setOpenSwipeId: (id: string | null) => void
+  highlightId: string | null
+  highlightRef: MutableRefObject<HTMLDivElement | null>
+  emergencyAutoTarget: number
+  expandable?: boolean
+  expanded?: boolean
+  onToggleExpand?: () => void
+  onEdit: (b: BucketWithBalance) => void
+  onDelete: (b: BucketWithBalance) => void
+}) {
+  const isHighlighted = highlightId === bucket.id
+  const isChild = indent > 0
+  const surfaceClassName = isChild
+    ? 'bg-neutral-100 dark:bg-neutral-700/70'
+    : 'bg-white dark:bg-neutral-800'
+  const row = (
+    <BucketRowContent
+      bucket={bucket}
+      childCount={childCount}
+      expandable={expandable}
+      expanded={expanded}
+      onToggleExpand={onToggleExpand}
+      displayTarget={
+        bucket.kind === 'emergency' ? emergencyAutoTarget : undefined
+      }
+    />
+  )
+
+  if (!bucket.is_system) {
+    return (
+      <SwipeDeleteRow
+        key={bucket.id}
+        open={openSwipeId === bucket.id}
+        onOpenChange={(open) => setOpenSwipeId(open ? bucket.id : null)}
+        onDelete={() => onDelete(bucket)}
+        contentRef={isHighlighted ? highlightRef : undefined}
+        highlighted={isHighlighted}
+        surfaceClassName={surfaceClassName}
+        onContentClick={() => onEdit(bucket)}
+      >
+        {row}
+      </SwipeDeleteRow>
+    )
+  }
+
+  return (
+    <div
+      key={bucket.id}
+      role="button"
+      tabIndex={0}
+      ref={isHighlighted ? highlightRef : undefined}
+      onClick={() => onEdit(bucket)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onEdit(bucket)
+        }
+      }}
+      className={`flex w-full cursor-pointer items-start gap-3 rounded-xl px-3 py-2.5 text-left shadow-sm ${
+        isHighlighted ? 'tx-row-highlight' : surfaceClassName
+      }`}
+    >
+      {row}
+    </div>
+  )
+}
+
 function BucketRowContent({
   bucket,
   displayTarget,
+  childCount = 0,
+  expandable = false,
+  expanded = false,
+  onToggleExpand,
 }: {
   bucket: BucketWithBalance
-  /** When set (Emergency Fund), overrides stored target_amount. */
   displayTarget?: number
+  childCount?: number
+  expandable?: boolean
+  expanded?: boolean
+  onToggleExpand?: () => void
 }) {
   const group =
     bucket.kind === 'sinking' &&
@@ -714,6 +1049,20 @@ function BucketRowContent({
           : null
   return (
     <>
+      {expandable && onToggleExpand ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onToggleExpand()
+          }}
+          className="-ml-1 shrink-0 rounded-lg p-1 text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-700"
+          aria-label={expanded ? 'Collapse' : 'Expand'}
+          aria-expanded={expanded}
+        >
+          <CollapseChevron expanded={expanded} />
+        </button>
+      ) : null}
       <span className="text-xl leading-none" aria-hidden>
         {bucket.icon}
       </span>
@@ -721,6 +1070,11 @@ function BucketRowContent({
         <div className="flex items-center gap-2">
           <p className="min-w-0 flex-1 truncate text-sm font-medium text-neutral-800 dark:text-neutral-100">
             {bucket.name}
+            {childCount > 0 ? (
+              <span className="ml-1 font-normal text-neutral-400">
+                ({childCount})
+              </span>
+            ) : null}
           </p>
           <p className="shrink-0 text-sm font-semibold text-neutral-700 dark:text-neutral-200">
             {formatRupiah(bucket.balance)}

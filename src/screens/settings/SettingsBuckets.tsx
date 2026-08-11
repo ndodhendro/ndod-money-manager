@@ -19,7 +19,7 @@ export function SettingsBuckets() {
     ? 'Savings Buckets'
     : editId
       ? 'Edit Bucket'
-      : 'Add Bucket'
+      : 'Add Sinking Fund'
 
   const goList = useCallback(() => {
     dismissNumericKeyboard()

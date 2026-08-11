@@ -53,6 +53,7 @@ export function PlanRecurring() {
             available={billsAvailable}
             embedded
             variant="plan"
+            showSearchField
             onChanged={() => {
               // Keep list mounted — non-silent reload flashes "Loading…".
               void reloadBills({ silent: true })

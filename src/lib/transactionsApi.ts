@@ -195,6 +195,14 @@ function toRow(input: NewTransactionInput): Record<string, unknown> {
       to_bucket_id: input.to_bucket_id,
     }
   }
+  // Expense may spend from a sinking bucket (no app-side transfer to Main).
+  if (input.type === 'expense') {
+    return {
+      ...base,
+      from_bucket_id: input.from_bucket_id,
+      to_bucket_id: null,
+    }
+  }
   return {
     ...base,
     from_bucket_id: null,

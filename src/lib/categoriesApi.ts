@@ -178,6 +178,13 @@ export async function deleteCategory(id: string): Promise<void> {
     .eq('id', id)
   if (error) throw error
 
+  try {
+    const { softDeleteBucketsForCategory } = await import('./bucketsApi')
+    await softDeleteBucketsForCategory(id)
+  } catch {
+    // Buckets migration may be missing — category delete still succeeds.
+  }
+
   await ensureLeafParentBudgetGroup(current?.parent_id)
 }
 
@@ -229,6 +236,26 @@ export async function renameCategory(
     .maybeSingle()
   if (currentError) throw currentError
   if (!current) throw new Error('Category not found')
+
+  // Block promote-to-main when a sinking fund is linked (SOP: sinking = subcategory).
+  if (patch.parent_id === null && current.parent_id) {
+    const { findActiveBucketForCategory, fetchBuckets } = await import(
+      './bucketsApi'
+    )
+    try {
+      const buckets = await fetchBuckets()
+      if (findActiveBucketForCategory(buckets, id)) {
+        throw new Error(
+          'Remove the sinking fund before promoting this subcategory to a main category',
+        )
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith('Remove the sinking')) {
+        throw err
+      }
+      // Missing buckets schema — allow promote.
+    }
+  }
 
   const update: Record<string, unknown> = {
     ...(patch.name != null ? { name: patch.name.trim() } : {}),
@@ -293,6 +320,24 @@ export async function renameCategory(
 
   if (parentMoved) {
     await ensureLeafParentBudgetGroup(previousParentId)
+    const { reparentSinkingForSubcategoryMove } = await import('./bucketsApi')
+    await reparentSinkingForSubcategoryMove(
+      id,
+      patch.parent_id === undefined ? previousParentId : patch.parent_id,
+    )
+  }
+
+  if (
+    patch.name != null ||
+    patch.icon != null ||
+    patch.budget_group !== undefined
+  ) {
+    const { syncBucketFromCategory } = await import('./bucketsApi')
+    await syncBucketFromCategory(id, {
+      name: patch.name,
+      icon: patch.icon,
+      budget_group: patch.budget_group,
+    })
   }
 }
 
@@ -356,4 +401,25 @@ export async function reorderCategories(orderedIds: string[]): Promise<void> {
   const results = await Promise.all(updates)
   const failed = results.find((r) => r.error)
   if (failed?.error) throw failed.error
+}
+
+/**
+ * True when the selected expense category is named "Other", or sits under an
+ * "Other" parent. Note is required in that case.
+ */
+export function isExpenseOtherCategory(
+  categoryId: string | null | undefined,
+  byId: Map<string, Pick<Category, 'name' | 'type' | 'parent_id'>>,
+): boolean {
+  if (!categoryId) return false
+  let id: string | null | undefined = categoryId
+  const seen = new Set<string>()
+  while (id && !seen.has(id)) {
+    seen.add(id)
+    const cat = byId.get(id)
+    if (!cat || cat.type !== 'expense') return false
+    if (cat.name.trim().toLowerCase() === 'other') return true
+    id = cat.parent_id
+  }
+  return false
 }

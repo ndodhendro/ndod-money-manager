@@ -28,8 +28,7 @@ export function MoneyPlanScreen() {
   const { transactions, loading, error } = useTransactions(range)
   const yearMonth = monthCursorKey(cursor)
   const {
-    occurrenceDoneCount,
-    occurrenceTotal,
+    skippedOccurrenceKeys,
     loading: billsLoading,
     available: billsAvailable,
   } = useRecurringBills(yearMonth)
@@ -42,14 +41,15 @@ export function MoneyPlanScreen() {
     .reduce((sum, t) => sum + t.amount, 0)
   const net = totalIncome - totalExpense
 
+  const skippedCount = skippedOccurrenceKeys.size
   const recurringSubtitle =
     !billsAvailable
       ? 'Setup required'
       : billsLoading
         ? 'Loading…'
-        : occurrenceTotal === 0
-          ? 'No items this month'
-          : `${occurrenceDoneCount}/${occurrenceTotal} done`
+        : skippedCount === 0
+          ? 'No skipped items'
+          : `${skippedCount} skipped`
 
   return (
     <div

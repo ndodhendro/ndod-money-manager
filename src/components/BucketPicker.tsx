@@ -1,6 +1,10 @@
-import { useId, useRef } from 'react'
+import { useId, useMemo, useRef } from 'react'
 import { useOverlayBack } from '../hooks/useBackButton'
-import { compareBucketsForPicker } from '../lib/bucketsGroup'
+import {
+  leafBuckets,
+  sortLeavesForPicker,
+  type CategorySortRef,
+} from '../lib/bucketsGroup'
 import {
   CASHFLOW_LABEL,
   type BudgetGroup,
@@ -16,6 +20,8 @@ interface BucketPickerProps {
   /** undefined = not chosen yet; null = Main Account; string = bucket id */
   value: BucketSelection | undefined
   buckets: BucketWithBalance[]
+  /** When set, sinking leaves follow category / subcategory sequence. */
+  categoriesById?: Map<string, CategorySortRef> | null
   /** Exclude this bucket id from options (e.g. the other side of a transfer). */
   excludeId?: string | null
   open: boolean
@@ -41,6 +47,7 @@ export function BucketPicker({
   label,
   value,
   buckets,
+  categoriesById = null,
   excludeId,
   open,
   onOpenChange,
@@ -56,23 +63,34 @@ export function BucketPicker({
     onOpenChange(false)
   })
 
+  const byId = useMemo(() => {
+    const map = new Map<string, BucketWithBalance>()
+    for (const b of buckets) map.set(b.id, b)
+    return map
+  }, [buckets])
+
   const selected =
-    value && value.length > 0
-      ? buckets.find((b) => b.id === value)
-      : undefined
+    value && value.length > 0 ? byId.get(value) : undefined
   const selectedGroup = showBudgetGroup
     ? sinkingBudgetGroup(selected)
     : null
+  const selectedParent =
+    selected?.parent_id ? byId.get(selected.parent_id) : undefined
 
-  const options = buckets
-    .filter((b) => b.id !== excludeId)
-    .slice()
-    .sort(compareBucketsForPicker)
+  const options = useMemo(() => {
+    const leaves = leafBuckets(buckets).filter((b) => b.id !== excludeId)
+    return sortLeavesForPicker(leaves, buckets, categoriesById)
+  }, [buckets, excludeId, categoriesById])
 
   function displayLabel(): string {
     if (value === undefined) return 'Select…'
     if (value === null) return `💵 ${CASHFLOW_LABEL}`
-    if (selected) return `${selected.icon} ${selected.name}`
+    if (selected) {
+      if (selectedParent) {
+        return `${selected.icon} ${selectedParent.name} › ${selected.name}`
+      }
+      return `${selected.icon} ${selected.name}`
+    }
     return 'Select…'
   }
 
@@ -135,6 +153,7 @@ export function BucketPicker({
             const optionGroup = showBudgetGroup
               ? sinkingBudgetGroup(b)
               : null
+            const parent = b.parent_id ? byId.get(b.parent_id) : undefined
             return (
               <li key={b.id}>
                 <button
@@ -147,10 +166,21 @@ export function BucketPicker({
                     value === b.id
                       ? 'bg-emerald-50 font-medium text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200'
                       : 'text-neutral-700 dark:text-neutral-200'
-                  }`}
+                  } ${parent ? 'pl-8' : ''}`}
                 >
                   <span>{b.icon}</span>
-                  <span className="min-w-0 flex-1 truncate">{b.name}</span>
+                  <span className="min-w-0 flex-1 truncate">
+                    {parent ? (
+                      <>
+                        <span className="text-neutral-400">
+                          {parent.name} ›{' '}
+                        </span>
+                        {b.name}
+                      </>
+                    ) : (
+                      b.name
+                    )}
+                  </span>
                   {optionGroup ? (
                     <BudgetGroupBadge group={optionGroup} />
                   ) : null}

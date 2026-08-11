@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   computeBucketBalances,
+  computeDisplayBalances,
   ensureSystemBuckets,
   fetchBuckets,
   fetchTransferMovements,
 } from '../lib/bucketsApi'
 import {
   BUCKET_KIND_ORDER,
+  childrenByParentId,
   compareBucketsWithinKind,
 } from '../lib/bucketsGroup'
 import type { Bucket, BucketWithBalance } from '../lib/types'
@@ -56,15 +58,23 @@ export function useBuckets(options?: { includeInactive?: boolean }) {
     void reload()
   }, [reload])
 
-  const balances = useMemo(
+  const ownBalances = useMemo(
     () => computeBucketBalances(buckets, movements),
     [buckets, movements],
   )
 
+  const displayBalances = useMemo(
+    () => computeDisplayBalances(buckets, ownBalances),
+    [buckets, ownBalances],
+  )
+
+  const childrenMap = useMemo(() => childrenByParentId(buckets), [buckets])
+
   const withBalances: BucketWithBalance[] = useMemo(() => {
     const list = buckets.map((b) => ({
       ...b,
-      balance: balances.get(b.id) ?? b.opening_balance,
+      own_balance: ownBalances.get(b.id) ?? b.opening_balance,
+      balance: displayBalances.get(b.id) ?? b.opening_balance,
     }))
     return list.sort((a, b) => {
       const ai = BUCKET_KIND_ORDER.indexOf(a.kind)
@@ -72,7 +82,7 @@ export function useBuckets(options?: { includeInactive?: boolean }) {
       if (ai !== bi) return ai - bi
       return compareBucketsWithinKind(a, b)
     })
-  }, [buckets, balances])
+  }, [buckets, ownBalances, displayBalances])
 
   const byId = useMemo(() => {
     const map = new Map<string, BucketWithBalance>()
@@ -87,6 +97,7 @@ export function useBuckets(options?: { includeInactive?: boolean }) {
     buckets: withBalances,
     movements,
     byId,
+    childrenMap,
     emergency,
     investment,
     loading,

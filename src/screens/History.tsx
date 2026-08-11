@@ -8,8 +8,10 @@ import { ConfirmDialog } from '../components/ConfirmDialog'
 import { MonthPager } from '../components/MonthPager'
 import { OwnerBadge } from '../components/OwnerBadge'
 import { PageTitle } from '../components/PageTitle'
+import { SearchField } from '../components/SearchField'
 import { NavIcon } from '../lib/navTabs'
 import { SwipeDeleteRow } from '../components/SwipeDeleteRow'
+import { isBlankSearch, matchesTransactionSearch } from '../lib/listSearch'
 import { useCategories } from '../hooks/useCategories'
 import { useRecurringBills } from '../hooks/useRecurringBills'
 import { useTransactions } from '../hooks/useTransactions'
@@ -27,10 +29,7 @@ import {
   todayIso,
 } from '../lib/format'
 import { requestAmountFocus } from '../lib/keyboardFocus'
-import {
-  currentMonthCursor,
-  monthCursorKey,
-} from '../lib/monthCursor'
+import { monthCursorKey } from '../lib/monthCursor'
 import {
   countDueOrOverdueUnchecked,
   isOccurrenceSkipped,
@@ -52,7 +51,7 @@ import {
 } from '../lib/types'
 
 type MonthCursor = { year: number; month: number }
-type HistoryLocationState = { highlightTxId?: string; focusDue?: boolean }
+type HistoryLocationState = { highlightTxId?: string }
 type AllFilter = 'all'
 
 const SELECT_CLASS =
@@ -104,6 +103,7 @@ export function History() {
   const [subcategoryFilter, setSubcategoryFilter] = useState<
     string | AllFilter
   >('all')
+  const [searchQuery, setSearchQuery] = useState('')
   const touchStart = useRef<{ x: number; y: number } | null>(null)
   const highlightRef = useRef<HTMLDivElement | null>(null)
   const [openSwipeId, setOpenSwipeId] = useState<string | null>(null)
@@ -132,16 +132,8 @@ export function History() {
     (location.state as HistoryLocationState | null)?.highlightTxId ?? null
   const [highlightId, setHighlightId] = useState<string | null>(navHighlightId)
 
-  // FAB opens current-month dues — snap month pager if user was browsing elsewhere.
-  useEffect(() => {
-    const focusDue = (location.state as HistoryLocationState | null)?.focusDue
-    if (!focusDue) return
-    setCursor(currentMonthCursor())
-  }, [location.state])
-
   // Clear nav state separately from the highlight timer — clearing state must
   // not cancel the timeout (that left highlightId stuck and re-glowed on remount).
-  // focusDue is cleared by DueThisMonthChecklist after scroll.
   useEffect(() => {
     if (!navHighlightId) return
     setHighlightId(navHighlightId)
@@ -342,37 +334,49 @@ export function History() {
 
     // Transfers have no category — hide when a category filter is active.
     if (tx.type === 'transfer') {
-      return categoryFilter === 'all' && subcategoryFilter === 'all'
+      if (categoryFilter !== 'all' || subcategoryFilter !== 'all') return false
+      return matchesTransactionSearch(searchQuery, tx)
     }
 
     if (subcategoryFilter !== 'all') {
       const selectedSub = byId.get(subcategoryFilter)
       const cat = tx.category
       if (!selectedSub || !cat) return false
-      if (cat.id === subcategoryFilter) return true
+      if (cat.id === subcategoryFilter) {
+        return matchesTransactionSearch(searchQuery, tx)
+      }
       // Same subcategory name under same parent name (income + expense ids differ).
       const selectedParent = resolveParentCategory(selectedSub, byId)
       const txParent = resolveParentCategory(cat, byId)
       if (!selectedParent || !txParent) return false
-      return (
-        categoryNameKey(cat.name) === categoryNameKey(selectedSub.name) &&
-        categoryNameKey(txParent.name) === categoryNameKey(selectedParent.name)
-      )
+      if (
+        categoryNameKey(cat.name) !== categoryNameKey(selectedSub.name) ||
+        categoryNameKey(txParent.name) !== categoryNameKey(selectedParent.name)
+      ) {
+        return false
+      }
+      return matchesTransactionSearch(searchQuery, tx)
     }
 
     if (categoryFilter !== 'all' && parentIdsMatchingCategoryFilter) {
       const cat = tx.category
       if (!cat) return false
-      if (parentIdsMatchingCategoryFilter.has(cat.id)) return true
+      if (parentIdsMatchingCategoryFilter.has(cat.id)) {
+        return matchesTransactionSearch(searchQuery, tx)
+      }
       if (cat.parent_id && parentIdsMatchingCategoryFilter.has(cat.parent_id)) {
-        return true
+        return matchesTransactionSearch(searchQuery, tx)
       }
       const parent = resolveParentCategory(cat, byId)
-      return parent != null && parentIdsMatchingCategoryFilter.has(parent.id)
+      if (parent == null || !parentIdsMatchingCategoryFilter.has(parent.id)) {
+        return false
+      }
+      return matchesTransactionSearch(searchQuery, tx)
     }
 
-    return true
+    return matchesTransactionSearch(searchQuery, tx)
   })
+  const searchActive = !isBlankSearch(searchQuery)
 
   const monthIncome = filtered
     .filter((tx) => tx.type === 'income' && !tx.complete_later)
@@ -476,15 +480,11 @@ export function History() {
     collapseTick,
   ])
 
-  const focusDuePending = Boolean(
-    (location.state as HistoryLocationState | null)?.focusDue,
-  )
   const hasListContent =
     completeLaterTxs.length > 0 ||
     historyTxs.length > 0 ||
     dueCount > 0 ||
-    (billsAvailable && billsLoading) ||
-    focusDuePending
+    (billsAvailable && billsLoading)
 
   function toggleCompleteLater(expanded: boolean) {
     setCompleteLaterForce((prev) => ({
@@ -685,7 +685,15 @@ export function History() {
         onNext={goNextMonth}
       />
 
-      <div className="mt-3 grid grid-cols-3 gap-1.5">
+      <SearchField
+        value={searchQuery}
+        onChange={setSearchQuery}
+        placeholder="Search transactions…"
+        aria-label="Search transactions"
+        className="mt-3"
+      />
+
+      <div className="mt-2 grid grid-cols-3 gap-1.5">
         <label className="block min-w-0">
           <span className="mb-0.5 block truncate text-[10px] font-medium text-neutral-400">
             Circle
@@ -788,7 +796,7 @@ export function History() {
       )}
       {!loading && !hasListContent && (
         <p className="mt-10 text-center text-sm text-neutral-400">
-          No transactions this month.
+          {searchActive ? 'No matches.' : 'No transactions this month.'}
         </p>
       )}
 
@@ -831,6 +839,14 @@ export function History() {
                 available={billsAvailable}
                 embedded
                 variant="dueInbox"
+                searchQuery={searchQuery}
+                emptySearchMessage={
+                  searchActive &&
+                  completeLaterTxs.length === 0 &&
+                  historyTxs.length === 0
+                    ? 'No matches.'
+                    : undefined
+                }
                 expandAll={dueExpandAll}
                 onDayOpenChange={() => setCollapseTick((n) => n + 1)}
                 onChanged={() => {

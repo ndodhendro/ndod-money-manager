@@ -28,6 +28,8 @@ interface SwipeDeleteRowProps {
    * Stay to the left of the revealed delete action.
    */
   trailing?: ReactNode
+  /** Override front-face background (default white / dark neutral-800). */
+  surfaceClassName?: string
 }
 
 export function SwipeDeleteRow({
@@ -41,6 +43,7 @@ export function SwipeDeleteRow({
   onContentClick,
   deleteAriaLabel = 'Delete',
   trailing,
+  surfaceClassName,
 }: SwipeDeleteRowProps) {
   const [offset, setOffset] = useState(0)
   const startX = useRef(0)
@@ -163,7 +166,7 @@ export function SwipeDeleteRow({
         className={`relative z-10 flex w-full items-center shadow-sm ${
           highlighted
             ? 'tx-row-highlight'
-            : 'bg-white dark:bg-neutral-800'
+            : (surfaceClassName ?? 'bg-white dark:bg-neutral-800')
         }`}
       >
         <div

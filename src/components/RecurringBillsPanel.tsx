@@ -10,10 +10,12 @@ import { useBuckets } from '../hooks/useBuckets'
 import { useCategories } from '../hooks/useCategories'
 import { usePyfSettings } from '../hooks/usePyfSettings'
 import { useTransactions } from '../hooks/useTransactions'
+import { isExpenseOtherCategory } from '../lib/categoriesApi'
 import { ActionEmoji } from '../lib/actionEmoji'
 import { showAppToast } from '../lib/appToast'
 import { areAllCollapseOpen } from '../lib/collapseState'
 import { formatNumber, formatRupiah, todayIso } from '../lib/format'
+import { isBlankSearch, matchesRecurringBillSearch } from '../lib/listSearch'
 import {
   getRecurringBillDisplayParts,
   sortRecurringBillsForSettings,
@@ -73,6 +75,7 @@ import { ConfirmDialog } from './ConfirmDialog'
 import { NotesInput } from './NotesInput'
 import { OwnerPicker } from './OwnerPicker'
 import { RecurringBillRowContent } from './RecurringBillRowContent'
+import { SearchField } from './SearchField'
 import { SwipeDeleteRow } from './SwipeDeleteRow'
 
 function groupEstimatesForSettings(
@@ -189,6 +192,7 @@ export function RecurringBillsPanel({
   const [loading, setLoading] = useState(true)
   const [available, setAvailable] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
   const amountDepsReady =
     !bucketsLoading && !pyfLoading && !monthTxLoading
   const listLoading = loading || catsLoading || !amountDepsReady
@@ -234,7 +238,7 @@ export function RecurringBillsPanel({
   const [deleteTarget, setDeleteTarget] = useState<RecurringBill | null>(null)
   const [deleting, setDeleting] = useState(false)
   // Seed from route so remount on /recurring/:id does not report view=list
-  // while the URL still wants the form (that caused list‚Üîedit redirect loops).
+  // while the URL still wants the form (that caused list?edit redirect loops).
   const [editingId, setEditingId] = useState<string | null>(
     () => routeEditId ?? null,
   )
@@ -249,7 +253,7 @@ export function RecurringBillsPanel({
   const onViewChangeRef = useRef(onViewChange)
   onViewChangeRef.current = onViewChange
 
-  // Only notify when view/editingId change ‚Äî not when the parent callback
+  // Only notify when view/editingId change ù not when the parent callback
   // identity changes (e.g. after phone Back). Re-firing with a stale form
   // view would navigate back to the edit URL and loop.
   useEffect(() => {
@@ -411,20 +415,44 @@ export function RecurringBillsPanel({
     () => sortRecurringBillsForSettings(bills, allById, bucketsById),
     [bills, allById, bucketsById],
   )
+  const filteredBills = useMemo(() => {
+    if (isBlankSearch(searchQuery)) return sortedBills
+    return sortedBills.filter((bill) => {
+      const display = getRecurringBillDisplayParts(bill, allById, bucketsById)
+      const amount = resolveEstimateAmount(bill, null, amountCtx)
+      const planTag = estimatePlanTag(bill, allById, bucketsById)
+      const meta = bill.is_recurring
+        ? formatRecurringSettingsDescription({
+            intervalUnit: bill.interval_unit,
+            intervalMonths: bill.interval_months,
+            dueDay: bill.due_day,
+            startsYearMonth: bill.starts_year_month,
+            endsYearMonth: bill.ends_year_month,
+            startsOn: bill.starts_on,
+          })
+        : 'Monthly estimate'
+      return matchesRecurringBillSearch(searchQuery, bill, display, {
+        amount,
+        planTag,
+        meta,
+      })
+    })
+  }, [sortedBills, searchQuery, allById, bucketsById, amountCtx])
+  const searchActive = !isBlankSearch(searchQuery)
   const groupedBills = useMemo(
-    () => groupEstimatesForSettings(sortedBills),
-    [sortedBills],
+    () => groupEstimatesForSettings(filteredBills),
+    [filteredBills],
   )
   const monthTotals = useMemo(
     () =>
       sumEstimateTotalsByType(
-        bills,
+        searchActive ? filteredBills : bills,
         new Map(),
         settingsThisMonthYm,
         undefined,
         amountCtx,
       ),
-    [bills, amountCtx, settingsThisMonthYm],
+    [bills, filteredBills, searchActive, amountCtx, settingsThisMonthYm],
   )
   const dayPersistKeys = useMemo(
     () =>
@@ -713,7 +741,7 @@ export function RecurringBillsPanel({
   function resolveIcon(): string {
     if (type === 'transfer') return TRANSFER_TYPE_ICON
     const cat = categoryId ? byId.get(categoryId) : null
-    return cat?.icon ?? 'üìå'
+    return cat?.icon ?? '??'
   }
 
   function buildIntervalFields() {
@@ -809,6 +837,11 @@ export function RecurringBillsPanel({
       }
       if (!categoryId) {
         focusCategoryField('Pick a category')
+        return
+      }
+      if (isExpenseOtherCategory(categoryId, byId) && !note.trim()) {
+        showAppToast('Enter a note first')
+        noteRef.current?.focus()
         return
       }
     }
@@ -907,6 +940,11 @@ export function RecurringBillsPanel({
       }
       if (!categoryId) {
         focusCategoryField('Pick a category')
+        return
+      }
+      if (isExpenseOtherCategory(categoryId, byId) && !note.trim()) {
+        showAppToast('Enter a note first')
+        noteRef.current?.focus()
         return
       }
     }
@@ -1080,7 +1118,7 @@ export function RecurringBillsPanel({
         )
       : null
   const settingsDescription = settingsWeekThisMonth
-    ? `${settingsDescriptionBase} ¬∑ ${settingsWeekThisMonth}`
+    ? `${settingsDescriptionBase} ù ${settingsWeekThisMonth}`
     : settingsDescriptionBase
   const everySelectValue = recurringEveryKey(intervalUnit, intervalMonths)
   const deleteLabel =
@@ -1094,15 +1132,22 @@ export function RecurringBillsPanel({
   return (
     <div className="space-y-3">
       {(listLoading) && (
-        <p className="text-sm text-neutral-400">Loading‚Ä¶</p>
+        <p className="text-sm text-neutral-400">Loadingù</p>
       )}
       {view === 'list' ? (
         <div className="space-y-3">
-          <div className="flex items-center justify-end">
+          <div className="flex items-center gap-2">
+            <SearchField
+              value={searchQuery}
+              onChange={setSearchQuery}
+              placeholder="Search estimatesù"
+              aria-label="Search monthly estimates"
+              className="min-w-0 flex-1"
+            />
             <button
               type="button"
               onClick={openAddForm}
-              className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white active:bg-emerald-600"
+              className="shrink-0 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white active:bg-emerald-600"
             >
               {ActionEmoji.add} Add New
             </button>
@@ -1110,6 +1155,10 @@ export function RecurringBillsPanel({
           {listLoading ? null : sortedBills.length === 0 ? (
             <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
               No estimates yet. Tap Add New to create one.
+            </p>
+          ) : filteredBills.length === 0 ? (
+            <p className="rounded-xl bg-white p-3 text-center text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
+              No matches.
             </p>
           ) : (
             <>
@@ -1269,7 +1318,7 @@ export function RecurringBillsPanel({
           {isFormPyfAuto ? (
             <p className="mt-1.5 text-xs text-neutral-400">
               From Money Plan ({formPyfKind === 'emergency' ? emergencyPct : investmentPct}%
-              √ó this month&apos;s income).
+              ù this month&apos;s income).
             </p>
           ) : null}
           {isFormCheckingAuto ? (
@@ -1292,8 +1341,8 @@ export function RecurringBillsPanel({
               Recurring
             </span>
             <span className="mt-0.5 block text-xs text-neutral-400">
-              Has a due schedule and appears on the Due Checklist. Turn off for
-              estimates without a fixed date (e.g. fuel).
+              Has a due schedule and appears on Transactions when due. Turn off
+              for estimates without a fixed date (e.g. fuel).
             </span>
           </span>
         </label>
@@ -1353,7 +1402,7 @@ export function RecurringBillsPanel({
           />
           {isTransfer ? (
             bucketsLoading && buckets.length === 0 ? (
-              <p className="text-sm text-neutral-400">Loading buckets‚Ä¶</p>
+              <p className="text-sm text-neutral-400">Loading bucketsù</p>
             ) : (
               <>
                 <CirclePicker
@@ -1381,6 +1430,7 @@ export function RecurringBillsPanel({
                   label="From"
                   value={fromBucket}
                   buckets={buckets}
+                  categoriesById={allById}
                   excludeId={toBucket ?? undefined}
                   open={fromOpen}
                   onOpenChange={(open) => {
@@ -1403,6 +1453,7 @@ export function RecurringBillsPanel({
                   label="To"
                   value={toBucket}
                   buckets={buckets}
+                  categoriesById={allById}
                   excludeId={fromBucket ?? undefined}
                   open={toOpen}
                   onOpenChange={(open) => {
@@ -1446,7 +1497,7 @@ export function RecurringBillsPanel({
                 locked={isIncome}
               />
               {catsLoading && treeByUsage.length === 0 ? (
-                <p className="text-sm text-neutral-400">Loading categories‚Ä¶</p>
+                <p className="text-sm text-neutral-400">Loading categoriesù</p>
               ) : (
                 <CategoryPicker
                   tree={treeByUsage}
@@ -1484,7 +1535,11 @@ export function RecurringBillsPanel({
             owner={owner}
             onKeyDown={handleNoteKeyDown}
             enterKeyHint={isRecurring ? 'next' : 'done'}
-            placeholder="Note (optional)"
+            placeholder={
+              type === 'expense' && isExpenseOtherCategory(categoryId, byId)
+                ? 'Note (required)'
+                : 'Note (optional)'
+            }
           />
         </div>
 
@@ -1681,7 +1736,7 @@ export function RecurringBillsPanel({
           disabled={saving}
           className="w-full rounded-xl bg-emerald-500 py-3.5 text-base font-semibold text-white shadow-md active:bg-emerald-600 disabled:opacity-60"
         >
-          {saving ? 'Saving‚Ä¶' : editingId ? 'Update' : 'Save'}
+          {saving ? 'Savingù' : editingId ? 'Update' : 'Save'}
         </button>
         {editingId ? (
           <button
@@ -1702,7 +1757,7 @@ export function RecurringBillsPanel({
       <ConfirmDialog
         open={Boolean(deleteTarget)}
         title="Delete estimate?"
-        message={`‚Äú${deleteLabel}‚Äù will be removed from Monthly Estimates. Past checklist logs stay linked.`}
+        message={`ù${deleteLabel}ù will be removed from Monthly Estimates. Past checklist logs stay linked.`}
         confirmLabel="Delete"
         cancelLabel="Cancel"
         busy={deleting}

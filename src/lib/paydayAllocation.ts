@@ -83,6 +83,8 @@ export type PaydayBucketRef = Pick<
   | 'target_amount'
   | 'sort_order'
   | 'is_active'
+  | 'parent_id'
+  | 'category_id'
 >
 
 export interface BuildPaydayAllocationInput {
@@ -214,7 +216,13 @@ export function buildBonusAllocation(input: {
   const lines: BonusAllocationLine[] = []
   let sinkingFilled = 0
 
+  const parentIdsWithChildren = new Set<string>()
+  for (const b of input.bucketsById.values()) {
+    if (b.parent_id) parentIdsWithChildren.add(b.parent_id)
+  }
+
   const candidates = Array.from(input.bucketsById.values())
+    .filter((b) => !parentIdsWithChildren.has(b.id))
     .filter((b) => isTwelveMonthSinkingBucket(b, input.bills))
     .map((b) => ({ bucket: b, gap: sinkingGap(b) }))
     .filter((row) => row.gap > 0)

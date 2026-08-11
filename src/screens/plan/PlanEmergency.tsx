@@ -25,6 +25,14 @@ import {
   type RecurringBill,
 } from '../../lib/recurringBillsApi'
 import {
+  computeSinkingFundPace,
+  SINKING_PACE_BADGE_CLASS,
+  SINKING_PACE_BAR_CLASS,
+  SINKING_PACE_DELTA_CLASS,
+  sinkingPaceDeltaLabel,
+  sinkingPaceLabel,
+} from '../../lib/sinkingFundPace'
+import {
   BUCKET_KIND_LABELS,
   type BucketKind,
   type BucketTreeNode,
@@ -43,25 +51,84 @@ function overallRowForBucket(
   emergencyId: string | null,
   efTarget: number,
   efMultiplier: number,
-): { bucket: MoneyPlanBucket; hint: string } {
+  bills: RecurringBill[],
+  yearMonth: string,
+): {
+  bucket: MoneyPlanBucket
+  hint: string
+  badge: { label: string; className: string } | null
+  /** Pace-colored bar for sinking; null = use kind default. */
+  barClass: string | null
+  paceMeta: {
+    expected: number
+    monthsElapsed: number
+    monthsTotal: number
+    deltaText: string
+    deltaClassName: string
+  } | null
+} {
   const isSystemEmergency = emergencyId != null && b.id === emergencyId
   if (isSystemEmergency && efTarget > 0) {
     const row = makeMoneyPlanBucket(b.name, efTarget, b.balance, 'floor')
     return {
       bucket: row,
       hint: `${efMultiplier}× planned needs`,
+      badge: null,
+      barClass: null,
+      paceMeta: null,
     }
   }
   if (b.kind === 'investment') {
     return {
       bucket: makeMoneyPlanBucket(b.name, 0, b.balance, 'floor'),
       hint: '',
+      badge: null,
+      barClass: null,
+      paceMeta: null,
     }
   }
+
   const target = b.target_amount ?? 0
+  const pace =
+    b.kind === 'sinking' && target > 0
+      ? computeSinkingFundPace({
+          destinationIds: [b.id],
+          target,
+          balance: b.balance,
+          yearMonth,
+          bills,
+        })
+      : null
+  const badge = pace
+    ? {
+        label: sinkingPaceLabel(pace.status),
+        className: SINKING_PACE_BADGE_CLASS[pace.status],
+      }
+    : null
+  const delta = pace
+    ? sinkingPaceDeltaLabel(pace.balance, pace.expected)
+    : null
+  const paceMeta = pace
+    ? {
+        expected: pace.expected,
+        monthsElapsed: pace.monthsElapsed,
+        monthsTotal: pace.monthsTotal,
+        deltaText: delta!.text,
+        deltaClassName: SINKING_PACE_DELTA_CLASS[delta!.tone],
+      }
+    : null
+  const hint =
+    pace != null
+      ? ''
+      : target > 0
+        ? 'Balance vs target'
+        : ''
   return {
     bucket: makeMoneyPlanBucket(b.name, target, b.balance, 'floor'),
-    hint: target > 0 ? 'Balance vs target' : '',
+    hint,
+    badge,
+    barClass: pace ? SINKING_PACE_BAR_CLASS[pace.status] : null,
+    paceMeta,
   }
 }
 
@@ -207,29 +274,22 @@ export function PlanEmergency() {
   function renderSinkingNode(node: BucketTreeNode, kind: BucketKind) {
     const hasChildren = node.children.length > 0
     const expanded = expandedParentIds.has(node.bucket.id)
-    const { bucket: parentRow, hint: parentHint } = overallRowForBucket(
-      node.bucket,
-      emergency?.id ?? null,
-      efTarget,
-      efMultiplier,
-    )
-    return (
-      <div key={node.bucket.id} className="space-y-2">
-        <PlanBudgetRow
-          icon={node.bucket.icon}
-          bucket={
-            hasChildren
-              ? {
-                  ...parentRow,
-                  label: `${node.bucket.name} (${node.children.length})`,
-                }
-              : parentRow
-          }
-          hint={parentHint}
-          barClass={KIND_BAR[kind]}
-          mode="floor"
-          leading={
-            hasChildren ? (
+
+    if (hasChildren) {
+      return (
+        <div key={node.bucket.id} className="space-y-2">
+          <PlanBudgetRow
+            icon={node.bucket.icon}
+            bucket={makeMoneyPlanBucket(
+              `${node.bucket.name} (${node.children.length})`,
+              0,
+              node.bucket.balance,
+              'floor',
+            )}
+            barClass={KIND_BAR[kind]}
+            mode="floor"
+            showMetrics={false}
+            leading={
               <button
                 type="button"
                 onClick={() => toggleParentExpanded(node.bucket.id)}
@@ -239,31 +299,58 @@ export function PlanEmergency() {
               >
                 <CollapseChevron expanded={expanded} />
               </button>
-            ) : undefined
-          }
+            }
+          />
+          {expanded
+            ? node.children.map((child) => {
+                const { bucket, hint, badge, barClass, paceMeta } =
+                  overallRowForBucket(
+                    child,
+                    emergency?.id ?? null,
+                    efTarget,
+                    efMultiplier,
+                    bills,
+                    viewYm,
+                  )
+                return (
+                  <div key={child.id} className="pl-5">
+                    <PlanBudgetRow
+                      icon={child.icon}
+                      bucket={bucket}
+                      hint={hint}
+                      badge={badge}
+                      paceMeta={paceMeta}
+                      barClass={barClass ?? KIND_BAR[kind]}
+                      mode="floor"
+                      surfaceClassName="bg-neutral-100 dark:bg-neutral-700/70"
+                    />
+                  </div>
+                )
+              })
+            : null}
+        </div>
+      )
+    }
+
+    const { bucket, hint, badge, barClass, paceMeta } = overallRowForBucket(
+      node.bucket,
+      emergency?.id ?? null,
+      efTarget,
+      efMultiplier,
+      bills,
+      viewYm,
+    )
+    return (
+      <div key={node.bucket.id} className="space-y-2">
+        <PlanBudgetRow
+          icon={node.bucket.icon}
+          bucket={bucket}
+          hint={hint}
+          badge={badge}
+          paceMeta={paceMeta}
+          barClass={barClass ?? KIND_BAR[kind]}
+          mode="floor"
         />
-        {hasChildren && expanded
-          ? node.children.map((child) => {
-              const { bucket, hint } = overallRowForBucket(
-                child,
-                emergency?.id ?? null,
-                efTarget,
-                efMultiplier,
-              )
-              return (
-                <div key={child.id} className="pl-5">
-                  <PlanBudgetRow
-                    icon={child.icon}
-                    bucket={bucket}
-                    hint={hint}
-                    barClass={KIND_BAR[kind]}
-                    mode="floor"
-                    surfaceClassName="bg-neutral-100 dark:bg-neutral-700/70"
-                  />
-                </div>
-              )
-            })
-          : null}
       </div>
     )
   }
@@ -353,6 +440,8 @@ export function PlanEmergency() {
                           emergency?.id ?? null,
                           efTarget,
                           efMultiplier,
+                          bills,
+                          viewYm,
                         )
                         const isSystemEmergency =
                           emergency != null &&

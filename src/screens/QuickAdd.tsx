@@ -1029,6 +1029,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         }
         confirmLabel="Borrow & Save"
         cancelLabel="Cancel"
+        busyLabel="Saving…"
         danger={false}
         busy={saving}
         onCancel={() => {

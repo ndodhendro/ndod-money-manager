@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { allocationSum } from './closeMonthDefaults'
 import type { MonthClose, MonthCloseAllocation } from './types'
 
 function isMissingMonthClosesSchema(message: string): boolean {
@@ -11,36 +12,84 @@ function isMissingMonthClosesSchema(message: string): boolean {
 
 function migrateHint(): Error {
   return new Error(
-    'Run migrate_month_closes.sql in Supabase to enable Close Month',
+    'Run migrate_month_closes.sql and migrate_month_closes_sides.sql in Supabase to enable Close Month',
   )
 }
 
+function num(row: Record<string, unknown>, key: string, fallback = 0): number {
+  const v = row[key]
+  if (v == null) return fallback
+  return Number(v)
+}
+
 function mapClose(row: Record<string, unknown>): MonthClose {
+  const needsEf = num(row, 'needs_side_to_ef', num(row, 'buffer_to_ef'))
+  const needsInv = num(
+    row,
+    'needs_side_to_investment',
+    num(row, 'buffer_to_investment'),
+  )
+  const needsBuf = num(
+    row,
+    'needs_side_to_buffer',
+    num(row, 'buffer_to_buffer'),
+  )
+  const needsGf = num(
+    row,
+    'needs_side_to_guilt_free',
+    num(row, 'buffer_to_guilt_free'),
+  )
+  const wantsEf = num(row, 'wants_side_to_ef', num(row, 'guilt_free_to_ef'))
+  const wantsInv = num(
+    row,
+    'wants_side_to_investment',
+    num(row, 'guilt_free_to_investment'),
+  )
+  const wantsBuf = num(
+    row,
+    'wants_side_to_buffer',
+    num(row, 'guilt_free_to_buffer'),
+  )
+  const wantsGf = num(
+    row,
+    'wants_side_to_guilt_free',
+    num(row, 'guilt_free_to_guilt_free'),
+  )
+
   return {
     id: String(row.id),
     year_month: String(row.year_month),
-    income: Number(row.income ?? 0),
-    planned_needs: Number(row.planned_needs ?? 0),
-    planned_wants: Number(row.planned_wants ?? 0),
-    buffer_allowance: Number(row.buffer_allowance ?? 0),
-    buffer_used: Number(row.buffer_used ?? 0),
-    buffer_remaining: Number(row.buffer_remaining ?? 0),
-    guilt_free_allowance: Number(row.guilt_free_allowance ?? 0),
-    guilt_free_used: Number(row.guilt_free_used ?? 0),
-    guilt_free_remaining: Number(row.guilt_free_remaining ?? 0),
-    buffer_to_ef: Number(row.buffer_to_ef ?? 0),
-    buffer_to_investment: Number(row.buffer_to_investment ?? 0),
-    buffer_to_buffer: Number(row.buffer_to_buffer ?? 0),
-    buffer_to_guilt_free: Number(row.buffer_to_guilt_free ?? 0),
-    guilt_free_to_ef: Number(row.guilt_free_to_ef ?? 0),
-    guilt_free_to_investment: Number(row.guilt_free_to_investment ?? 0),
-    guilt_free_to_buffer: Number(row.guilt_free_to_buffer ?? 0),
-    guilt_free_to_guilt_free: Number(row.guilt_free_to_guilt_free ?? 0),
-    opening_buffer_next: Number(row.opening_buffer_next ?? 0),
-    opening_guilt_free_next: Number(row.opening_guilt_free_next ?? 0),
+    income: num(row, 'income'),
+    planned_needs: num(row, 'planned_needs'),
+    planned_wants: num(row, 'planned_wants'),
+    buffer_allowance: num(row, 'buffer_allowance'),
+    buffer_used: num(row, 'buffer_used'),
+    buffer_remaining: num(row, 'buffer_remaining'),
+    guilt_free_allowance: num(row, 'guilt_free_allowance'),
+    guilt_free_used: num(row, 'guilt_free_used'),
+    guilt_free_remaining: num(row, 'guilt_free_remaining'),
+    planned_needs_remaining: num(row, 'planned_needs_remaining'),
+    planned_wants_remaining: num(row, 'planned_wants_remaining'),
+    needs_side_to_ef: needsEf,
+    needs_side_to_investment: needsInv,
+    needs_side_to_buffer: needsBuf,
+    needs_side_to_guilt_free: needsGf,
+    wants_side_to_ef: wantsEf,
+    wants_side_to_investment: wantsInv,
+    wants_side_to_buffer: wantsBuf,
+    wants_side_to_guilt_free: wantsGf,
+    buffer_to_ef: needsEf,
+    buffer_to_investment: needsInv,
+    buffer_to_buffer: needsBuf,
+    buffer_to_guilt_free: needsGf,
+    guilt_free_to_ef: wantsEf,
+    guilt_free_to_investment: wantsInv,
+    guilt_free_to_buffer: wantsBuf,
+    guilt_free_to_guilt_free: wantsGf,
+    opening_buffer_next: num(row, 'opening_buffer_next'),
+    opening_guilt_free_next: num(row, 'opening_guilt_free_next'),
     closed_at: String(row.closed_at),
-    reopened_at:
-      row.reopened_at == null ? null : String(row.reopened_at),
+    reopened_at: row.reopened_at == null ? null : String(row.reopened_at),
   }
 }
 
@@ -103,13 +152,9 @@ export async function fetchOpeningCarryForMonth(yearMonth: string): Promise<{
   }
 }
 
+/** @deprecated Use allocationSum from closeMonthDefaults. */
 export function allocationTotals(alloc: MonthCloseAllocation): number {
-  return (
-    Math.round(alloc.ef) +
-    Math.round(alloc.investment) +
-    Math.round(alloc.buffer) +
-    Math.round(alloc.guiltFree)
-  )
+  return allocationSum(alloc)
 }
 
 export async function saveMonthClose(input: {
@@ -123,24 +168,27 @@ export async function saveMonthClose(input: {
   guiltFreeAllowance: number
   guiltFreeUsed: number
   guiltFreeRemaining: number
-  bufferAllocation: MonthCloseAllocation
-  guiltFreeAllocation: MonthCloseAllocation
+  plannedNeedsRemaining: number
+  plannedWantsRemaining: number
+  needsSideRemaining: number
+  wantsSideRemaining: number
+  needsSideAllocation: MonthCloseAllocation
+  wantsSideAllocation: MonthCloseAllocation
 }): Promise<MonthClose> {
-  const bufferSum = allocationTotals(input.bufferAllocation)
-  const gfSum = allocationTotals(input.guiltFreeAllocation)
-  if (bufferSum !== Math.round(input.bufferRemaining)) {
-    throw new Error('Buffer allocation must total 100% of remaining')
+  const needsSum = allocationSum(input.needsSideAllocation)
+  const wantsSum = allocationSum(input.wantsSideAllocation)
+  if (needsSum !== Math.round(input.needsSideRemaining)) {
+    throw new Error('Needs Side allocation must total 100% of remaining')
   }
-  if (gfSum !== Math.round(input.guiltFreeRemaining)) {
-    throw new Error('Guilt-Free allocation must total 100% of remaining')
+  if (wantsSum !== Math.round(input.wantsSideRemaining)) {
+    throw new Error('Wants Side allocation must total 100% of remaining')
   }
 
-  const opening_buffer_next =
-    Math.round(input.bufferAllocation.buffer) +
-    Math.round(input.guiltFreeAllocation.buffer)
+  const n = input.needsSideAllocation
+  const w = input.wantsSideAllocation
+  const opening_buffer_next = Math.round(n.buffer) + Math.round(w.buffer)
   const opening_guilt_free_next =
-    Math.round(input.bufferAllocation.guiltFree) +
-    Math.round(input.guiltFreeAllocation.guiltFree)
+    Math.round(n.guiltFree) + Math.round(w.guiltFree)
 
   const row = {
     year_month: input.yearMonth,
@@ -153,14 +201,25 @@ export async function saveMonthClose(input: {
     guilt_free_allowance: input.guiltFreeAllowance,
     guilt_free_used: input.guiltFreeUsed,
     guilt_free_remaining: input.guiltFreeRemaining,
-    buffer_to_ef: input.bufferAllocation.ef,
-    buffer_to_investment: input.bufferAllocation.investment,
-    buffer_to_buffer: input.bufferAllocation.buffer,
-    buffer_to_guilt_free: input.bufferAllocation.guiltFree,
-    guilt_free_to_ef: input.guiltFreeAllocation.ef,
-    guilt_free_to_investment: input.guiltFreeAllocation.investment,
-    guilt_free_to_buffer: input.guiltFreeAllocation.buffer,
-    guilt_free_to_guilt_free: input.guiltFreeAllocation.guiltFree,
+    planned_needs_remaining: input.plannedNeedsRemaining,
+    planned_wants_remaining: input.plannedWantsRemaining,
+    needs_side_to_ef: n.ef,
+    needs_side_to_investment: n.investment,
+    needs_side_to_buffer: n.buffer,
+    needs_side_to_guilt_free: n.guiltFree,
+    wants_side_to_ef: w.ef,
+    wants_side_to_investment: w.investment,
+    wants_side_to_buffer: w.buffer,
+    wants_side_to_guilt_free: w.guiltFree,
+    // Legacy mirror
+    buffer_to_ef: n.ef,
+    buffer_to_investment: n.investment,
+    buffer_to_buffer: n.buffer,
+    buffer_to_guilt_free: n.guiltFree,
+    guilt_free_to_ef: w.ef,
+    guilt_free_to_investment: w.investment,
+    guilt_free_to_buffer: w.buffer,
+    guilt_free_to_guilt_free: w.guiltFree,
     opening_buffer_next,
     opening_guilt_free_next,
     closed_at: new Date().toISOString(),

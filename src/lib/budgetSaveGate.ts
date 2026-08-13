@@ -7,6 +7,7 @@ import {
   checkingBucketIdSet,
   estimateExpenseCoverageKeys,
   sumGuiltFreeSpent,
+  sumUnplannedNeedsSpent,
 } from './freeGuiltyProgress'
 import {
   isPlannedNeedsSchedule,
@@ -203,6 +204,11 @@ export function evaluateExpenseEfLoan(input: {
     transactions: baseTxs,
   })
   const overspendBefore = sumEstimateOverspend(beforeRows)
+  const unplannedNeedsBefore = sumUnplannedNeedsSpent({
+    transactions: baseTxs,
+    estimateCoverageKeys,
+    checkingBucketIds: checkingIds,
+  })
   const gfSpentBefore = sumGuiltFreeSpent({
     transactions: baseTxs,
     estimateCoverageKeys,
@@ -220,6 +226,11 @@ export function evaluateExpenseEfLoan(input: {
     transactions: afterTxs,
   })
   const overspendAfter = sumEstimateOverspend(afterRows)
+  const unplannedNeedsAfter = sumUnplannedNeedsSpent({
+    transactions: afterTxs,
+    estimateCoverageKeys,
+    checkingBucketIds: checkingIds,
+  })
   const gfSpentAfter = sumGuiltFreeSpent({
     transactions: afterTxs,
     estimateCoverageKeys,
@@ -229,12 +240,16 @@ export function evaluateExpenseEfLoan(input: {
   const buffer = Math.max(0, Math.round(input.bufferAllowance))
   const guiltFree = Math.max(0, Math.round(input.guiltFreeAllowance))
 
-  if (isEstimateCat) {
+  // Estimate-line overspend + Needs outside estimates both demand Buffer.
+  const usesBuffer = isEstimateCat || draftGroup === 'needs'
+  if (usesBuffer) {
+    const demandBefore = overspendBefore + unplannedNeedsBefore
+    const demandAfter = overspendAfter + unplannedNeedsAfter
     const bufferCap = input.monthClosed
-      ? Math.min(buffer, overspendBefore)
+      ? Math.min(buffer, demandBefore)
       : buffer
-    const efBefore = Math.max(0, overspendBefore - bufferCap)
-    const efAfter = Math.max(0, overspendAfter - bufferCap)
+    const efBefore = Math.max(0, demandBefore - bufferCap)
+    const efAfter = Math.max(0, demandAfter - bufferCap)
     const borrowAmount = Math.max(0, efAfter - efBefore)
     return {
       borrowAmount,
@@ -242,7 +257,7 @@ export function evaluateExpenseEfLoan(input: {
     }
   }
 
-  // Guilt-Free Fund spending (non-estimate Main/checking expense)
+  // Guilt-Free Fund (non-Needs, non-estimate Main/checking expense)
   const gfCap = input.monthClosed
     ? Math.min(guiltFree, gfSpentBefore)
     : guiltFree

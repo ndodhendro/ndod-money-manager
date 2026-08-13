@@ -9,6 +9,13 @@ import { useTransactions } from '../../hooks/useTransactions'
 import { showAppToast } from '../../lib/appToast'
 import { remainingFromProgress } from '../../lib/budgetSaveGate'
 import {
+  allocationSum,
+  defaultNeedsSideAllocation,
+  defaultWantsSideAllocation,
+  ZERO_CLOSE_ALLOC,
+} from '../../lib/closeMonthDefaults'
+import {
+  applyEfLoanRepayment,
   fetchOpenEfLoans,
   sumEfLoansBySource,
 } from '../../lib/efLoansApi'
@@ -18,10 +25,7 @@ import {
   monthCursorKey,
   shiftMonthCursor,
 } from '../../lib/monthCursor'
-import {
-  fetchMonthClose,
-  saveMonthClose,
-} from '../../lib/monthClosesApi'
+import { fetchMonthClose, saveMonthClose } from '../../lib/monthClosesApi'
 import { PlanIcon } from '../../lib/planSections'
 import { getStoredProfile } from '../../lib/profile'
 import { createTransaction } from '../../lib/transactionsApi'
@@ -29,38 +33,15 @@ import type { MonthCloseAllocation } from '../../lib/types'
 
 type AllocMode = 'percent' | 'amount'
 
-const ZERO_ALLOC: MonthCloseAllocation = {
-  ef: 0,
-  investment: 0,
-  buffer: 0,
-  guiltFree: 0,
-}
-
-function allocSum(a: MonthCloseAllocation): number {
-  return Math.round(a.ef + a.investment + a.buffer + a.guiltFree)
-}
-
-function defaultRollover(
-  remaining: number,
-  kind: 'buffer' | 'guiltFree',
-): MonthCloseAllocation {
-  if (remaining <= 0) return { ...ZERO_ALLOC }
-  if (kind === 'buffer') {
-    return { ...ZERO_ALLOC, buffer: remaining }
-  }
-  return { ...ZERO_ALLOC, guiltFree: remaining }
-}
-
 function amountsFromPercents(
   remaining: number,
   pct: MonthCloseAllocation,
 ): MonthCloseAllocation {
-  if (remaining <= 0) return { ...ZERO_ALLOC }
+  if (remaining <= 0) return { ...ZERO_CLOSE_ALLOC }
   const ef = Math.round((remaining * pct.ef) / 100)
   const investment = Math.round((remaining * pct.investment) / 100)
   const buffer = Math.round((remaining * pct.buffer) / 100)
   let guiltFree = remaining - ef - investment - buffer
-  // Keep last bucket non-negative if rounding drifts.
   if (guiltFree < 0) {
     return {
       ef,
@@ -76,7 +57,7 @@ function percentsFromAmounts(
   remaining: number,
   amounts: MonthCloseAllocation,
 ): MonthCloseAllocation {
-  if (remaining <= 0) return { ...ZERO_ALLOC }
+  if (remaining <= 0) return { ...ZERO_CLOSE_ALLOC }
   return {
     ef: Math.round((amounts.ef * 100) / remaining),
     investment: Math.round((amounts.investment * 100) / remaining),
@@ -87,6 +68,7 @@ function percentsFromAmounts(
 
 function FourWayFields({
   title,
+  subtitle,
   remaining,
   amounts,
   onAmountsChange,
@@ -94,6 +76,7 @@ function FourWayFields({
   onModeChange,
 }: {
   title: string
+  subtitle?: string
   remaining: number
   amounts: MonthCloseAllocation
   onAmountsChange: (next: MonthCloseAllocation) => void
@@ -102,19 +85,14 @@ function FourWayFields({
 }) {
   const pct = percentsFromAmounts(remaining, amounts)
   const display = mode === 'percent' ? pct : amounts
-  const total =
-    mode === 'percent' ? allocSum(pct) : allocSum(amounts)
+  const total = mode === 'percent' ? allocationSum(pct) : allocationSum(amounts)
   const target = mode === 'percent' ? 100 : remaining
   const ok = remaining === 0 || total === target
 
-  function setField(
-    key: keyof MonthCloseAllocation,
-    raw: string,
-  ) {
+  function setField(key: keyof MonthCloseAllocation, raw: string) {
     const n = Math.max(0, Math.round(Number(raw.replace(/\D/g, '')) || 0))
     if (mode === 'percent') {
-      const nextPct = { ...pct, [key]: n }
-      onAmountsChange(amountsFromPercents(remaining, nextPct))
+      onAmountsChange(amountsFromPercents(remaining, { ...pct, [key]: n }))
     } else {
       onAmountsChange({ ...amounts, [key]: n })
     }
@@ -130,15 +108,18 @@ function FourWayFields({
   return (
     <section className="rounded-xl bg-white p-4 shadow-sm dark:bg-neutral-800">
       <div className="flex items-center justify-between gap-2">
-        <div>
+        <div className="min-w-0">
           <h2 className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
             {title}
           </h2>
           <p className="text-xs text-neutral-400">
             Remaining {formatRupiah(remaining)}
           </p>
+          {subtitle ? (
+            <p className="mt-0.5 text-[11px] text-neutral-400">{subtitle}</p>
+          ) : null}
         </div>
-        <div className="flex rounded-lg bg-neutral-100 p-0.5 text-xs dark:bg-neutral-900">
+        <div className="flex shrink-0 rounded-lg bg-neutral-100 p-0.5 text-xs dark:bg-neutral-900">
           <button
             type="button"
             className={`rounded-md px-2 py-1 ${
@@ -189,7 +170,9 @@ function FourWayFields({
             }`}
           >
             Total {mode === 'percent' ? `${total}%` : formatRupiah(total)}
-            {ok ? ' · OK' : ` · need ${mode === 'percent' ? '100%' : formatRupiah(remaining)}`}
+            {ok
+              ? ' · OK'
+              : ` · need ${mode === 'percent' ? '100%' : formatRupiah(remaining)}`}
           </p>
         </div>
       )}
@@ -230,21 +213,46 @@ export function PlanCloseMonth() {
 
   const [alreadyClosed, setAlreadyClosed] = useState(false)
   const [efOwed, setEfOwed] = useState({ buffer: 0, guiltFree: 0, total: 0 })
-  const [bufferAlloc, setBufferAlloc] = useState<MonthCloseAllocation>({
-    ...ZERO_ALLOC,
+  const [needsAlloc, setNeedsAlloc] = useState<MonthCloseAllocation>({
+    ...ZERO_CLOSE_ALLOC,
   })
-  const [gfAlloc, setGfAlloc] = useState<MonthCloseAllocation>({
-    ...ZERO_ALLOC,
+  const [wantsAlloc, setWantsAlloc] = useState<MonthCloseAllocation>({
+    ...ZERO_CLOSE_ALLOC,
   })
-  const [bufferMode, setBufferMode] = useState<AllocMode>('percent')
-  const [gfMode, setGfMode] = useState<AllocMode>('percent')
+  const [needsMode, setNeedsMode] = useState<AllocMode>('amount')
+  const [wantsMode, setWantsMode] = useState<AllocMode>('amount')
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [initedYm, setInitedYm] = useState<string | null>(null)
+  const [initedKey, setInitedKey] = useState<string | null>(null)
 
   const rem = useMemo(() => {
-    if (!progress) return { bufferRemaining: 0, guiltFreeRemaining: 0 }
-    return remainingFromProgress(progress)
+    if (!progress) {
+      return {
+        plannedNeedsRemaining: 0,
+        bufferRemaining: 0,
+        plannedWantsRemaining: 0,
+        guiltFreeRemaining: 0,
+        needsSideRemaining: 0,
+        wantsSideRemaining: 0,
+      }
+    }
+    const track = remainingFromProgress(progress)
+    const plannedNeedsRemaining = Math.max(
+      0,
+      Math.round(progress.plannedNeeds.remaining),
+    )
+    const plannedWantsRemaining = Math.max(
+      0,
+      Math.round(progress.plannedWants.remaining),
+    )
+    return {
+      plannedNeedsRemaining,
+      bufferRemaining: track.bufferRemaining,
+      plannedWantsRemaining,
+      guiltFreeRemaining: track.guiltFreeRemaining,
+      needsSideRemaining: plannedNeedsRemaining + track.bufferRemaining,
+      wantsSideRemaining: plannedWantsRemaining + track.guiltFreeRemaining,
+    }
   }, [progress])
 
   useEffect(() => {
@@ -264,31 +272,35 @@ export function PlanCloseMonth() {
 
   useEffect(() => {
     if (!progress) return
-    if (initedYm === closeYm) return
-    setBufferAlloc(defaultRollover(rem.bufferRemaining, 'buffer'))
-    setGfAlloc(defaultRollover(rem.guiltFreeRemaining, 'guiltFree'))
-    setInitedYm(closeYm)
-  }, [progress, rem, closeYm, initedYm])
+    const key = `${closeYm}:${efOwed.total}:${rem.needsSideRemaining}:${rem.wantsSideRemaining}`
+    if (initedKey === key) return
+    setNeedsAlloc(
+      defaultNeedsSideAllocation(rem.needsSideRemaining, efOwed.total),
+    )
+    setWantsAlloc(defaultWantsSideAllocation(rem.wantsSideRemaining))
+    setInitedKey(key)
+  }, [progress, rem, closeYm, efOwed.total, initedKey])
 
-  const bufferOk =
-    rem.bufferRemaining === 0 ||
-    allocSum(bufferAlloc) === rem.bufferRemaining
-  const gfOk =
-    rem.guiltFreeRemaining === 0 || allocSum(gfAlloc) === rem.guiltFreeRemaining
+  const needsOk =
+    rem.needsSideRemaining === 0 ||
+    allocationSum(needsAlloc) === rem.needsSideRemaining
+  const wantsOk =
+    rem.wantsSideRemaining === 0 ||
+    allocationSum(wantsAlloc) === rem.wantsSideRemaining
   const canClose =
     !alreadyClosed &&
     allocation != null &&
     progress != null &&
-    bufferOk &&
-    gfOk
+    needsOk &&
+    wantsOk
 
   async function runClose() {
     if (!allocation || !progress || !canClose) return
     setSaving(true)
     try {
       const owner = getStoredProfile() ?? 'suami'
-      const toEf = bufferAlloc.ef + gfAlloc.ef
-      const toInv = bufferAlloc.investment + gfAlloc.investment
+      const toEf = needsAlloc.ef + wantsAlloc.ef
+      const toInv = needsAlloc.investment + wantsAlloc.investment
       if (toEf > 0) {
         if (!emergency) throw new Error('Emergency Fund bucket missing')
         await createTransaction({
@@ -304,6 +316,7 @@ export function PlanCloseMonth() {
           is_recurring: false,
           complete_later: false,
         })
+        await applyEfLoanRepayment(toEf)
       }
       if (toInv > 0) {
         if (!investment) throw new Error('Investment bucket missing')
@@ -333,8 +346,12 @@ export function PlanCloseMonth() {
         guiltFreeAllowance: allocation.guiltFree,
         guiltFreeUsed: progress.guiltFree.used,
         guiltFreeRemaining: rem.guiltFreeRemaining,
-        bufferAllocation: bufferAlloc,
-        guiltFreeAllocation: gfAlloc,
+        plannedNeedsRemaining: rem.plannedNeedsRemaining,
+        plannedWantsRemaining: rem.plannedWantsRemaining,
+        needsSideRemaining: rem.needsSideRemaining,
+        wantsSideRemaining: rem.wantsSideRemaining,
+        needsSideAllocation: needsAlloc,
+        wantsSideAllocation: wantsAlloc,
       })
       void reloadBuckets()
       setConfirmOpen(false)
@@ -351,16 +368,10 @@ export function PlanCloseMonth() {
   const pageError = error || budgetError
 
   return (
-    <div
-      onTouchStart={handleTouchStart}
-      onTouchEnd={handleTouchEnd}
-    >
-      <PlanSubPage
-        title="Close Month"
-        icon={PlanIcon.closeMonth}
-      >
+    <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+      <PlanSubPage title="Close Month" icon={PlanIcon.closeMonth}>
         <p className="mb-3 text-sm text-neutral-500 dark:text-neutral-400">
-          Allocate leftover Buffer and Guilt-Free Fund (100% each), then unlock
+          Allocate Needs Side and Wants Side leftovers (100% each), then unlock
           the next month. Default month: {formatYearMonthLabel(yearMonth)}.
         </p>
 
@@ -402,18 +413,32 @@ export function PlanCloseMonth() {
               <h2 className="text-sm font-semibold">Month Summary</h2>
               <dl className="mt-2 space-y-1 text-sm">
                 <div className="flex justify-between gap-2">
-                  <dt className="text-neutral-500">Buffer left</dt>
+                  <dt className="text-neutral-500">Needs Side leftover</dt>
                   <dd className="tabular-nums">
+                    {formatRupiah(rem.needsSideRemaining)}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-2 text-xs text-neutral-400">
+                  <dt className="pl-2">Planned Needs + Buffer</dt>
+                  <dd className="tabular-nums">
+                    {formatRupiah(rem.plannedNeedsRemaining)} +{' '}
                     {formatRupiah(rem.bufferRemaining)}
                   </dd>
                 </div>
                 <div className="flex justify-between gap-2">
-                  <dt className="text-neutral-500">Guilt-Free left</dt>
+                  <dt className="text-neutral-500">Wants Side leftover</dt>
                   <dd className="tabular-nums">
+                    {formatRupiah(rem.wantsSideRemaining)}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-2 text-xs text-neutral-400">
+                  <dt className="pl-2">Planned Wants + Guilt-Free</dt>
+                  <dd className="tabular-nums">
+                    {formatRupiah(rem.plannedWantsRemaining)} +{' '}
                     {formatRupiah(rem.guiltFreeRemaining)}
                   </dd>
                 </div>
-                <div className="flex justify-between gap-2">
+                <div className="flex justify-between gap-2 pt-1">
                   <dt className="text-neutral-500">Owed to Emergency Fund</dt>
                   <dd className="tabular-nums text-amber-700 dark:text-amber-300">
                     {formatRupiah(efOwed.total)}
@@ -421,26 +446,29 @@ export function PlanCloseMonth() {
                 </div>
               </dl>
               <p className="mt-2 text-[11px] text-neutral-400">
-                Repay EF anytime from Dashboard. Closing does not require full
-                repayment.
+                Defaults repay EF from Needs Side first, then Buffer carry.
+                Wants Side defaults to Guilt-Free rollover. You can edit before
+                closing.
               </p>
             </section>
 
             <FourWayFields
-              title="Allocate Buffer Leftover"
-              remaining={rem.bufferRemaining}
-              amounts={bufferAlloc}
-              onAmountsChange={setBufferAlloc}
-              mode={bufferMode}
-              onModeChange={setBufferMode}
+              title="Allocate Needs Side Leftover"
+              subtitle={`Planned Needs ${formatRupiah(rem.plannedNeedsRemaining)} + Buffer ${formatRupiah(rem.bufferRemaining)}`}
+              remaining={rem.needsSideRemaining}
+              amounts={needsAlloc}
+              onAmountsChange={setNeedsAlloc}
+              mode={needsMode}
+              onModeChange={setNeedsMode}
             />
             <FourWayFields
-              title="Allocate Guilt-Free Leftover"
-              remaining={rem.guiltFreeRemaining}
-              amounts={gfAlloc}
-              onAmountsChange={setGfAlloc}
-              mode={gfMode}
-              onModeChange={setGfMode}
+              title="Allocate Wants Side Leftover"
+              subtitle={`Planned Wants ${formatRupiah(rem.plannedWantsRemaining)} + Guilt-Free ${formatRupiah(rem.guiltFreeRemaining)}`}
+              remaining={rem.wantsSideRemaining}
+              amounts={wantsAlloc}
+              onAmountsChange={setWantsAlloc}
+              mode={wantsMode}
+              onModeChange={setWantsMode}
             />
 
             <button

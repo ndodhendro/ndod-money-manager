@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Close Month — 2×4 Needs Side / Wants Side</title>
+  <style>
+    :root {
+      --bg: #fafafa; --card: #fff; --text: #171717; --muted: #737373;
+      --line: #e5e5e5; --needs: #f43f5e; --buffer: #f59e0b; --wants: #0ea5e9;
+      --gf: #10b981; --ef: #7c3aed; --ok: #059669; --warn: #b45309;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: "Segoe UI", system-ui, sans-serif;
+      background: var(--bg); color: var(--text); line-height: 1.45;
+      padding: 24px 16px 48px;
+    }
+    .wrap { max-width: 720px; margin: 0 auto; }
+    h1 { font-size: 1.35rem; margin: 0 0 6px; }
+    .sub { color: var(--muted); font-size: 0.9rem; margin-bottom: 20px; }
+    .card {
+      background: var(--card); border: 1px solid var(--line);
+      border-radius: 14px; padding: 16px 18px; margin-bottom: 14px;
+      box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
+    }
+    .card h2 { font-size: 0.95rem; margin: 0 0 10px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .tag {
+      display: inline-block; font-size: 0.72rem; font-weight: 600;
+      padding: 2px 8px; border-radius: 999px; background: #fef3c7; color: var(--warn);
+    }
+    .tag.ok { background: #d1fae5; color: var(--ok); }
+    .note { font-size: 0.82rem; color: var(--muted); margin-top: 10px; }
+    .pill {
+      font-size: 0.75rem; padding: 2px 8px; border-radius: 999px;
+      border: 1px solid var(--line); background: #fff; margin-left: 4px;
+    }
+    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Close Month — 2×4 Allocation (Option A)</h1>
+    <p class="sub">
+      Two UIs only: <strong>Needs Side</strong> (Planned Needs + Buffer) and
+      <strong>Wants Side</strong> (Planned Wants + Guilt-Free). Each allocates 100% to four destinations.
+    </p>
+
+    <section class="card">
+      <h2>1. Month Snapshot</h2>
+      <table>
+        <thead>
+          <tr><th>Track</th><th class="num">Remaining</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><span class="dot" style="background:var(--needs)"></span> Planned Needs</td><td class="num">1.500.000</td></tr>
+          <tr><td><span class="dot" style="background:var(--buffer)"></span> Buffer</td><td class="num">0</td></tr>
+          <tr><td><strong>Needs Side total</strong></td><td class="num"><strong>1.500.000</strong></td></tr>
+          <tr><td><span class="dot" style="background:var(--wants)"></span> Planned Wants</td><td class="num">300.000</td></tr>
+          <tr><td><span class="dot" style="background:var(--gf)"></span> Guilt-Free Fund</td><td class="num">300.000</td></tr>
+          <tr><td><strong>Wants Side total</strong></td><td class="num"><strong>600.000</strong></td></tr>
+        </tbody>
+      </table>
+      <p style="margin:12px 0 0"><span class="tag">Owed to Emergency Fund: 600.000</span></p>
+    </section>
+
+    <section class="card">
+      <h2>2. Allocate Needs Side Leftover <span class="tag ok">100%</span></h2>
+      <p class="note" style="margin:0 0 8px">Planned Needs 1.500.000 + Buffer 0 · smart default</p>
+      <table>
+        <tr><td>Emergency Fund</td><td class="num">600.000 <span class="pill">40%</span></td></tr>
+        <tr><td>Investment Transit</td><td class="num">0</td></tr>
+        <tr><td>Buffer</td><td class="num">900.000 <span class="pill">60%</span></td></tr>
+        <tr><td>Guilt-Free Fund</td><td class="num">0</td></tr>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>3. Allocate Wants Side Leftover <span class="tag ok">100%</span></h2>
+      <p class="note" style="margin:0 0 8px">Planned Wants 300.000 + Guilt-Free 300.000 · default rollover</p>
+      <table>
+        <tr><td>Emergency Fund</td><td class="num">0</td></tr>
+        <tr><td>Investment Transit</td><td class="num">0</td></tr>
+        <tr><td>Buffer</td><td class="num">0</td></tr>
+        <tr><td>Guilt-Free Fund</td><td class="num">600.000 <span class="pill">100%</span></td></tr>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>4. After Close</h2>
+      <table>
+        <tr><td>Main → EF (repay loans)</td><td class="num" style="color:var(--ef)">600.000</td></tr>
+        <tr><td>Owed to EF</td><td class="num"><span class="tag ok">0</span></td></tr>
+        <tr><td>Opening Buffer (next month)</td><td class="num">900.000</td></tr>
+        <tr><td>Opening Guilt-Free (next month)</td><td class="num">600.000</td></tr>
+      </table>
+    </section>
+  </div>
+</body>
+</html>

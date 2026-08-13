@@ -169,7 +169,7 @@ export interface Transaction {
   complete_later: boolean
   /** Expense Needs/Wants; null for income/transfer or legacy rows. */
   budget_group: BudgetGroup | null
-  /** Order within occurred_on. Lower = earlier that day. */
+  /** Order within occurred_on. Lower = earlier that day (bottom of History). */
   sort_order: number
   created_at: string
   updated_at: string
@@ -330,10 +330,22 @@ export interface MonthClose {
   guilt_free_allowance: number
   guilt_free_used: number
   guilt_free_remaining: number
+  planned_needs_remaining: number
+  planned_wants_remaining: number
+  needs_side_to_ef: number
+  needs_side_to_investment: number
+  needs_side_to_buffer: number
+  needs_side_to_guilt_free: number
+  wants_side_to_ef: number
+  wants_side_to_investment: number
+  wants_side_to_buffer: number
+  wants_side_to_guilt_free: number
+  /** @deprecated Prefer needs_side_to_* */
   buffer_to_ef: number
   buffer_to_investment: number
   buffer_to_buffer: number
   buffer_to_guilt_free: number
+  /** @deprecated Prefer wants_side_to_* */
   guilt_free_to_ef: number
   guilt_free_to_investment: number
   guilt_free_to_buffer: number

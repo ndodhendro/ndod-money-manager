@@ -107,7 +107,7 @@ create table if not exists transactions (
   complete_later boolean not null default false,
   -- Expense Needs/Wants for this row; null = inherit subcategory default.
   budget_group budget_group,
-  -- Order within occurred_on. Lower = earlier that day (top of History).
+  -- Order within occurred_on. Lower = earlier that day (bottom of History).
   sort_order integer not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),

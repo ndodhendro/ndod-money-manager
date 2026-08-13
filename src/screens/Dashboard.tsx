@@ -297,6 +297,7 @@ export function Dashboard() {
         message={`Transfer ${formatRupiah(efOwed.total)} from Main Account back to Emergency Fund and clear the debt.`}
         confirmLabel="Repay All"
         cancelLabel="Cancel"
+        busyLabel="Repaying…"
         danger={false}
         busy={repaying}
         onCancel={() => {

@@ -113,7 +113,7 @@ function actualByOwnerForEstimateBill(
   return byOwner
 }
 
-/** Oldest date first; within a day, sort_order (morning → evening), then created_at. */
+/** Oldest date first; within a day, earlier sort_order then created_at then id. */
 export function compareTransactionsChrono(
   a: TransactionWithCategory,
   b: TransactionWithCategory,
@@ -128,6 +128,14 @@ export function compareTransactionsChrono(
   const bAt = String(b.created_at ?? '')
   if (aAt !== bAt) return aAt < bAt ? -1 : 1
   return a.id.localeCompare(b.id)
+}
+
+/** History day list: newest first (sort_order, created_at, id descending). */
+export function compareHistoryDayDisplay(
+  a: TransactionWithCategory,
+  b: TransactionWithCategory,
+): number {
+  return compareTransactionsChrono(b, a)
 }
 
 /**

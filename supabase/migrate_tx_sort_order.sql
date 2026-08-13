@@ -1,11 +1,11 @@
--- Intra-day order for History (morning → evening) and Overspend labels.
+-- Intra-day order for History (newest at top) and Overspend labels.
 -- Safe to re-run.
 
 alter table transactions
   add column if not exists sort_order integer not null default 0;
 
 comment on column transactions.sort_order is
-  'Order within occurred_on. Lower = earlier that day (top of History).';
+  'Order within occurred_on. Lower = earlier that day (bottom of History).';
 
 create index if not exists transactions_occurred_on_sort_idx
   on transactions (occurred_on, sort_order);

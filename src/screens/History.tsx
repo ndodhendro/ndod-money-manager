@@ -36,7 +36,20 @@ import {
 import { requestAmountFocus } from '../lib/keyboardFocus'
 import { monthCursorKey } from '../lib/monthCursor'
 import { budgetGroupOfTx } from '../lib/moneyPlan'
-import { overspendTransactionIds, compareTransactionsChrono } from '../lib/estimateProgress'
+import {
+  overspendTransactionIds,
+  compareHistoryDayDisplay,
+} from '../lib/estimateProgress'
+import {
+  checkingBucketIdSet,
+  estimateExpenseCoverageKeys,
+  unplannedNeedsTransactionIds,
+} from '../lib/freeGuiltyProgress'
+import {
+  budgetGroupOfEstimate,
+  budgetGroupOfTransferTo,
+  isPlannedNeedsSchedule,
+} from '../lib/freeWants'
 import {
   countDueOrOverdueUnchecked,
   isOccurrenceSkipped,
@@ -138,7 +151,7 @@ export function History() {
   const { byId: categoriesById } = useCategories(undefined, {
     includeInactive: true,
   })
-  const { byId: bucketsById } = useBuckets()
+  const { buckets, byId: bucketsById } = useBuckets()
 
   // Hanya di device ini, via location state — tidak disimpan ke DB.
   const navHighlightId =
@@ -344,9 +357,11 @@ export function History() {
 
   async function handleDayReorder(date: string, orderedIds: string[]) {
     setOpenSwipeId(null)
-    applyDaySortOrder(date, orderedIds)
+    // Visual list is newest-first; persist oldest-first so sort_order 1 = earlier that day.
+    const persistIds = [...orderedIds].reverse()
+    applyDaySortOrder(date, persistIds)
     try {
-      await reorderTransactions(orderedIds)
+      await reorderTransactions(persistIds)
     } catch (err) {
       showAppToast(err instanceof Error ? err.message : 'Failed to reorder')
       await reload({ silent: true })
@@ -419,27 +434,49 @@ export function History() {
     categoryFilter === 'all' &&
     subcategoryFilter === 'all'
 
-  const overspendTxIds = useMemo(
-    () =>
-      overspendTransactionIds({
-        bills,
-        overridesByBillId: overrideByBillId,
-        skippedOccurrenceKeys,
-        categoriesById,
-        bucketsById,
-        yearMonth,
-        transactions,
-      }),
-    [
+  const overspendTxIds = useMemo(() => {
+    const fromEstimates = overspendTransactionIds({
       bills,
-      overrideByBillId,
+      overridesByBillId: overrideByBillId,
       skippedOccurrenceKeys,
       categoriesById,
       bucketsById,
       yearMonth,
       transactions,
-    ],
-  )
+    })
+    const coverageKeys = estimateExpenseCoverageKeys(
+      bills,
+      categoriesById,
+      (bill) => {
+        if (!isPlannedNeedsSchedule(bill)) return false
+        if (bill.type === 'expense') {
+          const g = budgetGroupOfEstimate(bill, categoriesById)
+          return g === 'needs' || g === 'wants'
+        }
+        if (bill.type === 'transfer') {
+          const g = budgetGroupOfTransferTo(bill.to_bucket_id, bucketsById)
+          return g === 'needs' || g === 'wants'
+        }
+        return false
+      },
+    )
+    const fromUnplannedNeeds = unplannedNeedsTransactionIds({
+      transactions,
+      estimateCoverageKeys: coverageKeys,
+      checkingBucketIds: checkingBucketIdSet(buckets),
+    })
+    for (const id of fromUnplannedNeeds) fromEstimates.add(id)
+    return fromEstimates
+  }, [
+    bills,
+    overrideByBillId,
+    skippedOccurrenceKeys,
+    categoriesById,
+    bucketsById,
+    buckets,
+    yearMonth,
+    transactions,
+  ])
 
   function groupByDate(items: TransactionWithCategory[]) {
     const grouped = items.reduce<Record<string, TransactionWithCategory[]>>(
@@ -451,7 +488,7 @@ export function History() {
       {},
     )
     for (const date of Object.keys(grouped)) {
-      grouped[date]!.sort(compareTransactionsChrono)
+      grouped[date]!.sort(compareHistoryDayDisplay)
     }
     const dates = Object.keys(grouped).sort((a, b) => (a < b ? 1 : -1))
     return { grouped, dates }

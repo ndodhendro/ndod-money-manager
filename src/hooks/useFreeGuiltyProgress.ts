@@ -12,6 +12,7 @@ import {
   checkingBucketIdSet,
   estimateExpenseCoverageKeys,
   sumGuiltFreeSpent,
+  sumUnplannedNeedsSpent,
   type MonthBudgetProgress,
 } from '../lib/freeGuiltyProgress'
 import {
@@ -184,6 +185,7 @@ export function useFreeGuiltyProgress(
       categoriesById,
       (bill) => isNeedsOrWantsEstimateBill(bill, categoriesById, bucketsById),
     )
+    const checkingIds = checkingBucketIdSet(buckets)
     return buildMonthBudgetProgress({
       plannedNeeds: allocation.plannedNeeds,
       needsActual,
@@ -194,9 +196,14 @@ export function useFreeGuiltyProgress(
       guiltFreeSpent: sumGuiltFreeSpent({
         transactions,
         estimateCoverageKeys,
-        checkingBucketIds: checkingBucketIdSet(buckets),
+        checkingBucketIds: checkingIds,
       }),
       estimateOverspend: sumEstimateOverspend(estimateRows),
+      unplannedNeedsSpent: sumUnplannedNeedsSpent({
+        transactions,
+        estimateCoverageKeys,
+        checkingBucketIds: checkingIds,
+      }),
     })
   }, [
     allocation,

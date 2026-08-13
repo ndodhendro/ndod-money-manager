@@ -12,7 +12,10 @@ interface ConfirmDialogProps {
    */
   alternateLabel?: string
   onAlternate?: () => void
-  /** Shown on the confirm button while busy. Defaults to "Deleting…". */
+  /**
+   * Shown on the confirm button while busy.
+   * Defaults to "Deleting…" when confirmLabel is "Delete", otherwise `${confirmLabel}…`.
+   */
   busyLabel?: string
   danger?: boolean
   busy?: boolean
@@ -28,12 +31,15 @@ export function ConfirmDialog({
   cancelLabel = 'Cancel',
   alternateLabel,
   onAlternate,
-  busyLabel = 'Deleting…',
+  busyLabel,
   danger = true,
   busy = false,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  const resolvedBusyLabel =
+    busyLabel ?? (confirmLabel === 'Delete' ? 'Deleting…' : `${confirmLabel}…`)
+
   useOverlayBack(open, () => {
     if (busy) return false
     onCancel()
@@ -93,7 +99,7 @@ export function ConfirmDialog({
                 : 'bg-emerald-500 text-white active:bg-emerald-600'
             }`}
           >
-            {busy ? busyLabel : confirmLabel}
+            {busy ? resolvedBusyLabel : confirmLabel}
           </button>
         </div>
       </div>

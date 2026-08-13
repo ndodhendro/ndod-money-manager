@@ -92,9 +92,11 @@ async function fetchTransactionRows(
     .lte('occurred_on', range.end)
     .order('occurred_on', { ascending: false })
   if (useSortOrder) {
-    query = query.order('sort_order', { ascending: true })
+    query = query.order('sort_order', { ascending: false })
   }
-  const result = await query.order('created_at', { ascending: true })
+  const result = await query
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
   return { data: result.data, error: result.error }
 }
 

@@ -2,15 +2,14 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent,
 } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import {
-  BucketPicker,
-  type BucketSelection,
-} from '../components/BucketPicker'
+import { BucketPicker, type BucketSelection } from '../components/BucketPicker'
+import { BudgetGroupToggle } from '../components/BudgetGroupToggle'
 import { CategoryPicker } from '../components/CategoryPicker'
 import { CirclePicker } from '../components/CirclePicker'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -21,17 +20,30 @@ import { OwnerPicker } from '../components/OwnerPicker'
 import { PageTitle } from '../components/PageTitle'
 import { useBuckets } from '../hooks/useBuckets'
 import { useCategories } from '../hooks/useCategories'
+import { useFreeGuiltyProgress } from '../hooks/useFreeGuiltyProgress'
+import { useTransactions } from '../hooks/useTransactions'
 import { ActionEmoji } from '../lib/actionEmoji'
 import { showAppToast } from '../lib/appToast'
+import {
+  efLoanConfirmMessage,
+  evaluateExpenseEfLoan,
+  resolveMonthWritePolicy,
+  yearMonthFromOccurredOn,
+} from '../lib/budgetSaveGate'
 import { resolveExpenseFromBucketId } from '../lib/bucketsApi'
 import { isExpenseOtherCategory } from '../lib/categoriesApi'
+import { budgetGroupOfCategory } from '../lib/freeWants'
+import {
+  deleteEfLoanForTransaction,
+  upsertEfLoanForTransaction,
+} from '../lib/efLoansApi'
+import { formatNumber, monthRange, todayIso } from '../lib/format'
 import {
   bumpCategoryUsage,
   getStoredCircle,
   getStoredProfile,
   setStoredCircle,
 } from '../lib/profile'
-import { formatNumber, todayIso } from '../lib/format'
 import {
   claimNumericKeyboard,
   dismissNumericKeyboard,
@@ -47,9 +59,12 @@ import {
 } from '../lib/transactionsApi'
 import {
   isCircle,
+  isBudgetGroup,
   isTransactionFullySpecified,
+  type BudgetGroup,
   type CategoryType,
   type Circle,
+  type EfLoanSource,
   type NewTransactionInput,
   type Owner,
   type TransactionType,
@@ -71,6 +86,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   const [type, setType] = useState<TransactionType>('expense')
   const [amountDigits, setAmountDigits] = useState('')
   const [categoryId, setCategoryId] = useState<string | null>(null)
+  const [budgetGroup, setBudgetGroup] = useState<BudgetGroup | null>(null)
   const [fromBucket, setFromBucket] = useState<BucketSelection | undefined>(
     undefined,
   )
@@ -90,6 +106,28 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   const [fromOpen, setFromOpen] = useState(false)
   const [toOpen, setToOpen] = useState(false)
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
+  const [efConfirm, setEfConfirm] = useState<{
+    draft: NewTransactionInput
+    borrowAmount: number
+    source: EfLoanSource
+    yearMonth: string
+  } | null>(null)
+
+  const yearMonth = yearMonthFromOccurredOn(occurredOn)
+  const monthTxRange = useMemo(() => {
+    const [y, m] = yearMonth.split('-').map(Number)
+    return monthRange(y, m - 1)
+  }, [yearMonth])
+  const { transactions: monthTransactions } = useTransactions(monthTxRange)
+  const {
+    allocation,
+    bills,
+    overrideByBillId,
+    skippedOccurrenceKeys,
+    categoriesById: expenseCatsById,
+    bucketsById,
+    buckets: allBuckets,
+  } = useFreeGuiltyProgress(yearMonth, monthTransactions)
 
   const amountRef = useRef<HTMLInputElement | null>(null)
   const descriptionRef = useRef<HTMLInputElement>(null)
@@ -142,6 +180,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         const amt = Number(data.amount)
         setAmountDigits(amt > 0 ? String(Math.round(amt)) : '')
         setCategoryId(data.category_id)
+        setBudgetGroup(isBudgetGroup(data.budget_group) ? data.budget_group : null)
         setFromBucket(
           data.type === 'transfer'
             ? ((data.from_bucket_id as string | null) ?? null)
@@ -183,6 +222,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     setType(nextType)
     setAmountDigits('')
     setCategoryId(null)
+    setBudgetGroup(null)
     setFromBucket(param === 'transfer' ? null : undefined)
     setToBucket(undefined)
     setDescription('')
@@ -214,6 +254,16 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     if (isEditing || !isActive || loadingExisting) return
     focusAmountOnTambahReady(amountRef.current)
   }, [isEditing, isActive, loadingExisting])
+
+  useEffect(() => {
+    if (type !== 'expense') {
+      setBudgetGroup(null)
+      return
+    }
+    if (!categoryId || budgetGroup) return
+    const next = budgetGroupOfCategory(categoryId, byId)
+    if (next) setBudgetGroup(next)
+  }, [type, categoryId, byId, budgetGroup])
 
   useEffect(() => {
     if (type === 'transfer') return
@@ -454,6 +504,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
 
   function handleCategorySelect(id: string) {
     setCategoryId(id)
+    setBudgetGroup(budgetGroupOfCategory(id, byId) ?? 'needs')
     setCategoryOpen(false)
   }
 
@@ -486,6 +537,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   function handleTypeChange(next: TransactionType) {
     setType(next)
     setCategoryId(null)
+    setBudgetGroup(null)
     setOwnerOpen(false)
     setCircleOpen(false)
     setCategoryOpen(false)
@@ -586,6 +638,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
             occurred_on: occurredOn,
             is_recurring: false,
             complete_later: completeLater,
+            budget_group: null,
           }
         : {
             type,
@@ -602,10 +655,64 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
             occurred_on: occurredOn,
             is_recurring: false,
             complete_later: completeLater,
+            budget_group:
+              type === 'expense' ? (budgetGroup ?? 'needs') : null,
           }
 
-    // Only auto-clear when finishing an existing placeholder — not when the
-    // user newly flags a completed transaction as Complete Later.
+    try {
+      const policy = await resolveMonthWritePolicy(draft.occurred_on)
+      if (!policy.allowed) {
+        showAppToast(policy.message)
+        navigate('/rencana/close-month')
+        return
+      }
+
+      let loan:
+        | { amount: number; source: EfLoanSource; yearMonth: string }
+        | undefined
+      if (draft.type === 'expense' && !draft.complete_later && allocation) {
+        const evalResult = evaluateExpenseEfLoan({
+          draft,
+          editId: isEditing ? id : null,
+          monthClosed: policy.monthClosed,
+          transactions: monthTransactions,
+          bills,
+          overridesByBillId: overrideByBillId,
+          skippedOccurrenceKeys,
+          categoriesById: expenseCatsById,
+          bucketsById,
+          buckets: allBuckets,
+          yearMonth: policy.yearMonth,
+          bufferAllowance: allocation.buffer,
+          guiltFreeAllowance: allocation.guiltFree,
+        })
+        if (evalResult.borrowAmount > 0 && evalResult.source) {
+          setEfConfirm({
+            draft,
+            borrowAmount: evalResult.borrowAmount,
+            source: evalResult.source,
+            yearMonth: policy.yearMonth,
+          })
+          return
+        }
+        if (evalResult.borrowAmount <= 0) {
+          loan = undefined
+        }
+      }
+
+      setSaving(true)
+      await persistDraft(draft, loan)
+    } catch (err) {
+      showAppToast(err instanceof Error ? err.message : 'Failed to save')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function persistDraft(
+    draft: NewTransactionInput,
+    loan?: { amount: number; source: EfLoanSource; yearMonth: string },
+  ) {
     let autoCompleted = false
     if (
       isEditing &&
@@ -617,33 +724,61 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
       autoCompleted = true
     }
 
-    setSaving(true)
-    try {
-      if (isEditing && id) {
-        await updateTransaction(id, draft)
-        if (draft.type !== 'income') setStoredCircle(draft.circle)
-        if (autoCompleted) {
-          showAppToast(`Completed ${ActionEmoji.save}`)
-          setCompleteLater(false)
-        }
-        dismissNumericKeyboard()
-        navigate('/riwayat', {
-          replace: true,
-          state: { highlightTxId: id },
+    if (isEditing && id) {
+      await updateTransaction(id, draft)
+      if (loan && loan.amount > 0) {
+        await upsertEfLoanForTransaction({
+          transactionId: id,
+          yearMonth: loan.yearMonth,
+          amount: loan.amount,
+          source: loan.source,
         })
-      } else {
-        const newId = await createTransaction(draft)
-        if (draft.category_id) bumpCategoryUsage(draft.category_id)
-        if (draft.type !== 'income') setStoredCircle(draft.circle)
-        void reloadBuckets()
-        resetForm()
-        showAppToast(`Saved ${ActionEmoji.save}`)
-        dismissNumericKeyboard()
-        navigate('/riwayat', {
-          replace: true,
-          state: { highlightTxId: newId },
+      } else if (draft.type === 'expense') {
+        await deleteEfLoanForTransaction(id)
+      }
+      if (draft.type !== 'income') setStoredCircle(draft.circle)
+      if (autoCompleted) {
+        showAppToast(`Completed ${ActionEmoji.save}`)
+        setCompleteLater(false)
+      }
+      dismissNumericKeyboard()
+      navigate('/riwayat', {
+        replace: true,
+        state: { highlightTxId: id },
+      })
+    } else {
+      const newId = await createTransaction(draft)
+      if (loan && loan.amount > 0) {
+        await upsertEfLoanForTransaction({
+          transactionId: newId,
+          yearMonth: loan.yearMonth,
+          amount: loan.amount,
+          source: loan.source,
         })
       }
+      if (draft.category_id) bumpCategoryUsage(draft.category_id)
+      if (draft.type !== 'income') setStoredCircle(draft.circle)
+      void reloadBuckets()
+      resetForm()
+      showAppToast(`Saved ${ActionEmoji.save}`)
+      dismissNumericKeyboard()
+      navigate('/riwayat', {
+        replace: true,
+        state: { highlightTxId: newId },
+      })
+    }
+  }
+
+  async function confirmEfLoanSave() {
+    if (!efConfirm) return
+    setSaving(true)
+    try {
+      await persistDraft(efConfirm.draft, {
+        amount: efConfirm.borrowAmount,
+        source: efConfirm.source,
+        yearMonth: efConfirm.yearMonth,
+      })
+      setEfConfirm(null)
     } catch (err) {
       showAppToast(err instanceof Error ? err.message : 'Failed to save')
     } finally {
@@ -823,17 +958,25 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
             {loadingCategories && treeByUsage.length === 0 ? (
               <p className="text-sm text-neutral-400">Loading categories…</p>
             ) : (
-              <CategoryPicker
-                tree={treeByUsage}
-                selectedId={categoryId}
-                byId={byId}
-                open={categoryOpen}
-                onOpenChange={handleCategoryOpenChange}
-                onSelect={handleCategorySelect}
-                transactionType={type}
-                onCategoriesChanged={reload}
-                highlighted={categoryOpen}
-              />
+              <>
+                <CategoryPicker
+                  tree={treeByUsage}
+                  selectedId={categoryId}
+                  byId={byId}
+                  open={categoryOpen}
+                  onOpenChange={handleCategoryOpenChange}
+                  onSelect={handleCategorySelect}
+                  transactionType={type}
+                  onCategoriesChanged={reload}
+                  highlighted={categoryOpen}
+                />
+                {!isIncome && categoryId && budgetGroup ? (
+                  <BudgetGroupToggle
+                    value={budgetGroup}
+                    onChange={setBudgetGroup}
+                  />
+                ) : null}
+              </>
             )}
           </>
         )}
@@ -875,6 +1018,25 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
           Delete
         </button>
       )}
+
+      <ConfirmDialog
+        open={efConfirm != null}
+        title="Borrow from Emergency Fund?"
+        message={
+          efConfirm
+            ? efLoanConfirmMessage(efConfirm.borrowAmount, efConfirm.source)
+            : ''
+        }
+        confirmLabel="Borrow & Save"
+        cancelLabel="Cancel"
+        danger={false}
+        busy={saving}
+        onCancel={() => {
+          if (saving) return
+          setEfConfirm(null)
+        }}
+        onConfirm={() => void confirmEfLoanSave()}
+      />
 
       <ConfirmDialog
         open={confirmDeleteOpen}

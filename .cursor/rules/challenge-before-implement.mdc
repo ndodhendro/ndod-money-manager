@@ -1,0 +1,45 @@
+---
+description: Challenge product/UI requests before implementing; do not rubber-stamp prompts
+alwaysApply: true
+---
+
+# Challenge before implementing
+
+## Rule
+
+Do **not** treat every user prompt as an order to implement immediately.
+
+For product, UX, visual design, information architecture, naming, and budgeting-model changes: **challenge first**, then implement only after the direction is sound (or the user explicitly overrides).
+
+Routine execution (bugfix with clear repro, copy typo, version bump, commit/push when asked, run build) can proceed without a design debate.
+
+## When to challenge
+
+Challenge when the request may be:
+
+- Ambiguous or underspecified
+- Inconsistent with existing screens / `ui-consistency.mdc` / `product-ux.mdc`
+- Weaker than a known UX or financial-planning best practice
+- Likely to create dual meanings (e.g. same color = different semantics)
+- Adding friction to capture-first flows
+- Solving a symptom instead of the underlying model
+
+## How to challenge
+
+1. State the concern in 1–3 short sentences (what could go wrong or confuse users).
+2. Offer a better default or 1–2 concrete alternatives.
+3. Ask which direction to take — **unless** the user already said to follow best practice / your recommendation, in which case implement that.
+4. Do not implement the weaker option just to be agreeable.
+
+## After challenge
+
+- If the user picks an option or says “ikut best practice / rekomendasi kamu”: implement that.
+- If the user explicitly insists on their original approach after the challenge: follow it, and keep consistency with the rest of the app.
+- Do not re-litigate the same point every turn once decided in the thread.
+
+## Examples
+
+- ✅ User asks for red=used + green=available dual fill → challenge (ambiguous vs standard progress bar) → recommend neutral track + status fill → implement after they agree.
+- ✅ User asks for a new confirm dialog on every Quick Add save → challenge (capture-first / minimal taps) → suggest toast instead.
+- ❌ User asks to fix a TypeScript error → just fix it.
+- ❌ User already said “ikut best practice” → do not ask again; implement.

@@ -450,7 +450,7 @@ export function PlanNeedsWants() {
               bucket={moneyPlan.needs}
               hint="Planned essentials"
               barClass={BUDGET_GROUP_BAR_CLASS.needs}
-              mode="floor"
+              mode="ceiling"
             />
             <PlanBudgetRow
               bucket={moneyPlan.wants}
@@ -475,7 +475,7 @@ export function PlanNeedsWants() {
                   bucket={committedBucket}
                   hint="Estimate wants reserved this month"
                   barClass="bg-violet-400"
-                  mode="floor"
+                  mode="ceiling"
                 />
                 <PlanBudgetRow
                   bucket={freeBucket}
@@ -528,8 +528,9 @@ export function PlanNeedsWants() {
                 </p>
                 {estimateBorrowed > 0 && (
                   <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
-                    Borrowed from Free Guilty {formatRupiah(estimateBorrowed)}{' '}
-                    (see Payday Allocation).
+                    Overspend uses Buffer first; beyond Buffer borrows from
+                    Emergency Fund {formatRupiah(estimateBorrowed)} (see Payday
+                    Allocation).
                   </p>
                 )}
                 {estimateProgress.map((row) => (

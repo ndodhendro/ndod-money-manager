@@ -133,7 +133,11 @@ export function RecurringBillRowContent({
             {formatRupiah(amount)}
           </p>
         </div>
-        {budgetGroup ? <BudgetGroupBadge group={budgetGroup} /> : null}
+        {budgetGroup ? (
+          <p className="truncate text-left text-xs leading-none">
+            <BudgetGroupBadge group={budgetGroup} />
+          </p>
+        ) : null}
         {showMeta ? (
           <p className="min-w-0 truncate text-xs leading-tight text-neutral-400">
             {meta}

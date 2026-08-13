@@ -16,7 +16,7 @@ export function BudgetGroupBadge({
 }: BudgetGroupBadgeProps) {
   return (
     <span
-      className={`inline-flex shrink-0 items-center text-[11px] font-medium leading-none ${BUDGET_GROUP_TEXT_CLASS[group]} ${className}`}
+      className={`shrink-0 text-xs font-medium leading-none ${BUDGET_GROUP_TEXT_CLASS[group]} ${className}`}
     >
       {BUDGET_GROUP_LABELS[group]}
     </span>

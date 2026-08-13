@@ -9,7 +9,14 @@ import {
 } from './monthCursor'
 import { notifyRecurringBillsChanged } from './recurringBillsEvents'
 import { supabase } from './supabase'
-import { isOwner, type Circle, type Owner, type TransactionType } from './types'
+import {
+  isBudgetGroup,
+  isOwner,
+  type BudgetGroup,
+  type Circle,
+  type Owner,
+  type TransactionType,
+} from './types'
 
 export type RecurringIntervalUnit = 'week' | 'month'
 
@@ -21,6 +28,8 @@ export interface RecurringBill {
   category_id: string | null
   from_bucket_id: string | null
   to_bucket_id: string | null
+  /** Expense Needs/Wants; null for income/transfer or inherit subcategory. */
+  budget_group: BudgetGroup | null
   circle: Circle
   owner: Owner
   due_day: number
@@ -363,6 +372,7 @@ function mapBill(row: Record<string, unknown>): RecurringBill {
     category_id: (row.category_id as string | null) ?? null,
     from_bucket_id: (row.from_bucket_id as string | null) ?? null,
     to_bucket_id: (row.to_bucket_id as string | null) ?? null,
+    budget_group: isBudgetGroup(row.budget_group) ? row.budget_group : null,
     circle: row.circle as Circle,
     owner: isOwner(row.owner) ? row.owner : 'suami',
     due_day,
@@ -483,6 +493,7 @@ export function isEstimateActiveInMonth(
 /**
  * How many times this estimate applies in the month (for summing amounts).
  * Non-recurring → 1. Recurring → dated occurrence count (minus skips).
+ * Use for checklist / payday cash / This Month Totals — not budget ceilings.
  */
 export function estimateOccurrenceCount(
   bill: RecurringBill,
@@ -503,6 +514,22 @@ export function estimateOccurrenceCount(
     count += 1
   }
   return count
+}
+
+/**
+ * Occurrence count for unskipped Planned Needs / Planned Wants baseline
+ * (buffer % base). Ignores skips and amount overrides; due-day override
+ * still affects which dates fall in the month.
+ * Prefer `estimateOccurrenceCount` when skips should shrink the ceiling.
+ */
+export function estimatePlannedOccurrenceCount(
+  bill: RecurringBill,
+  yearMonth: string,
+  override?: RecurringBillMonthOverride | null,
+): number {
+  if (!bill.is_active) return 0
+  if (!bill.is_recurring) return 1
+  return occurrencesInMonth(bill, yearMonth, override).length
 }
 
 /** Due label for a specific ISO date, e.g. "Tue, 15 Aug 2026". */
@@ -597,7 +624,7 @@ export function formatRecurringSettingsDescription(input: {
 
 /**
  * Weekly / biweekly settings hint: how many times this estimate hits the
- * given month (matches planned-needs / This Month Totals weighting).
+ * given month after skips (checklist / This Month Totals weighting).
  * Returns null for non-weekly schedules.
  */
 export function formatThisMonthFrequencyLabel(
@@ -789,6 +816,17 @@ function isMissingStartsColumn(message: string): boolean {
 function isMissingOwnerColumn(message: string): boolean {
   const lower = message.toLowerCase()
   return lower.includes('owner') && lower.includes('column')
+}
+
+function isMissingBillBudgetGroupColumn(message: string): boolean {
+  const lower = message.toLowerCase()
+  return lower.includes('budget_group')
+}
+
+function migrateBillBudgetGroupHint(): Error {
+  return new Error(
+    'Run migrate_tx_estimate_budget_group.sql in Supabase to enable Needs/Wants on estimates',
+  )
 }
 
 export async function fetchRecurringBills(options?: {
@@ -1211,6 +1249,7 @@ export type NewRecurringBillInput = {
   category_id: string | null
   from_bucket_id: string | null
   to_bucket_id: string | null
+  budget_group?: BudgetGroup | null
   circle: Circle
   owner: Owner
   due_day: number
@@ -1251,6 +1290,10 @@ function toInsertRow(
     name: input.name.trim(),
     amount: input.amount,
     category_id: input.type === 'transfer' ? null : input.category_id,
+    budget_group:
+      input.type === 'expense' && isBudgetGroup(input.budget_group)
+        ? input.budget_group
+        : null,
     circle: input.circle,
     icon: input.icon || '📌',
     sort_order: sortOrder,
@@ -1503,6 +1546,9 @@ async function insertRecurringBill(
     lastError = result.error
     const message = result.error.message
 
+    if (isMissingBillBudgetGroupColumn(message)) {
+      throw migrateBillBudgetGroupHint()
+    }
     if (flags.includeOwner && isMissingOwnerColumn(message)) break
     if (
       flags.includeIsRecurring &&
@@ -1627,6 +1673,7 @@ export async function updateRecurringBill(
     category_id: string | null
     from_bucket_id: string | null
     to_bucket_id: string | null
+    budget_group: BudgetGroup | null
     circle: Circle
     owner: Owner
     due_day: number
@@ -1642,6 +1689,14 @@ export async function updateRecurringBill(
   }>,
 ): Promise<RecurringBill> {
   const nextPatch = { ...patch }
+  if (nextPatch.type === 'income' || nextPatch.type === 'transfer') {
+    nextPatch.budget_group = null
+  } else if (
+    nextPatch.budget_group != null &&
+    !isBudgetGroup(nextPatch.budget_group)
+  ) {
+    nextPatch.budget_group = null
+  }
   const isRecurring = nextPatch.is_recurring !== false
 
   if (nextPatch.is_recurring === false) {
@@ -1686,6 +1741,9 @@ export async function updateRecurringBill(
       throw new Error(
         'Run migrate_recurring_owner.sql in Supabase to enable profile',
       )
+    }
+    if (isMissingBillBudgetGroupColumn(error.message) && 'budget_group' in nextPatch) {
+      throw migrateBillBudgetGroupHint()
     }
     if (
       isMissingIsRecurringColumn(error.message) &&

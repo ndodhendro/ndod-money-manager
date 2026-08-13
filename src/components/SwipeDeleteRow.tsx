@@ -24,12 +24,19 @@ interface SwipeDeleteRowProps {
   onContentClick: () => void
   deleteAriaLabel?: string
   /**
+   * Leading controls that slide with the row (e.g. drag handle).
+   * Stay outside the content tap target.
+   */
+  leading?: ReactNode
+  /**
    * Trailing controls that slide with the row (e.g. edit).
    * Stay to the left of the revealed delete action.
    */
   trailing?: ReactNode
   /** Override front-face background (default white / dark neutral-800). */
   surfaceClassName?: string
+  /** Skip swipe-to-delete while a vertical drag is in progress. */
+  swipeLocked?: boolean
 }
 
 export function SwipeDeleteRow({
@@ -42,8 +49,10 @@ export function SwipeDeleteRow({
   completeLater = false,
   onContentClick,
   deleteAriaLabel = 'Delete',
+  leading,
   trailing,
   surfaceClassName,
+  swipeLocked = false,
 }: SwipeDeleteRowProps) {
   const [offset, setOffset] = useState(0)
   const startX = useRef(0)
@@ -69,7 +78,7 @@ export function SwipeDeleteRow({
   }
 
   function handleTouchStart(e: ReactTouchEvent) {
-    if (highlighted) return
+    if (highlighted || swipeLocked) return
     const t = e.changedTouches[0]
     if (!t) return
     startX.current = t.clientX
@@ -81,7 +90,7 @@ export function SwipeDeleteRow({
   }
 
   function handleTouchMove(e: ReactTouchEvent) {
-    if (!dragging.current || highlighted) return
+    if (!dragging.current || highlighted || swipeLocked) return
     const t = e.changedTouches[0]
     if (!t) return
     const dx = t.clientX - startX.current
@@ -169,6 +178,17 @@ export function SwipeDeleteRow({
             : (surfaceClassName ?? 'bg-white dark:bg-neutral-800')
         }`}
       >
+        {leading != null ? (
+          <div
+            className="shrink-0 pl-1"
+            onClick={(e) => {
+              e.stopPropagation()
+              if (moved.current) moved.current = false
+            }}
+          >
+            {leading}
+          </div>
+        ) : null}
         <div
           ref={contentRef}
           role="button"

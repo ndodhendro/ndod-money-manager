@@ -77,5 +77,17 @@ export function useTransactions(range: { start: string; end: string }) {
     })
   }, [load])
 
-  return { transactions, loading, error, reload: load }
+  const applyDaySortOrder = useCallback((date: string, orderedIds: string[]) => {
+    const day = date.slice(0, 10)
+    setTransactions((prev) =>
+      prev.map((tx) => {
+        if (String(tx.occurred_on).slice(0, 10) !== day) return tx
+        const idx = orderedIds.indexOf(tx.id)
+        if (idx < 0) return tx
+        return { ...tx, sort_order: idx + 1 }
+      }),
+    )
+  }, [])
+
+  return { transactions, loading, error, reload: load, applyDaySortOrder }
 }

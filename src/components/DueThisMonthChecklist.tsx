@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { ActionEmoji } from '../lib/actionEmoji'
 import { showAppToast } from '../lib/appToast'
 import { areAllCollapseOpen } from '../lib/collapseState'
@@ -30,18 +31,28 @@ import {
 } from '../lib/recurringBillsApi'
 import { createTransaction, deleteTransaction } from '../lib/transactionsApi'
 import { resolveExpenseFromBucketId } from '../lib/bucketsApi'
+import {
+  efLoanConfirmMessage,
+  evaluateExpenseEfLoan,
+  resolveMonthWritePolicy,
+} from '../lib/budgetSaveGate'
+import { upsertEfLoanForTransaction } from '../lib/efLoansApi'
 import { useBuckets } from '../hooks/useBuckets'
 import { useCategories } from '../hooks/useCategories'
+import { useFreeGuiltyProgress } from '../hooks/useFreeGuiltyProgress'
 import { usePyfSettings } from '../hooks/usePyfSettings'
 import { useTransactions } from '../hooks/useTransactions'
 import {
-  isCheckingAutoAmountTransfer,
   isPyfAutoAmountTransfer,
   resolveEstimateAmount,
   sumMonthRegularIncome,
 } from '../lib/moneyPlan'
-import { computeFreeGuiltySplit } from '../lib/paydayAllocation'
 import { isBlankSearch, matchesRecurringBillSearch } from '../lib/listSearch'
+import {
+  estimatePlanBadgeGroup,
+  estimatePlanTag,
+} from '../lib/freeWants'
+import type { EfLoanSource, NewTransactionInput } from '../lib/types'
 import { ConfirmDialog } from './ConfirmDialog'
 import { GroupedListFrame } from './GroupedListFrame'
 import { CollapsibleDayGroup } from './CollapsibleDayGroup'
@@ -194,6 +205,7 @@ export function DueThisMonthChecklist({
   expandAll,
   onDayOpenChange,
 }: DueThisMonthChecklistProps) {
+  const navigate = useNavigate()
   const [internalSearchQuery, setInternalSearchQuery] = useState('')
   const searchQuery = searchQueryProp ?? internalSearchQuery
   const searchActive = !isBlankSearch(searchQuery)
@@ -227,6 +239,15 @@ export function DueThisMonthChecklist({
   const [pendingDoneConfirm, setPendingDoneConfirm] = useState<{
     bill: RecurringBill
     occurredOn: string
+  } | null>(null)
+  const [pendingEfConfirm, setPendingEfConfirm] = useState<{
+    bill: RecurringBill
+    occurredOn: string
+    draft: NewTransactionInput
+    borrowAmount: number
+    source: EfLoanSource
+    yearMonth: string
+    amountOverride?: number
   } | null>(null)
   const [savingOverride, setSavingOverride] = useState(false)
   const [openSwipeId, setOpenSwipeId] = useState<string | null>(null)
@@ -273,45 +294,31 @@ export function DueThisMonthChecklist({
   const monthRange = useMemo(() => monthCursorRange(cursor), [cursor])
   const { transactions: monthTransactions, loading: monthTxLoading } =
     useTransactions(monthRange)
+  const {
+    allocation,
+    categoriesById: expenseCatsById,
+    bucketsById: progressBucketsById,
+    buckets: progressBuckets,
+  } = useFreeGuiltyProgress(yearMonth, monthTransactions)
   const monthIncome = useMemo(
     () => sumMonthRegularIncome(monthTransactions),
     [monthTransactions],
   )
-  // Buckets + income + Money Plan % must be ready before PYF / checking
+  // Buckets + income + Money Plan % must be ready before PYF
   // transfer rows show note/amount — otherwise users see Main Account / stored
   // placeholder flash into the real destination + computed amount.
   const amountDepsReady =
     !bucketsLoading && !pyfLoading && !monthTxLoading
   const displayLoading = loading || !amountDepsReady
-  const amountCtx = useMemo(() => {
-    const freeGuiltySplit = computeFreeGuiltySplit({
-      income: monthIncome,
-      bills,
-      overridesByBillId: overrideByBillId,
-      skippedOccurrenceKeys,
-      categoriesById: byId,
-      bucketsById,
-      yearMonth,
-      emergencyPct: pyfSettings?.emergency_fund_pct ?? 10,
-      investmentPct: pyfSettings?.investment_pct ?? 15,
-    }).split
-    return {
+  const amountCtx = useMemo(
+    () => ({
       monthIncome,
       emergencyPct: pyfSettings?.emergency_fund_pct ?? 10,
       investmentPct: pyfSettings?.investment_pct ?? 15,
       bucketsById,
-      freeGuiltySplit,
-    }
-  }, [
-    monthIncome,
-    pyfSettings,
-    bucketsById,
-    bills,
-    overrideByBillId,
-    skippedOccurrenceKeys,
-    byId,
-    yearMonth,
-  ])
+    }),
+    [monthIncome, pyfSettings, bucketsById],
+  )
 
   function resolvedAmount(
     bill: RecurringBill,
@@ -320,15 +327,8 @@ export function DueThisMonthChecklist({
     return resolveEstimateAmount(bill, override, amountCtx)
   }
 
-  function isPyfAuto(bill: RecurringBill) {
-    return isPyfAutoAmountTransfer(bill, bucketsById)
-  }
-
   function isAutoAmount(bill: RecurringBill) {
-    return (
-      isPyfAutoAmountTransfer(bill, bucketsById) ||
-      isCheckingAutoAmountTransfer(bill, bucketsById)
-    )
+    return isPyfAutoAmountTransfer(bill, bucketsById)
   }
 
   // Drop optimistic entries once props match (silent reload finished).
@@ -700,9 +700,7 @@ export function DueThisMonthChecklist({
         if (amount <= 0) {
           showAppToast(
             isAutoAmount(bill)
-              ? isPyfAuto(bill)
-                ? 'No income this month'
-                : 'Free Guilty is zero this month'
+              ? 'No income this month'
               : 'Enter an amount greater than zero',
           )
           setPendingDone((prev) => {
@@ -714,7 +712,7 @@ export function DueThisMonthChecklist({
         }
         const owner = bill.owner ?? getStoredProfile() ?? 'suami'
         const circle = bill.type === 'income' ? 'hd_family' : bill.circle
-        const txId = await createTransaction(
+        const draft: NewTransactionInput =
           bill.type === 'transfer'
             ? {
                 type: 'transfer',
@@ -728,6 +726,7 @@ export function DueThisMonthChecklist({
                 occurred_on: occurredOn,
                 is_recurring: true,
                 complete_later: false,
+                budget_group: null,
               }
             : {
                 type: bill.type,
@@ -744,8 +743,62 @@ export function DueThisMonthChecklist({
                 occurred_on: occurredOn,
                 is_recurring: true,
                 complete_later: false,
-              },
-        )
+                budget_group:
+                  bill.type === 'expense'
+                    ? (bill.budget_group === 'needs' ||
+                      bill.budget_group === 'wants'
+                        ? bill.budget_group
+                        : null)
+                    : null,
+              }
+
+        const policy = await resolveMonthWritePolicy(occurredOn)
+        if (!policy.allowed) {
+          showAppToast(policy.message)
+          navigate('/rencana/close-month')
+          setPendingDone((prev) => {
+            const next = new Map(prev)
+            next.delete(key)
+            return next
+          })
+          return
+        }
+
+        if (draft.type === 'expense' && allocation) {
+          const evalResult = evaluateExpenseEfLoan({
+            draft,
+            monthClosed: policy.monthClosed,
+            transactions: monthTransactions,
+            bills,
+            overridesByBillId: overrideByBillId,
+            skippedOccurrenceKeys,
+            categoriesById: expenseCatsById,
+            bucketsById: progressBucketsById,
+            buckets: progressBuckets,
+            yearMonth: policy.yearMonth,
+            bufferAllowance: allocation.buffer,
+            guiltFreeAllowance: allocation.guiltFree,
+          })
+          if (evalResult.borrowAmount > 0 && evalResult.source) {
+            setPendingDone((prev) => {
+              const next = new Map(prev)
+              next.delete(key)
+              return next
+            })
+            setPendingEfConfirm({
+              bill,
+              occurredOn,
+              draft,
+              borrowAmount: evalResult.borrowAmount,
+              source: evalResult.source,
+              yearMonth: policy.yearMonth,
+              amountOverride,
+            })
+            return
+          }
+        }
+
+        const txId = await createTransaction(draft)
         await markBillPaid({
           billId: bill.id,
           yearMonth,
@@ -774,6 +827,47 @@ export function DueThisMonthChecklist({
       return
     }
     void handleToggle(bill, occurredOn, false)
+  }
+
+  async function confirmEfBorrow() {
+    if (!pendingEfConfirm) return
+    const { bill, occurredOn, draft, borrowAmount, source, yearMonth: loanYm } =
+      pendingEfConfirm
+    const key = occurrenceLogKey(bill.id, occurredOn)
+    setPendingEfConfirm(null)
+    setBusyKey(key)
+    setPendingDone((prev) => {
+      const next = new Map(prev)
+      next.set(key, true)
+      return next
+    })
+    try {
+      const txId = await createTransaction(draft)
+      await upsertEfLoanForTransaction({
+        transactionId: txId,
+        yearMonth: loanYm,
+        amount: borrowAmount,
+        source,
+      })
+      await markBillPaid({
+        billId: bill.id,
+        yearMonth,
+        occurredOn,
+        transactionId: txId,
+      })
+      setJustCheckedKey(key)
+      showAppToast(`Saved ${ActionEmoji.save}`)
+      onChanged()
+    } catch (err) {
+      setPendingDone((prev) => {
+        const next = new Map(prev)
+        next.delete(key)
+        return next
+      })
+      showAppToast(err instanceof Error ? err.message : 'Failed to update')
+    } finally {
+      setBusyKey(null)
+    }
   }
 
   function requestCheck(bill: RecurringBill, occurredOn: string) {
@@ -1071,6 +1165,9 @@ export function DueThisMonthChecklist({
                     byId,
                     bucketsById,
                   )
+                  const budgetGroup = estimatePlanBadgeGroup(
+                    estimatePlanTag(bill, byId, bucketsById),
+                  )
                   const label =
                     bill.name.trim() ||
                     display.parentName ||
@@ -1104,6 +1201,7 @@ export function DueThisMonthChecklist({
                             variant === 'plan' ? undefined : occurredOn
                           }
                           currentMonthDone={currentMonthDone}
+                          budgetGroup={budgetGroup}
                         />
                       </div>
                     </>
@@ -1287,6 +1385,35 @@ export function DueThisMonthChecklist({
           setCheckAfterEdit(false)
         }}
         onSave={(input) => void handleSaveOverride(input)}
+      />
+
+      <ConfirmDialog
+        open={pendingEfConfirm != null}
+        title="Borrow from Emergency Fund?"
+        message={
+          pendingEfConfirm
+            ? efLoanConfirmMessage(
+                pendingEfConfirm.borrowAmount,
+                pendingEfConfirm.source,
+              )
+            : ''
+        }
+        confirmLabel="Borrow & Save"
+        cancelLabel="Cancel"
+        danger={false}
+        busy={
+          pendingEfConfirm != null &&
+          busyKey ===
+            occurrenceLogKey(
+              pendingEfConfirm.bill.id,
+              pendingEfConfirm.occurredOn,
+            )
+        }
+        onCancel={() => {
+          if (busyKey) return
+          setPendingEfConfirm(null)
+        }}
+        onConfirm={() => void confirmEfBorrow()}
       />
 
       <ConfirmDialog

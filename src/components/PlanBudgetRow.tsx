@@ -12,6 +12,17 @@ export type PlanBudgetPaceMeta = {
   deltaClassName: string
 }
 
+/** Ceiling fill: accent while safe, amber near limit, red when over. */
+function ceilingFillClass(
+  barPct: number,
+  over: boolean,
+  barClass: string,
+): string {
+  if (over) return 'bg-red-500'
+  if (barPct >= 80) return 'bg-amber-500'
+  return barClass
+}
+
 function monthsLeftLabel(monthsLeft: number): string {
   const n = Math.max(0, Math.round(monthsLeft))
   return n === 1 ? '1 month left' : `${n} months left`
@@ -28,6 +39,7 @@ export function PlanBudgetRow({
   badge,
   showMetrics = true,
   paceMeta,
+  ceilingStatusPlacement = 'below-bar',
 }: {
   bucket: MoneyPlanBucket
   hint?: string
@@ -47,6 +59,11 @@ export function PlanBudgetRow({
   showMetrics?: boolean
   /** Sinking pace: expected + over/under vs expected. */
   paceMeta?: PlanBudgetPaceMeta | null
+  /**
+   * Ceiling remaining/over line: under title (hint slot) or below the bar.
+   * Month Budget uses under-title; Needs vs Wants keeps below-bar + separate hint.
+   */
+  ceilingStatusPlacement?: 'under-title' | 'below-bar'
 }) {
   const rawPct =
     bucket.target > 0
@@ -54,16 +71,49 @@ export function PlanBudgetRow({
       : bucket.actual > 0
         ? 100
         : 0
-  /** Bar width always 0–100; floor % label may exceed 100 when over target. */
+  /** Bar width always 0–100; % label shows actual used/progress (may exceed 100). */
   const barPct = Math.min(100, Math.max(0, rawPct))
-  const displayPct = mode === 'floor' ? Math.max(0, rawPct) : barPct
+  const displayPct = Math.max(0, rawPct)
   const ceilingOver =
     mode === 'ceiling' && bucket.actual > bucket.target && bucket.target > 0
   const floorOver =
     mode === 'floor' && bucket.actual > bucket.target && bucket.target > 0
-  const fillClass = ceilingOver ? 'bg-red-500' : barClass
+  const fillClass =
+    mode === 'ceiling'
+      ? ceilingFillClass(barPct, ceilingOver, barClass)
+      : barClass
+  const pctLabelClass = ceilingOver
+    ? 'text-red-600 dark:text-red-400'
+    : floorOver
+      ? 'text-emerald-600 dark:text-emerald-400'
+      : mode === 'ceiling' && barPct >= 80
+        ? 'text-amber-600 dark:text-amber-400'
+        : 'text-neutral-500 dark:text-neutral-400'
   const showFloorFooter =
     showMetrics && mode === 'floor' && bucket.target > 0
+  const ceilingStatusText =
+    mode === 'ceiling' && bucket.target > 0
+      ? ceilingOver
+        ? `Over by ${formatRupiah(bucket.actual - bucket.target)}`
+        : `${formatRupiah(Math.max(0, bucket.remaining))} left`
+      : null
+  const underTitleLine =
+    showMetrics && paceMeta
+      ? null
+      : showMetrics &&
+          mode === 'ceiling' &&
+          ceilingStatusPlacement === 'under-title' &&
+          ceilingStatusText
+        ? ceilingStatusText
+        : showMetrics && hint
+          ? hint
+          : null
+  const showCeilingBelowBar =
+    showMetrics &&
+    mode === 'ceiling' &&
+    bucket.target > 0 &&
+    ceilingStatusPlacement === 'below-bar' &&
+    ceilingStatusText != null
 
   return (
     <div
@@ -123,8 +173,17 @@ export function PlanBudgetRow({
                 </span>
               </div>
             </div>
-          ) : showMetrics && hint ? (
-            <p className="mt-0.5 text-[11px] text-neutral-400">{hint}</p>
+          ) : underTitleLine ? (
+            <p
+              className={`mt-0.5 text-[11px] text-neutral-400 ${
+                mode === 'ceiling' &&
+                ceilingStatusPlacement === 'under-title'
+                  ? 'text-right tabular-nums'
+                  : ''
+              }`}
+            >
+              {underTitleLine}
+            </p>
           ) : null}
         </div>
       </div>
@@ -137,26 +196,20 @@ export function PlanBudgetRow({
             />
           </div>
           <span
-            className={`shrink-0 text-[11px] font-semibold tabular-nums ${
-              ceilingOver
-                ? 'text-red-600 dark:text-red-400'
-                : floorOver
-                  ? 'text-emerald-600 dark:text-emerald-400'
-                  : 'text-neutral-500 dark:text-neutral-400'
-            }`}
-            aria-label={`${displayPct}% progress`}
+            className={`shrink-0 text-[11px] font-semibold tabular-nums ${pctLabelClass}`}
+            aria-label={
+              mode === 'ceiling'
+                ? `${displayPct}% used`
+                : `${displayPct}% progress`
+            }
           >
-            {displayPct}%
+            {mode === 'ceiling' ? `${displayPct}% used` : `${displayPct}%`}
           </span>
         </div>
       ) : null}
-      {showMetrics && mode === 'ceiling' && bucket.target > 0 && (
-        <p className="mt-1 text-[11px] text-neutral-400">
-          {ceilingOver
-            ? `Over by ${formatRupiah(bucket.actual - bucket.target)}`
-            : `${formatRupiah(Math.max(0, bucket.remaining))} left`}
-        </p>
-      )}
+      {showCeilingBelowBar ? (
+        <p className="mt-1 text-[11px] text-neutral-400">{ceilingStatusText}</p>
+      ) : null}
       {showFloorFooter ? (
         <div className="mt-1 flex items-center justify-between gap-2">
           <p className="min-w-0 text-[11px] text-neutral-400">

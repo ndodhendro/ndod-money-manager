@@ -28,14 +28,12 @@ import {
   yearMonthFromIso,
 } from '../lib/monthCursor'
 import {
-  checkingAccountOwner,
   pyfAutoAmountPlaceholder,
   pyfAutoTransferKind,
   pyfTransferTargetAmount,
   resolveEstimateAmount,
   sumMonthRegularIncome,
 } from '../lib/moneyPlan'
-import { computeFreeGuiltySplit } from '../lib/paydayAllocation'
 import {
   createRecurringBill,
   deleteRecurringBill,
@@ -52,12 +50,15 @@ import {
   type RecurringIntervalUnit,
 } from '../lib/recurringBillsApi'
 import {
+  budgetGroupOfCategory,
   estimatePlanBadgeGroup,
   estimatePlanTag,
   sumEstimateTotalsByType,
 } from '../lib/freeWants'
 import {
   TRANSFER_TYPE_ICON,
+  isBudgetGroup,
+  type BudgetGroup,
   type Circle,
   type Owner,
   type TransactionType,
@@ -66,6 +67,7 @@ import {
   BucketPicker,
   type BucketSelection,
 } from './BucketPicker'
+import { BudgetGroupToggle } from './BudgetGroupToggle'
 import { CategoryPicker } from './CategoryPicker'
 import { CirclePicker } from './CirclePicker'
 import { DatePickerField } from './DatePickerField'
@@ -200,6 +202,7 @@ export function RecurringBillsPanel({
   const [note, setNote] = useState('')
   const [amountDigits, setAmountDigits] = useState('')
   const [categoryId, setCategoryId] = useState<string | null>(null)
+  const [budgetGroup, setBudgetGroup] = useState<BudgetGroup | null>(null)
   const [fromBucket, setFromBucket] = useState<BucketSelection | undefined>(
     undefined,
   )
@@ -253,7 +256,7 @@ export function RecurringBillsPanel({
   const onViewChangeRef = useRef(onViewChange)
   onViewChangeRef.current = onViewChange
 
-  // Only notify when view/editingId change ù not when the parent callback
+  // Only notify when view/editingId change ¬ù not when the parent callback
   // identity changes (e.g. after phone Back). Re-firing with a stale form
   // view would navigate back to the edit URL and loop.
   useEffect(() => {
@@ -346,37 +349,14 @@ export function RecurringBillsPanel({
     () => monthCursorKey(currentMonthCursor()),
     [],
   )
-  const freeGuiltySplit = useMemo(
-    () =>
-      computeFreeGuiltySplit({
-        income: monthIncome,
-        bills,
-        overridesByBillId: new Map(),
-        categoriesById: allById,
-        bucketsById,
-        yearMonth: settingsThisMonthYm,
-        emergencyPct,
-        investmentPct,
-      }).split,
-    [
-      monthIncome,
-      bills,
-      allById,
-      bucketsById,
-      settingsThisMonthYm,
-      emergencyPct,
-      investmentPct,
-    ],
-  )
   const amountCtx = useMemo(
     () => ({
       monthIncome,
       emergencyPct,
       investmentPct,
       bucketsById,
-      freeGuiltySplit,
     }),
-    [monthIncome, emergencyPct, investmentPct, bucketsById, freeGuiltySplit],
+    [monthIncome, emergencyPct, investmentPct, bucketsById],
   )
   const formPyfKind =
     isTransfer && toBucket
@@ -385,16 +365,8 @@ export function RecurringBillsPanel({
           bucketsById,
         )
       : null
-  const formCheckingOwner =
-    isTransfer && toBucket
-      ? checkingAccountOwner(
-          { type: 'transfer', to_bucket_id: toBucket },
-          bucketsById,
-        )
-      : null
   const isFormPyfAuto = formPyfKind != null
-  const isFormCheckingAuto = formCheckingOwner != null
-  const isFormAutoAmount = isFormPyfAuto || isFormCheckingAuto
+  const isFormAutoAmount = isFormPyfAuto
   const formPyfAmount = formPyfKind
     ? pyfTransferTargetAmount(
         formPyfKind,
@@ -403,14 +375,7 @@ export function RecurringBillsPanel({
         investmentPct,
       )
     : 0
-  const formCheckingAmount = formCheckingOwner
-    ? freeGuiltySplit[formCheckingOwner]
-    : 0
-  const formAutoAmount = isFormPyfAuto
-    ? formPyfAmount
-    : isFormCheckingAuto
-      ? formCheckingAmount
-      : 0
+  const formAutoAmount = isFormPyfAuto ? formPyfAmount : 0
   const sortedBills = useMemo(
     () => sortRecurringBillsForSettings(bills, allById, bucketsById),
     [bills, allById, bucketsById],
@@ -525,6 +490,16 @@ export function RecurringBillsPanel({
     if (catsLoading || !categoryId) return
     if (!byId.has(categoryId)) setCategoryId(null)
   }, [type, catsLoading, byId, categoryId])
+
+  useEffect(() => {
+    if (type !== 'expense') {
+      if (budgetGroup) setBudgetGroup(null)
+      return
+    }
+    if (!categoryId || budgetGroup) return
+    const next = budgetGroupOfCategory(categoryId, allById)
+    if (next) setBudgetGroup(next)
+  }, [type, categoryId, allById, budgetGroup])
 
   function closePickers() {
     setOwnerOpen(false)
@@ -647,6 +622,7 @@ export function RecurringBillsPanel({
   function handleTypeChange(next: TransactionType) {
     setType(next)
     setCategoryId(null)
+    setBudgetGroup(null)
     closePickers()
     if (next === 'transfer') {
       setFromBucket(null)
@@ -668,6 +644,7 @@ export function RecurringBillsPanel({
     setNote('')
     setAmountDigits('')
     setCategoryId(null)
+    setBudgetGroup(null)
     setFromBucket(undefined)
     setToBucket(undefined)
     setCircle(null)
@@ -710,16 +687,23 @@ export function RecurringBillsPanel({
 
     if (bill.type === 'transfer') {
       setCategoryId(null)
+      setBudgetGroup(null)
       setCircle(bill.circle ?? getStoredCircle())
       setFromBucket(bill.from_bucket_id)
       setToBucket(bill.to_bucket_id)
     } else if (bill.type === 'income') {
       setCategoryId(bill.category_id)
+      setBudgetGroup(null)
       setCircle('hd_family')
       setFromBucket(undefined)
       setToBucket(undefined)
     } else {
       setCategoryId(bill.category_id)
+      setBudgetGroup(
+        isBudgetGroup(bill.budget_group)
+          ? bill.budget_group
+          : (budgetGroupOfCategory(bill.category_id, allById) ?? 'needs'),
+      )
       setCircle(bill.circle ?? getStoredCircle())
       setFromBucket(undefined)
       setToBucket(undefined)
@@ -860,6 +844,7 @@ export function RecurringBillsPanel({
               category_id: null,
               from_bucket_id: fromBucket ?? null,
               to_bucket_id: toBucket ?? null,
+              budget_group: null,
               circle: resolvedCircle,
               owner,
               icon: resolveIcon(),
@@ -872,6 +857,8 @@ export function RecurringBillsPanel({
               category_id: categoryId!,
               from_bucket_id: null,
               to_bucket_id: null,
+              budget_group:
+                type === 'expense' ? (budgetGroup ?? 'needs') : null,
               circle: resolvedCircle,
               owner,
               icon: resolveIcon(),
@@ -961,6 +948,8 @@ export function RecurringBillsPanel({
         category_id: type === 'transfer' ? null : categoryId,
         from_bucket_id: type === 'transfer' ? (fromBucket ?? null) : null,
         to_bucket_id: type === 'transfer' ? (toBucket ?? null) : null,
+        budget_group:
+          type === 'expense' ? (budgetGroup ?? 'needs') : null,
         circle: resolvedCircle,
         owner,
         icon: resolveIcon(),
@@ -1099,6 +1088,7 @@ export function RecurringBillsPanel({
             category_id: null,
             from_bucket_id: null,
             to_bucket_id: null,
+            budget_group: null,
             circle: 'hd_family',
             owner: 'suami',
             due_day: Number(startsOn.slice(8, 10)) || dueDay,
@@ -1118,7 +1108,7 @@ export function RecurringBillsPanel({
         )
       : null
   const settingsDescription = settingsWeekThisMonth
-    ? `${settingsDescriptionBase} ù ${settingsWeekThisMonth}`
+    ? `${settingsDescriptionBase} ¬ù ${settingsWeekThisMonth}`
     : settingsDescriptionBase
   const everySelectValue = recurringEveryKey(intervalUnit, intervalMonths)
   const deleteLabel =
@@ -1132,7 +1122,7 @@ export function RecurringBillsPanel({
   return (
     <div className="space-y-3">
       {(listLoading) && (
-        <p className="text-sm text-neutral-400">Loadingù</p>
+        <p className="text-sm text-neutral-400">Loading¬ù</p>
       )}
       {view === 'list' ? (
         <div className="space-y-3">
@@ -1140,7 +1130,7 @@ export function RecurringBillsPanel({
             <SearchField
               value={searchQuery}
               onChange={setSearchQuery}
-              placeholder="Search estimatesù"
+              placeholder="Search estimates¬ù"
               aria-label="Search monthly estimates"
               className="min-w-0 flex-1"
             />
@@ -1318,13 +1308,7 @@ export function RecurringBillsPanel({
           {isFormPyfAuto ? (
             <p className="mt-1.5 text-xs text-neutral-400">
               From Money Plan ({formPyfKind === 'emergency' ? emergencyPct : investmentPct}%
-              ù this month&apos;s income).
-            </p>
-          ) : null}
-          {isFormCheckingAuto ? (
-            <p className="mt-1.5 text-xs text-neutral-400">
-              From Free Guilty split (Ndod floors, Devi ceilings when half is
-              not whole).
+              of this month&apos;s income).
             </p>
           ) : null}
         </label>
@@ -1402,7 +1386,7 @@ export function RecurringBillsPanel({
           />
           {isTransfer ? (
             bucketsLoading && buckets.length === 0 ? (
-              <p className="text-sm text-neutral-400">Loading bucketsù</p>
+              <p className="text-sm text-neutral-400">Loading buckets¬ù</p>
             ) : (
               <>
                 <CirclePicker
@@ -1497,30 +1481,41 @@ export function RecurringBillsPanel({
                 locked={isIncome}
               />
               {catsLoading && treeByUsage.length === 0 ? (
-                <p className="text-sm text-neutral-400">Loading categoriesù</p>
+                <p className="text-sm text-neutral-400">Loading categories‚Ä¶</p>
               ) : (
-                <CategoryPicker
-                  tree={treeByUsage}
-                  selectedId={categoryId}
-                  byId={byId}
-                  open={categoryOpen}
-                  onOpenChange={(open) => {
-                    setCategoryOpen(open)
-                    if (open) {
-                      setCircleOpen(false)
-                      setOwnerOpen(false)
-                    }
-                  }}
-                  onSelect={(id) => {
-                    setCategoryId(id)
-                    setCategoryOpen(false)
-                    focusNoteField()
-                  }}
-                  transactionType={type}
-                  onCategoriesChanged={reload}
-                  highlighted={categoryOpen}
-                  showBudgetGroup={!isIncome}
-                />
+                <>
+                  <CategoryPicker
+                    tree={treeByUsage}
+                    selectedId={categoryId}
+                    byId={byId}
+                    open={categoryOpen}
+                    onOpenChange={(open) => {
+                      setCategoryOpen(open)
+                      if (open) {
+                        setCircleOpen(false)
+                        setOwnerOpen(false)
+                      }
+                    }}
+                    onSelect={(id) => {
+                      setCategoryId(id)
+                      setBudgetGroup(
+                        budgetGroupOfCategory(id, byId) ?? 'needs',
+                      )
+                      setCategoryOpen(false)
+                      focusNoteField()
+                    }}
+                    transactionType={type}
+                    onCategoriesChanged={reload}
+                    highlighted={categoryOpen}
+                    showBudgetGroup={false}
+                  />
+                  {!isIncome && categoryId && budgetGroup ? (
+                    <BudgetGroupToggle
+                      value={budgetGroup}
+                      onChange={setBudgetGroup}
+                    />
+                  ) : null}
+                </>
               )}
             </>
           )}
@@ -1736,7 +1731,7 @@ export function RecurringBillsPanel({
           disabled={saving}
           className="w-full rounded-xl bg-emerald-500 py-3.5 text-base font-semibold text-white shadow-md active:bg-emerald-600 disabled:opacity-60"
         >
-          {saving ? 'Savingù' : editingId ? 'Update' : 'Save'}
+          {saving ? 'Saving¬ù' : editingId ? 'Update' : 'Save'}
         </button>
         {editingId ? (
           <button
@@ -1757,7 +1752,7 @@ export function RecurringBillsPanel({
       <ConfirmDialog
         open={Boolean(deleteTarget)}
         title="Delete estimate?"
-        message={`ù${deleteLabel}ù will be removed from Monthly Estimates. Past checklist logs stay linked.`}
+        message={`¬ù${deleteLabel}¬ù will be removed from Monthly Estimates. Past checklist logs stay linked.`}
         confirmLabel="Delete"
         cancelLabel="Cancel"
         busy={deleting}

@@ -14,6 +14,7 @@ import { isDeviceUnlocked } from './lib/deviceUnlock'
 import { getStoredProfile } from './lib/profile'
 import { History } from './screens/History'
 import { MoneyPlanScreen } from './screens/MoneyPlan'
+import { PlanCloseMonth } from './screens/plan/PlanCloseMonth'
 import { PlanEmergency } from './screens/plan/PlanEmergency'
 import { PlanNeedsWants } from './screens/plan/PlanNeedsWants'
 import { PlanPayYourselfFirst } from './screens/plan/PlanPayYourselfFirst'
@@ -77,6 +78,7 @@ function AppShell({ onProfileReset }: { onProfileReset: () => void }) {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/rencana" element={<MoneyPlanScreen />} />
         <Route path="/rencana/payday" element={<PlanPayday />} />
+        <Route path="/rencana/close-month" element={<PlanCloseMonth />} />
         <Route path="/rencana/recurring" element={<PlanRecurring />} />
         <Route
           path="/rencana/pay-yourself-first"

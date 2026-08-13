@@ -105,12 +105,18 @@ create table if not exists transactions (
   occurred_on date not null default current_date,
   is_recurring boolean not null default false,
   complete_later boolean not null default false,
+  -- Expense Needs/Wants for this row; null = inherit subcategory default.
+  budget_group budget_group,
+  -- Order within occurred_on. Lower = earlier that day (top of History).
+  sort_order integer not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint transactions_amount_check check (amount > 0 or complete_later = true)
 );
 
 create index if not exists transactions_occurred_on_idx on transactions (occurred_on desc);
+create index if not exists transactions_occurred_on_sort_idx
+  on transactions (occurred_on, sort_order);
 create index if not exists transactions_category_id_idx on transactions (category_id);
 create index if not exists transactions_circle_idx on transactions (circle);
 create index if not exists transactions_from_bucket_idx on transactions (from_bucket_id);
@@ -139,6 +145,7 @@ create table if not exists pyf_settings (
   id uuid primary key default gen_random_uuid(),
   emergency_fund_pct numeric(5, 2) not null default 10,
   investment_pct numeric(5, 2) not null default 15,
+  buffer_pct numeric(5, 2) not null default 10,
   planned_needs_amount numeric(14, 2) not null default 0,
   emergency_fund_target_multiplier numeric(4, 1) not null default 3,
   effective_from date not null default current_date,
@@ -190,6 +197,8 @@ create table if not exists recurring_bills (
   variable_amount boolean not null default false,
   -- false = monthly amount estimate only (no due dates / checklist)
   is_recurring boolean not null default true,
+  -- Expense Needs/Wants for this estimate; null = inherit subcategory default.
+  budget_group budget_group,
   icon text not null default '📌',
   sort_order integer not null default 0,
   is_active boolean not null default true,

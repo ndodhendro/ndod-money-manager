@@ -38,8 +38,14 @@ alwaysApply: true
 - Use **short motion only** (~150–250ms) for screen transitions, button feedback, and list entry so actions don’t feel instant/confusing.
 - No decorative motion (parallax, confetti, long fades, heavy springs).
 
+## Budget progress bars
+
+- **Ceiling** (spending limits: Needs, Wants, Buffer, Guilt-Free, estimate lines): neutral track + fill = **used**. Fill color by status — accent while safe, amber near limit (~80%+), red when over. Show `% used` and “X left” / “Over by X”. Do not use dual red/green full bars for used vs available.
+- **Floor** (savings goals / PYF funding): fill = progress toward target (positive). Keep distinct from ceiling semantics.
+
 ## When changing UI
 
 - Preserve the existing visual language unless explicitly redesigning.
 - If a change adds steps, screens, or heavy motion to capture, reject or redesign it toward fewer taps and faster feedback.
 - Icons and behavior for the **same function/purpose** must stay identical across screens — see `ui-consistency.mdc`.
+- For product/UX design requests, challenge weak approaches before implementing — see `challenge-before-implement.mdc`.

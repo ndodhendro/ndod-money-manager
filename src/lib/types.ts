@@ -54,6 +54,10 @@ export type TransactionType = 'income' | 'expense' | 'transfer'
 
 export type BudgetGroup = 'needs' | 'wants'
 
+export function isBudgetGroup(value: unknown): value is BudgetGroup {
+  return value === 'needs' || value === 'wants'
+}
+
 export const BUDGET_GROUP_LABELS: Record<BudgetGroup, string> = {
   needs: 'Needs',
   wants: 'Wants',
@@ -90,12 +94,6 @@ export const BUCKET_KIND_LABELS: Record<BucketKind, string> = {
 
 /** Sentinel: null bucket id = shared main account (checking / available money). */
 export const CASHFLOW_LABEL = 'Main Account'
-
-/** System personal checking account names (transfer From/To). */
-export const OWNER_ACCOUNT_LABELS: Record<Owner, string> = {
-  suami: `${OWNER_LABELS.suami} Account`,
-  istri: `${OWNER_LABELS.istri} Account`,
-}
 
 export interface Bucket {
   id: string
@@ -169,6 +167,10 @@ export interface Transaction {
   is_recurring: boolean
   /** Placeholder to finish later; note required, other fields optional. */
   complete_later: boolean
+  /** Expense Needs/Wants; null for income/transfer or legacy rows. */
+  budget_group: BudgetGroup | null
+  /** Order within occurred_on. Lower = earlier that day. */
+  sort_order: number
   created_at: string
   updated_at: string
 }
@@ -191,6 +193,8 @@ export interface NewTransactionInput {
   occurred_on: string
   is_recurring: boolean
   complete_later: boolean
+  /** Expense Needs/Wants; omit/null for income, transfer, or inherit default. */
+  budget_group?: BudgetGroup | null
 }
 
 /** True when input meets normal (non–Complete Later) required fields. */
@@ -288,4 +292,54 @@ export function categoryDisplayParts(
     childIcon: null,
     childName: null,
   }
+}
+
+export type EfLoanSource = 'buffer' | 'guilt_free'
+export type EfLoanStatus = 'open' | 'repaid'
+
+export interface EfLoan {
+  id: string
+  year_month: string
+  amount: number
+  outstanding: number
+  source: EfLoanSource
+  source_transaction_id: string | null
+  status: EfLoanStatus
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+/** Four-way leftover split (amounts must sum to remaining). */
+export interface MonthCloseAllocation {
+  ef: number
+  investment: number
+  buffer: number
+  guiltFree: number
+}
+
+export interface MonthClose {
+  id: string
+  year_month: string
+  income: number
+  planned_needs: number
+  planned_wants: number
+  buffer_allowance: number
+  buffer_used: number
+  buffer_remaining: number
+  guilt_free_allowance: number
+  guilt_free_used: number
+  guilt_free_remaining: number
+  buffer_to_ef: number
+  buffer_to_investment: number
+  buffer_to_buffer: number
+  buffer_to_guilt_free: number
+  guilt_free_to_ef: number
+  guilt_free_to_investment: number
+  guilt_free_to_buffer: number
+  guilt_free_to_guilt_free: number
+  opening_buffer_next: number
+  opening_guilt_free_next: number
+  closed_at: string
+  reopened_at: string | null
 }

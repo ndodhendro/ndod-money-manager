@@ -11,6 +11,7 @@ import {
   childrenByParentId,
   compareBucketsWithinKind,
 } from '../lib/bucketsGroup'
+import { sumOpenEfLoanOutstanding } from '../lib/efLoansApi'
 import type { Bucket, BucketWithBalance } from '../lib/types'
 
 export function useBuckets(options?: { includeInactive?: boolean }) {
@@ -24,6 +25,7 @@ export function useBuckets(options?: { includeInactive?: boolean }) {
       occurred_on: string
     }>
   >([])
+  const [efLoanOutstanding, setEfLoanOutstanding] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -32,18 +34,20 @@ export function useBuckets(options?: { includeInactive?: boolean }) {
     setError(null)
     try {
       await ensureSystemBuckets()
-      const [bucketRows, transferRows] = await Promise.all([
+      const [bucketRows, transferRows, loanSum] = await Promise.all([
         fetchBuckets({ includeInactive }),
         fetchTransferMovements(),
+        sumOpenEfLoanOutstanding().catch(() => 0),
       ])
       setBuckets(bucketRows)
       setMovements(transferRows)
+      setEfLoanOutstanding(loanSum)
     } catch (err) {
       setBuckets([])
       setMovements([])
+      setEfLoanOutstanding(0)
       const message =
         err instanceof Error ? err.message : 'Failed to load buckets'
-      // Belum migrasi: jangan ganggu History/Summary — Transfer butuh SQL dulu.
       if (isMissingBucketsSchema(message)) {
         setError(null)
       } else {
@@ -71,18 +75,26 @@ export function useBuckets(options?: { includeInactive?: boolean }) {
   const childrenMap = useMemo(() => childrenByParentId(buckets), [buckets])
 
   const withBalances: BucketWithBalance[] = useMemo(() => {
-    const list = buckets.map((b) => ({
-      ...b,
-      own_balance: ownBalances.get(b.id) ?? b.opening_balance,
-      balance: displayBalances.get(b.id) ?? b.opening_balance,
-    }))
+    const list = buckets.map((b) => {
+      let own = ownBalances.get(b.id) ?? b.opening_balance
+      let display = displayBalances.get(b.id) ?? b.opening_balance
+      if (b.kind === 'emergency' && efLoanOutstanding > 0) {
+        own -= efLoanOutstanding
+        display -= efLoanOutstanding
+      }
+      return {
+        ...b,
+        own_balance: own,
+        balance: display,
+      }
+    })
     return list.sort((a, b) => {
       const ai = BUCKET_KIND_ORDER.indexOf(a.kind)
       const bi = BUCKET_KIND_ORDER.indexOf(b.kind)
       if (ai !== bi) return ai - bi
       return compareBucketsWithinKind(a, b)
     })
-  }, [buckets, ownBalances, displayBalances])
+  }, [buckets, ownBalances, displayBalances, efLoanOutstanding])
 
   const byId = useMemo(() => {
     const map = new Map<string, BucketWithBalance>()
@@ -100,6 +112,7 @@ export function useBuckets(options?: { includeInactive?: boolean }) {
     childrenMap,
     emergency,
     investment,
+    efLoanOutstanding,
     loading,
     error,
     reload,

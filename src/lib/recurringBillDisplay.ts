@@ -3,7 +3,6 @@ import {
   categoryDisplayParts,
   formatTransferLabel,
   formatTransferToLabel,
-  OWNER_ACCOUNT_LABELS,
   TRANSFER_TYPE_ICON,
   type CategoryWithParent,
 } from './types'
@@ -76,34 +75,10 @@ function compareTextAsc(a: string, b: string): number {
   return a.localeCompare(b, 'en', { sensitivity: 'base' })
 }
 
-/** Transfer into Ndod Account / Devi Account (system checking buckets). */
-function isTransferToCheckingAccount(
-  bill: RecurringBill,
-  bucketsById?: Map<string, BucketBudgetRef>,
-): boolean {
-  if (bill.type !== 'transfer' || !bill.to_bucket_id || !bucketsById) {
-    return false
-  }
-  return bucketsById.get(bill.to_bucket_id)?.kind === 'checking'
-}
-
-/**
- * income → transfer (non-checking) → expense → Ndod Account → Devi Account.
- * Checking-account transfers sit at the bottom of the date group (Ndod first).
- */
-function typeSortRank(
-  bill: RecurringBill,
-  bucketsById?: Map<string, BucketBudgetRef>,
-): number {
+/** income → transfer → expense. */
+function typeSortRank(bill: RecurringBill): number {
   if (bill.type === 'income') return 0
-  if (bill.type === 'transfer') {
-    if (!isTransferToCheckingAccount(bill, bucketsById)) return 1
-    const name = bill.to_bucket_id
-      ? bucketsById?.get(bill.to_bucket_id)?.name
-      : undefined
-    if (name === OWNER_ACCOUNT_LABELS.istri) return 4
-    return 3 // Ndod Account (and any other checking)
-  }
+  if (bill.type === 'transfer') return 1
   return 2
 }
 
@@ -173,7 +148,7 @@ function intervalSortRank(bill: RecurringBill): number {
 /**
  * Shared row order for Settings Monthly Estimates and Plan Due Checklist
  * (within the same date / day group):
- * 1. type — income → transfer → expense → Ndod Account → Devi Account
+ * 1. type — income → transfer → expense
  * 2. interval — shortest recurring first
  * 3. plan tag — Emergency → Investment → Needs → Wants
  * 4. category sort_order ascending
@@ -189,7 +164,7 @@ export function compareRecurringBillsWithinDay(
   byId: Map<string, Category>,
   bucketsById?: Map<string, BucketBudgetRef>,
 ): number {
-  const byType = typeSortRank(a, bucketsById) - typeSortRank(b, bucketsById)
+  const byType = typeSortRank(a) - typeSortRank(b)
   if (byType !== 0) return byType
 
   const byInterval = intervalSortRank(a) - intervalSortRank(b)

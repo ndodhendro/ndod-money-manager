@@ -7,16 +7,6 @@ import {
 } from './bucketsGroup'
 import { supabase } from './supabase'
 import type { BudgetGroup, Bucket, BucketKind, Category } from './types'
-import { OWNER_ACCOUNT_LABELS } from './types'
-
-const CHECKING_SYSTEM_ACCOUNTS: Array<{
-  name: string
-  icon: string
-  sort_order: number
-}> = [
-  { name: OWNER_ACCOUNT_LABELS.suami, icon: '💙', sort_order: 0 },
-  { name: OWNER_ACCOUNT_LABELS.istri, icon: '💗', sort_order: 0 },
-]
 
 function mapBudgetGroup(value: unknown): BudgetGroup | null {
   if (value === 'needs' || value === 'wants') {
@@ -117,8 +107,48 @@ export async function fetchBuckets(options?: {
   return (data ?? []).map((row) => mapBucket(row as Record<string, unknown>))
 }
 
+/**
+ * Soft-deactivate legacy Ndod/Devi system checking accounts and any Monthly
+ * Estimates that transfer into them. Guilt-Free Fund is a single shared pool.
+ */
+async function retireSystemCheckingAccounts(
+  existing: Bucket[],
+): Promise<void> {
+  const activeChecking = existing.filter(
+    (b) => b.kind === 'checking' && b.is_system && b.is_active,
+  )
+  if (activeChecking.length === 0) return
+
+  const ids = activeChecking.map((b) => b.id)
+  const { error: bucketError } = await supabase
+    .from('buckets')
+    .update({ is_active: false })
+    .in('id', ids)
+  if (bucketError) throw new Error(bucketError.message)
+
+  const { error: billError } = await supabase
+    .from('recurring_bills')
+    .update({ is_active: false })
+    .eq('type', 'transfer')
+    .eq('is_active', true)
+    .in('to_bucket_id', ids)
+  if (billError) {
+    // Recurring schema may be missing on fresh installs.
+    const lower = billError.message.toLowerCase()
+    if (
+      !lower.includes('recurring') &&
+      !lower.includes('schema cache') &&
+      !lower.includes('does not exist')
+    ) {
+      throw new Error(billError.message)
+    }
+  }
+}
+
 export async function ensureSystemBuckets(): Promise<void> {
   const existing = await fetchBuckets({ includeInactive: true })
+  await retireSystemCheckingAccounts(existing)
+
   const hasEmergency = existing.some(
     (b) => b.kind === 'emergency' && b.is_system,
   )
@@ -146,40 +176,9 @@ export async function ensureSystemBuckets(): Promise<void> {
       opening_balance: 0,
     })
   }
-  for (const account of CHECKING_SYSTEM_ACCOUNTS) {
-    const hasAccount = existing.some(
-      (b) =>
-        b.kind === 'checking' &&
-        b.is_system &&
-        b.name === account.name,
-    )
-    if (hasAccount) continue
-    rows.push({
-      name: account.name,
-      kind: 'checking',
-      icon: account.icon,
-      sort_order: account.sort_order,
-      is_system: true,
-      opening_balance: 0,
-    })
-  }
   if (rows.length === 0) return
   const { error } = await supabase.from('buckets').insert(rows)
-  if (error) {
-    const lower = error.message.toLowerCase()
-    if (
-      lower.includes('checking') ||
-      lower.includes('bucket_kind') ||
-      lower.includes('invalid input value')
-    ) {
-      const withoutChecking = rows.filter((r) => r.kind !== 'checking')
-      if (withoutChecking.length === 0) return
-      const retry = await supabase.from('buckets').insert(withoutChecking)
-      if (retry.error) throw new Error(retry.error.message)
-      return
-    }
-    throw new Error(error.message)
-  }
+  if (error) throw new Error(error.message)
 }
 
 /** Active sinking bucket for a category, if any. */

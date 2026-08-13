@@ -1,6 +1,7 @@
 import {
   effectiveAmount,
   estimateOccurrenceCount,
+  estimatePlannedOccurrenceCount,
   type RecurringBill,
   type RecurringBillMonthOverride,
 } from './recurringBillsApi'
@@ -15,11 +16,12 @@ import {
   shiftMonthCursor,
   type MonthCursor,
 } from './monthCursor'
-import type {
-  BudgetGroup,
-  Bucket,
-  Category,
-  TransactionWithCategory,
+import {
+  isBudgetGroup,
+  type BudgetGroup,
+  type Bucket,
+  type Category,
+  type TransactionWithCategory,
 } from './types'
 
 /** Minimal bucket fields for Needs/Wants transfer classification + sort. */
@@ -43,13 +45,14 @@ export function budgetGroupOfTransferTo(
 }
 
 /**
- * Schedule allowed in Planned Needs (avoids double-count with sinking funds).
+ * Schedule allowed in Planned Needs / Planned Wants expenses
+ * (avoids double-count with sinking funds).
  * - Non-recurring estimates
  * - Weekly / every 2 weeks
  * - Monthly (every 1 month)
  * Multi-month recurring expenses (2m, 6m, yearly, …) are excluded — those
- * are funded via Needs sinking-fund transfers instead.
- * Transfers always pass (caller still requires Needs sinking destination).
+ * are funded via sinking-fund transfer estimates instead.
+ * Transfers always pass (caller still requires Needs/Wants sinking destination).
  */
 export function isPlannedNeedsSchedule(bill: RecurringBill): boolean {
   if (bill.type === 'transfer') return true
@@ -140,14 +143,15 @@ export function budgetGroupOfCategory(
 
 /**
  * Needs/Wants (or Savings) for a Monthly Estimate row:
- * expense → category budget group; transfer → destination sinking fund.
+ * expense → stored override, else category default; transfer → destination sinking fund.
  */
 export function budgetGroupOfEstimate(
-  bill: Pick<RecurringBill, 'type' | 'category_id' | 'to_bucket_id'>,
+  bill: Pick<RecurringBill, 'type' | 'category_id' | 'to_bucket_id' | 'budget_group'>,
   categoriesById: Map<string, Category>,
   bucketsById?: Map<string, BucketBudgetRef>,
 ): BudgetGroup | null {
   if (bill.type === 'expense') {
+    if (isBudgetGroup(bill.budget_group)) return bill.budget_group
     return budgetGroupOfCategory(bill.category_id, categoriesById)
   }
   if (bill.type === 'transfer' && bucketsById) {
@@ -190,7 +194,7 @@ export function estimatePlanBadgeGroup(
  * expense → category Needs/Wants.
  */
 export function estimatePlanTag(
-  bill: Pick<RecurringBill, 'type' | 'category_id' | 'to_bucket_id'>,
+  bill: Pick<RecurringBill, 'type' | 'category_id' | 'to_bucket_id' | 'budget_group'>,
   categoriesById: Map<string, Category>,
   bucketsById?: Map<string, BucketBudgetRef>,
 ): EstimatePlanTag | null {
@@ -207,11 +211,23 @@ export function estimatePlanTag(
     return null
   }
   if (bill.type === 'expense') {
-    return budgetGroupOfCategory(bill.category_id, categoriesById)
+    return budgetGroupOfEstimate(bill, categoriesById, bucketsById)
   }
   return null
 }
 
+/**
+ * Planned / committed wants for a YYYY-MM from Monthly Estimates:
+ * - Wants expense: non-recurring, or recurring weekly / every 2 weeks / monthly
+ *   (same schedule gate as Planned Needs)
+ * - Wants transfer into a sinking fund tagged Wants (any schedule), when
+ *   bucketsById is provided — matches History transfer used on the trackbar
+ *
+ * Ceiling uses template amount × occurrences. When `skippedOccurrenceKeys` is
+ * passed, skips shrink the ceiling (freed residual flows to Guilt-Free).
+ * Pass `undefined` to ignore skips (baseline for comparisons).
+ * Multi-month recurring Wants expenses (every 2+ months) are excluded.
+ */
 export function sumCommittedWants(
   bills: RecurringBill[],
   overridesByBillId: Map<string, RecurringBillMonthOverride>,
@@ -223,24 +239,27 @@ export function sumCommittedWants(
   let sum = 0
   for (const bill of bills) {
     if (!bill.is_active) continue
+    if (!isPlannedNeedsSchedule(bill)) continue
     let matches = false
     if (bill.type === 'expense') {
-      matches =
-        budgetGroupOfCategory(bill.category_id, categoriesById) === 'wants'
+      matches = budgetGroupOfEstimate(bill, categoriesById) === 'wants'
     } else if (bill.type === 'transfer' && bucketsById) {
       matches =
         budgetGroupOfTransferTo(bill.to_bucket_id, bucketsById) === 'wants'
     }
     if (!matches) continue
     const override = overridesByBillId.get(bill.id)
-    const count = estimateOccurrenceCount(
-      bill,
-      yearMonth,
-      override,
-      skippedOccurrenceKeys,
-    )
+    const count =
+      skippedOccurrenceKeys === undefined
+        ? estimatePlannedOccurrenceCount(bill, yearMonth, override)
+        : estimateOccurrenceCount(
+            bill,
+            yearMonth,
+            override,
+            skippedOccurrenceKeys,
+          )
     if (count === 0) continue
-    sum += effectiveAmount(bill, override) * count
+    sum += bill.amount * count
   }
   return sum
 }
@@ -248,13 +267,14 @@ export function sumCommittedWants(
 /**
  * Planned needs for a YYYY-MM from Monthly Estimates only:
  * - Needs expense: non-recurring, or recurring weekly / every 2 weeks / monthly
- * - Needs transfer into a sinking fund tagged Needs (any schedule)
+ * - Needs transfer into a sinking fund tagged Needs (any schedule), when
+ *   bucketsById is provided — matches History transfer used on the trackbar
  *
- * Multi-month recurring Needs expenses (every 2+ months) are excluded —
- * those are covered by sinking-fund transfer estimates.
- * Amount × occurrence count in the month (weekly/biweekly = due dates in month).
- * Income, Wants, and PYF (emergency/investment) transfers are excluded
- * (those are handled via Money Plan % separately).
+ * Ceiling uses template amount × occurrences. When `skippedOccurrenceKeys` is
+ * passed, skips shrink the ceiling (skipped amount is added to Buffer in
+ * payday pools). Pass `undefined` to ignore skips (buffer % baseline).
+ * Multi-month recurring Needs expenses (every 2+ months) are excluded.
+ * Income, Wants, and PYF (emergency/investment) transfers are excluded.
  */
 export function sumPlannedNeeds(
   bills: RecurringBill[],
@@ -270,22 +290,24 @@ export function sumPlannedNeeds(
     if (!isPlannedNeedsSchedule(bill)) continue
     let matches = false
     if (bill.type === 'expense') {
-      matches =
-        budgetGroupOfCategory(bill.category_id, categoriesById) === 'needs'
+      matches = budgetGroupOfEstimate(bill, categoriesById) === 'needs'
     } else if (bill.type === 'transfer' && bucketsById) {
       matches =
         budgetGroupOfTransferTo(bill.to_bucket_id, bucketsById) === 'needs'
     }
     if (!matches) continue
     const override = overridesByBillId.get(bill.id)
-    const count = estimateOccurrenceCount(
-      bill,
-      yearMonth,
-      override,
-      skippedOccurrenceKeys,
-    )
+    const count =
+      skippedOccurrenceKeys === undefined
+        ? estimatePlannedOccurrenceCount(bill, yearMonth, override)
+        : estimateOccurrenceCount(
+            bill,
+            yearMonth,
+            override,
+            skippedOccurrenceKeys,
+          )
     if (count === 0) continue
-    sum += effectiveAmount(bill, override) * count
+    sum += bill.amount * count
   }
   return sum
 }
@@ -313,7 +335,13 @@ export type EstimateMonthTotals = {
   transfer: number
 }
 
-/** Monthly estimate totals by transaction type (occurrence-weighted). */
+/**
+ * Monthly estimate totals by transaction type (occurrence-weighted).
+ * Expense lines use the same short schedule as Payday Planned Needs/Wants
+ * (non-recurring / weekly / biweekly / monthly) so multi-month expenses
+ * funded by sinking are not double-counted against income in the due month.
+ * Income and transfer lines are unchanged (transfers still include sinking).
+ */
 export function sumEstimateTotalsByType(
   bills: RecurringBill[],
   overridesByBillId: Map<string, RecurringBillMonthOverride>,
@@ -328,6 +356,8 @@ export function sumEstimateTotalsByType(
   }
   for (const bill of bills) {
     if (!bill.is_active) continue
+    // Align expense aggregate with Payday — list rows still show all due items.
+    if (bill.type === 'expense' && !isPlannedNeedsSchedule(bill)) continue
     const override = overridesByBillId.get(bill.id)
     const count = estimateOccurrenceCount(
       bill,

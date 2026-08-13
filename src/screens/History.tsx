@@ -1,18 +1,23 @@
 import { useEffect, useMemo, useRef, useState, type TouchEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { CircleBadge } from '../components/CircleBadge'
+import { BudgetGroupBadge } from '../components/BudgetGroupBadge'
 import { DueThisMonthChecklist } from '../components/DueThisMonthChecklist'
 import { GroupedListFrame } from '../components/GroupedListFrame'
 import { CollapsibleDayGroup } from '../components/CollapsibleDayGroup'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import {
+  HistoryDaySortableList,
+  HistoryTxSwipeRow,
+} from '../components/HistoryDaySortableList'
 import { MonthPager } from '../components/MonthPager'
 import { OwnerBadge } from '../components/OwnerBadge'
 import { PageTitle } from '../components/PageTitle'
 import { SearchField } from '../components/SearchField'
 import { NavIcon } from '../lib/navTabs'
-import { SwipeDeleteRow } from '../components/SwipeDeleteRow'
 import { isBlankSearch, matchesTransactionSearch } from '../lib/listSearch'
 import { useCategories } from '../hooks/useCategories'
+import { useBuckets } from '../hooks/useBuckets'
 import { useRecurringBills } from '../hooks/useRecurringBills'
 import { useTransactions } from '../hooks/useTransactions'
 import { showAppToast } from '../lib/appToast'
@@ -30,19 +35,23 @@ import {
 } from '../lib/format'
 import { requestAmountFocus } from '../lib/keyboardFocus'
 import { monthCursorKey } from '../lib/monthCursor'
+import { budgetGroupOfTx } from '../lib/moneyPlan'
+import { overspendTransactionIds, compareTransactionsChrono } from '../lib/estimateProgress'
 import {
   countDueOrOverdueUnchecked,
   isOccurrenceSkipped,
   occurrenceLogKey,
   occurrencesInMonth,
 } from '../lib/recurringBillsApi'
-import { deleteTransaction } from '../lib/transactionsApi'
+import { deleteTransaction, reorderTransactions } from '../lib/transactionsApi'
 import {
   CIRCLE_LABELS,
   CIRCLES,
+  BUDGET_GROUP_TEXT_CLASS,
   categoryDisplayParts,
   formatTransferLabel,
   formatTransferToLabel,
+  isBudgetGroup,
   isCircle,
   TRANSFER_TYPE_ICON,
   type Category,
@@ -126,6 +135,10 @@ export function History() {
   })
 
   const { parents, childrenByParent, byId } = useCategories()
+  const { byId: categoriesById } = useCategories(undefined, {
+    includeInactive: true,
+  })
+  const { byId: bucketsById } = useBuckets()
 
   // Hanya di device ini, via location state — tidak disimpan ke DB.
   const navHighlightId =
@@ -154,7 +167,8 @@ export function History() {
     () => formatMonthLabel(cursor.year, cursor.month),
     [cursor.year, cursor.month],
   )
-  const { transactions, loading, error, reload } = useTransactions(range)
+  const { transactions, loading, error, reload, applyDaySortOrder } =
+    useTransactions(range)
   const yearMonth = monthCursorKey(cursor)
   const {
     bills,
@@ -328,6 +342,17 @@ export function History() {
     }
   }
 
+  async function handleDayReorder(date: string, orderedIds: string[]) {
+    setOpenSwipeId(null)
+    applyDaySortOrder(date, orderedIds)
+    try {
+      await reorderTransactions(orderedIds)
+    } catch (err) {
+      showAppToast(err instanceof Error ? err.message : 'Failed to reorder')
+      await reload({ silent: true })
+    }
+  }
+
   const filtered = transactions.filter((tx) => {
     const circle = isCircle(tx.circle) ? tx.circle : 'hd_family'
     if (circleFilter !== 'all' && circle !== circleFilter) return false
@@ -388,6 +413,33 @@ export function History() {
 
   const completeLaterTxs = filtered.filter((tx) => tx.complete_later)
   const historyTxs = filtered.filter((tx) => !tx.complete_later)
+  const dayReorderEnabled =
+    !searchActive &&
+    circleFilter === 'all' &&
+    categoryFilter === 'all' &&
+    subcategoryFilter === 'all'
+
+  const overspendTxIds = useMemo(
+    () =>
+      overspendTransactionIds({
+        bills,
+        overridesByBillId: overrideByBillId,
+        skippedOccurrenceKeys,
+        categoriesById,
+        bucketsById,
+        yearMonth,
+        transactions,
+      }),
+    [
+      bills,
+      overrideByBillId,
+      skippedOccurrenceKeys,
+      categoriesById,
+      bucketsById,
+      yearMonth,
+      transactions,
+    ],
+  )
 
   function groupByDate(items: TransactionWithCategory[]) {
     const grouped = items.reduce<Record<string, TransactionWithCategory[]>>(
@@ -398,6 +450,9 @@ export function History() {
       },
       {},
     )
+    for (const date of Object.keys(grouped)) {
+      grouped[date]!.sort(compareTransactionsChrono)
+    }
     const dates = Object.keys(grouped).sort((a, b) => (a < b ? 1 : -1))
     return { grouped, dates }
   }
@@ -522,9 +577,12 @@ export function History() {
     persistPrefix: string,
     forceOpen: boolean | undefined,
     forceVersion: number,
+    showOverspend = false,
+    reorderEnabled = false,
   ) {
     return dates.map((date) => {
       const items = grouped[date]!
+      const canReorder = reorderEnabled && items.length > 1
       const dayTotal = items.reduce((sum, tx) => {
         if (tx.complete_later) return sum
         if (tx.type === 'expense') return sum - tx.amount
@@ -532,27 +590,7 @@ export function History() {
         return sum
       }, 0)
       const showDayTotal = items.some((tx) => !tx.complete_later)
-      return (
-        <CollapsibleDayGroup
-          key={`${persistPrefix}:${date}`}
-          title={formatDateLabel(date)}
-          persistKey={`${persistPrefix}:${date}`}
-          forceOpen={forceOpen}
-          forceVersion={forceVersion}
-          onOpenChange={() => setCollapseTick((n) => n + 1)}
-          trailing={
-            showDayTotal ? (
-              <p
-                className={`text-xs font-medium ${amountToneClass(dayTotal >= 0)}`}
-              >
-                {dayTotal < 0 ? '-' : '+'}
-                {formatRupiah(Math.abs(dayTotal))}
-              </p>
-            ) : undefined
-          }
-        >
-          <div className="space-y-2">
-            {items.map((tx) => {
+      const rows = items.map((tx) => {
               const isTransfer = tx.type === 'transfer'
               const { parentIcon, parentName, childIcon, childName } =
                 isTransfer
@@ -577,10 +615,20 @@ export function History() {
                           : ''
                     }${formatRupiah(tx.amount)}`
                   : '—'
+              const budgetGroup =
+                tx.type === 'expense'
+                  ? budgetGroupOfTx(tx)
+                  : tx.type === 'transfer' &&
+                      tx.to_bucket?.kind === 'sinking' &&
+                      isBudgetGroup(tx.to_bucket.budget_group)
+                    ? tx.to_bucket.budget_group
+                    : null
 
               return (
-                <SwipeDeleteRow
+                <HistoryTxSwipeRow
                   key={tx.id}
+                  id={tx.id}
+                  sortable={canReorder}
                   open={openSwipeId === tx.id}
                   onOpenChange={(open) =>
                     setOpenSwipeId(open ? tx.id : null)
@@ -660,11 +708,55 @@ export function History() {
                         {amountLabel}
                       </p>
                     </div>
+                    {budgetGroup ? (
+                      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
+                        <p className="truncate text-left text-xs leading-none">
+                          <BudgetGroupBadge group={budgetGroup} />
+                        </p>
+                        {showOverspend && overspendTxIds.has(tx.id) ? (
+                          <p
+                            className={`truncate text-xs font-medium leading-none whitespace-nowrap ${BUDGET_GROUP_TEXT_CLASS.needs}`}
+                          >
+                            Overspend
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
-                </SwipeDeleteRow>
+                </HistoryTxSwipeRow>
               )
-            })}
-          </div>
+            })
+      return (
+        <CollapsibleDayGroup
+          key={`${persistPrefix}:${date}`}
+          title={formatDateLabel(date)}
+          persistKey={`${persistPrefix}:${date}`}
+          forceOpen={forceOpen}
+          forceVersion={forceVersion}
+          onOpenChange={() => setCollapseTick((n) => n + 1)}
+          trailing={
+            showDayTotal ? (
+              <p
+                className={`text-xs font-medium ${amountToneClass(dayTotal >= 0)}`}
+              >
+                {dayTotal < 0 ? '-' : '+'}
+                {formatRupiah(Math.abs(dayTotal))}
+              </p>
+            ) : undefined
+          }
+        >
+          {canReorder ? (
+            <HistoryDaySortableList
+              ids={items.map((tx) => tx.id)}
+              onReorder={(orderedIds) => {
+                void handleDayReorder(date, orderedIds)
+              }}
+            >
+              {rows}
+            </HistoryDaySortableList>
+          ) : (
+            <div className="space-y-2">{rows}</div>
+          )}
         </CollapsibleDayGroup>
       )
     })
@@ -862,6 +954,15 @@ export function History() {
                   onToggle={toggleHistory}
                 >
                   <div className="space-y-5">
+                    {dayReorderEnabled &&
+                    historyGrouped.dates.some(
+                      (d) => (historyGrouped.grouped[d]?.length ?? 0) > 1,
+                    ) ? (
+                      <p className="text-[11px] text-neutral-400">
+                        Hold & drag {ActionEmoji.drag} to reorder within a
+                        day.
+                      </p>
+                    ) : null}
                     {renderDayGroups(
                       historyGrouped.dates,
                       historyGrouped.grouped,
@@ -870,6 +971,8 @@ export function History() {
                         ? historyForce.expanded
                         : undefined,
                       historyForce.version,
+                      true,
+                      dayReorderEnabled,
                     )}
                   </div>
                 </GroupedListFrame>

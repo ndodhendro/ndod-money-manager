@@ -1,11 +1,10 @@
 import {
+  budgetGroupOfTransferTo,
   sumCommittedWants,
   sumPlannedNeeds,
 } from './freeWants'
 import {
-  freeGuiltySplitAmounts,
   resolveEstimateAmount,
-  type FreeGuiltySplit,
   type ResolveEstimateAmountCtx,
 } from './moneyPlan'
 import { sortRecurringBillsForSettings } from './recurringBillDisplay'
@@ -60,11 +59,11 @@ export interface PaydayAllocation {
   bonusIncome: number
   plannedNeeds: number
   plannedWants: number
-  freeGuilty: number
-  /** Free Guilty for Ndod (floor of half). */
-  freeGuiltySuami: number
-  /** Free Guilty for Devi (ceiling of half). */
-  freeGuiltyIstri: number
+  /** Buffer = round(Planned Needs × bufferPct / 100). */
+  buffer: number
+  bufferPct: number
+  /** Guilt-Free Fund after Needs, Buffer, Wants, and sinking. */
+  guiltFree: number
   sinkingTotal: number
   /** Transfer estimates (sinking + EF + Inv), Monthly Estimates order. */
   sinkingTransfers: PaydayTransferLine[]
@@ -100,6 +99,12 @@ export interface BuildPaydayAllocationInput {
   yearMonth: string
   emergencyPct: number
   investmentPct: number
+  /** Buffer as % of unskipped Planned Needs (default 10). */
+  bufferPct?: number
+  /** Opening Buffer carry from prior month close (default 0). */
+  openingBufferCarry?: number
+  /** Opening Guilt-Free carry from prior month close (default 0). */
+  openingGuiltFreeCarry?: number
 }
 
 function isSavingsTransferDestination(
@@ -112,6 +117,17 @@ function isSavingsTransferDestination(
     return kind
   }
   return null
+}
+
+/**
+ * Sinking transfers tagged Needs/Wants count under Planned Needs/Wants
+ * (and History used), not under Payday Sinking — avoid double-count.
+ */
+function isPlannedNeedsOrWantsSinkingTransfer(
+  bill: RecurringBill,
+  bucketsById: Map<string, PaydayBucketRef>,
+): boolean {
+  return budgetGroupOfTransferTo(bill.to_bucket_id, bucketsById) != null
 }
 
 function normalizeName(value: string): string {
@@ -203,7 +219,7 @@ export function splitBonusRemainderToPyf(
 /**
  * Allocate bonus income: fill 12-month sinking gaps to target, then send
  * remainder to Emergency / Investment proportional to Money Plan %.
- * Does not change regular monthly transfers or Free Guilty.
+ * Does not change regular monthly transfers or Guilt-Free Fund.
  */
 export function buildBonusAllocation(input: {
   bonusIncome: number
@@ -288,35 +304,61 @@ export function buildBonusAllocation(input: {
 }
 
 /**
- * Free Guilty + Ndod/Devi split for a month (excludes checking-account transfers
- * from sinking so amounts are not circular).
+ * Payday pools for a month (excludes checking-account transfers from sinking
+ * so legacy rows do not affect the pool).
  * `income` must be regular monthly income (no THR / Performance Bonus).
+ *
+ * Planned Needs/Wants ceilings shrink when occurrences are skipped.
+ * Buffer = round(unskipped Needs × bufferPct / 100) + skipped Needs amount
+ *   + opening Buffer carry.
+ * Guilt-Free = income − effective Needs − buffer − effective Wants − sinking
+ *   + opening Guilt-Free carry (Wants skips raise residual; do not double-add).
+ * Sinking = EF / Inv / untagged sinking only (Needs/Wants sinking is in Planned).
  */
-export function computeFreeGuiltySplit(
-  input: BuildPaydayAllocationInput,
-): {
+export function computeGuiltFreePools(input: BuildPaydayAllocationInput): {
   income: number
   plannedNeeds: number
   plannedWants: number
+  buffer: number
+  bufferPct: number
   sinkingTotal: number
-  freeGuilty: number
-  split: FreeGuiltySplit
+  guiltFree: number
+  /** Needs amount freed by skips (added into Buffer). */
+  skippedNeeds: number
 } {
   const income = Math.max(0, input.income)
+  const bufferPct = Math.max(0, input.bufferPct ?? 10)
+  const openingBufferCarry = Math.max(0, Math.round(input.openingBufferCarry ?? 0))
+  const openingGuiltFreeCarry = Math.max(
+    0,
+    Math.round(input.openingGuiltFreeCarry ?? 0),
+  )
+
+  const needsUnskipped = sumPlannedNeeds(
+    input.bills,
+    input.overridesByBillId,
+    input.categoriesById,
+    input.yearMonth,
+    undefined,
+    input.bucketsById,
+  )
   const plannedNeeds = sumPlannedNeeds(
     input.bills,
     input.overridesByBillId,
     input.categoriesById,
     input.yearMonth,
-    input.skippedOccurrenceKeys,
+    input.skippedOccurrenceKeys ?? new Set(),
+    input.bucketsById,
   )
   const plannedWants = sumCommittedWants(
     input.bills,
     input.overridesByBillId,
     input.categoriesById,
     input.yearMonth,
-    input.skippedOccurrenceKeys,
+    input.skippedOccurrenceKeys ?? new Set(),
+    input.bucketsById,
   )
+  const skippedNeeds = Math.max(0, needsUnskipped - plannedNeeds)
 
   const amountCtx: ResolveEstimateAmountCtx = {
     monthIncome: income,
@@ -329,6 +371,7 @@ export function computeFreeGuiltySplit(
   for (const bill of input.bills) {
     if (!bill.is_active) continue
     if (!isSavingsTransferDestination(bill, input.bucketsById)) continue
+    if (isPlannedNeedsOrWantsSinkingTransfer(bill, input.bucketsById)) continue
     const override = input.overridesByBillId.get(bill.id)
     const count = estimateOccurrenceCount(
       bill,
@@ -341,36 +384,53 @@ export function computeFreeGuiltySplit(
     sinkingTotal += unit * count
   }
 
-  const freeGuilty = Math.max(
-    0,
-    income - plannedNeeds - plannedWants - sinkingTotal,
-  )
+  const baseBuffer = Math.round((needsUnskipped * bufferPct) / 100)
+  const buffer = baseBuffer + skippedNeeds + openingBufferCarry
+  const guiltFree =
+    Math.max(
+      0,
+      income - plannedNeeds - buffer - plannedWants - sinkingTotal,
+    ) + openingGuiltFreeCarry
   return {
     income,
     plannedNeeds,
     plannedWants,
+    buffer,
+    bufferPct,
     sinkingTotal,
-    freeGuilty,
-    split: freeGuiltySplitAmounts(freeGuilty),
+    guiltFree,
+    skippedNeeds,
+  }
+}
+
+/** @deprecated Use computeGuiltFreePools. */
+export function computeFreeGuilty(input: BuildPaydayAllocationInput) {
+  const base = computeGuiltFreePools(input)
+  return {
+    income: base.income,
+    plannedNeeds: base.plannedNeeds,
+    plannedWants: base.plannedWants,
+    sinkingTotal: base.sinkingTotal,
+    freeGuilty: base.guiltFree,
   }
 }
 
 /**
  * Payday ritual totals for a month.
  *
- * Planned Needs / Wants = expense estimates only (sinking transfers live under
- * Sinking Funds to Transfer so they are not double-counted).
- * Free Guilty = regular income − planned needs − planned wants − sinking total
- * (THR / Performance Bonus excluded from Free Guilty).
- * Ndod = floor(Free Guilty / 2), Devi = ceil(Free Guilty / 2).
- * Sinking = Monthly Estimate transfers into sinking / EF / Inv
+ * Planned Needs / Wants = short-schedule expenses + transfers into sinking
+ * funds tagged Needs/Wants (template ceilings).
+ * Buffer = % of Planned Needs (overspend reserve).
+ * Guilt-Free Fund = regular income − needs − buffer − wants − sinking
+ * (THR / Performance Bonus excluded from Guilt-Free Fund).
+ * Sinking = transfers into EF / Inv / sinking without Needs/Wants tag
  * (EF & Inv amounts from Money Plan % of regular income).
  * Bonus = fill 12-month sinking gaps, then remainder → EF/Inv by % ratio.
  */
 export function buildPaydayAllocation(
   input: BuildPaydayAllocationInput,
 ): PaydayAllocation {
-  const base = computeFreeGuiltySplit(input)
+  const base = computeGuiltFreePools(input)
   const bonusIncome = Math.max(0, Math.round(input.bonusIncome ?? 0))
   const amountCtx: ResolveEstimateAmountCtx = {
     monthIncome: base.income,
@@ -383,6 +443,7 @@ export function buildPaydayAllocation(
   for (const bill of input.bills) {
     if (!bill.is_active) continue
     if (!isSavingsTransferDestination(bill, input.bucketsById)) continue
+    if (isPlannedNeedsOrWantsSinkingTransfer(bill, input.bucketsById)) continue
     const override = input.overridesByBillId.get(bill.id)
     const count = estimateOccurrenceCount(
       bill,
@@ -445,9 +506,9 @@ export function buildPaydayAllocation(
     bonusIncome,
     plannedNeeds: base.plannedNeeds,
     plannedWants: base.plannedWants,
-    freeGuilty: base.freeGuilty,
-    freeGuiltySuami: base.split.suami,
-    freeGuiltyIstri: base.split.istri,
+    buffer: base.buffer,
+    bufferPct: base.bufferPct,
+    guiltFree: base.guiltFree,
     sinkingTotal: base.sinkingTotal,
     sinkingTransfers,
     bonusAllocation,

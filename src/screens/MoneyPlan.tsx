@@ -1,8 +1,9 @@
+import { FreeGuiltyRemainingGlance } from '../components/FreeGuiltyRemaining'
 import { MonthPager } from '../components/MonthPager'
 import { PageTitle } from '../components/PageTitle'
 import { SettingsNavRow } from '../components/SettingsNavRow'
+import { useFreeGuiltyProgress } from '../hooks/useFreeGuiltyProgress'
 import { useMonthCursor } from '../hooks/useMonthCursor'
-import { useRecurringBills } from '../hooks/useRecurringBills'
 import { useTransactions } from '../hooks/useTransactions'
 import {
   AMOUNT_IN_CLASS,
@@ -28,10 +29,11 @@ export function MoneyPlanScreen() {
   const { transactions, loading, error } = useTransactions(range)
   const yearMonth = monthCursorKey(cursor)
   const {
+    progress: freeGuiltyProgress,
     skippedOccurrenceKeys,
-    loading: billsLoading,
+    loading: freeGuiltyLoading,
     available: billsAvailable,
-  } = useRecurringBills(yearMonth)
+  } = useFreeGuiltyProgress(yearMonth, transactions)
 
   const totalIncome = transactions
     .filter((t) => t.type === 'income' && !t.complete_later)
@@ -45,7 +47,7 @@ export function MoneyPlanScreen() {
   const recurringSubtitle =
     !billsAvailable
       ? 'Setup required'
-      : billsLoading
+      : freeGuiltyLoading
         ? 'Loading…'
         : skippedCount === 0
           ? 'No skipped items'
@@ -69,6 +71,10 @@ export function MoneyPlanScreen() {
         onPrev={goPrevMonth}
         onNext={goNextMonth}
       />
+
+      {freeGuiltyProgress && (
+        <FreeGuiltyRemainingGlance progress={freeGuiltyProgress} />
+      )}
 
       {loading && (
         <p className="mt-6 text-center text-sm text-neutral-400">Loading…</p>

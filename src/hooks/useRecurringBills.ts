@@ -7,7 +7,7 @@ import {
   fetchRecurringBills,
   isMissingRecurringSchema,
   isOccurrenceSkipped,
-  isRecurringActiveInMonth,
+  isEstimateActiveInMonth,
   occurrenceLogKey,
   occurrencesInMonth,
   type RecurringBill,
@@ -45,7 +45,9 @@ export function useRecurringBills(yearMonth: string) {
             ? Promise.resolve(null)
             : fetchRecurringBillLogs(currentYm),
         ])
-      setBills(billRows.filter((b) => isRecurringActiveInMonth(b, yearMonth)))
+      setBills(
+        billRows.filter((b) => isEstimateActiveInMonth(b, yearMonth)),
+      )
       setLogs(logRows)
       setOverrides(overrideRows)
       setOccurrenceSkips(skipRows)

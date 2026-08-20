@@ -37,20 +37,17 @@ import {
 import { requestAmountFocus } from '../lib/keyboardFocus'
 import { monthCursorKey } from '../lib/monthCursor'
 import { budgetGroupOfTx } from '../lib/moneyPlan'
-import {
-  monthBudgetOverspendTransactionIds,
-  compareHistoryDayDisplay,
-} from '../lib/estimateProgress'
+import { compareHistoryDayDisplay } from '../lib/estimateProgress'
 import {
   checkingBucketIdSet,
   estimateExpenseCoverageKeys,
-  unplannedNeedsTransactionIds,
-  unplannedWantsTransactionIds,
+  monthBudgetCeilingOverspendTransactionIds,
 } from '../lib/freeGuiltyProgress'
 import {
   budgetGroupOfEstimate,
   isPlannedNeedsSchedule,
 } from '../lib/freeWants'
+import { useFreeGuiltyProgress } from '../hooks/useFreeGuiltyProgress'
 import {
   countDueOrOverdueUnchecked,
   isOccurrenceSkipped,
@@ -199,6 +196,7 @@ export function History() {
     available: billsAvailable,
     reload: reloadBills,
   } = useRecurringBills(yearMonth)
+  const { allocation } = useFreeGuiltyProgress(yearMonth, transactions)
 
   const dueCount = useMemo(
     () =>
@@ -446,6 +444,7 @@ export function History() {
     subcategoryFilter === 'all'
 
   const overspendTxIds = useMemo(() => {
+    if (!allocation) return new Set<string>()
     const checkingIds = checkingBucketIdSet(buckets)
     const isExpenseNeedsOrWantsEstimate = (bill: (typeof bills)[number]) => {
       if (!isPlannedNeedsSchedule(bill)) return false
@@ -458,7 +457,7 @@ export function History() {
       categoriesById,
       isExpenseNeedsOrWantsEstimate,
     )
-    const fromEstimates = monthBudgetOverspendTransactionIds({
+    return monthBudgetCeilingOverspendTransactionIds({
       bills,
       overridesByBillId: overrideByBillId,
       skippedOccurrenceKeys,
@@ -467,21 +466,12 @@ export function History() {
       yearMonth,
       transactions,
       checkingBucketIds: checkingIds,
-    })
-    const fromUnplannedNeeds = unplannedNeedsTransactionIds({
-      transactions,
       estimateCoverageKeys: coverageKeys,
-      checkingBucketIds: checkingIds,
+      bufferAllowance: allocation.buffer,
+      guiltFreeAllowance: allocation.guiltFree,
     })
-    const fromUnplannedWants = unplannedWantsTransactionIds({
-      transactions,
-      estimateCoverageKeys: coverageKeys,
-      checkingBucketIds: checkingIds,
-    })
-    for (const id of fromUnplannedNeeds) fromEstimates.add(id)
-    for (const id of fromUnplannedWants) fromEstimates.add(id)
-    return fromEstimates
   }, [
+    allocation,
     bills,
     overrideByBillId,
     skippedOccurrenceKeys,

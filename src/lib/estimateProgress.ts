@@ -432,8 +432,22 @@ export function buildMonthBudgetEstimateRows(input: {
   return rows
 }
 
-/** Txs that consume Buffer / Guilt-Free (overspend on estimate lines + unplanned). */
-export function monthBudgetOverspendTransactionIds(input: {
+function addTrackDemand(
+  map: Map<string, number>,
+  txId: string,
+  amount: number,
+) {
+  const add = Math.max(0, Math.round(amount))
+  if (add <= 0) return
+  map.set(txId, (map.get(txId) ?? 0) + add)
+}
+
+/**
+ * Per-tx Buffer / Guilt-Free demand from estimate-line overage only
+ * (Main/checking). Planned is consumed oldest-first; only the portion
+ * above planned (and later matches on that line) counts.
+ */
+export function monthBudgetFlexibleTrackDemandByTxId(input: {
   bills: RecurringBill[]
   overridesByBillId: Map<string, RecurringBillMonthOverride>
   skippedOccurrenceKeys?: Set<string>
@@ -442,15 +456,19 @@ export function monthBudgetOverspendTransactionIds(input: {
   yearMonth: string
   transactions: TransactionWithCategory[]
   checkingBucketIds: Set<string>
-}): Set<string> {
-  const ids = new Set<string>()
+}): {
+  bufferByTxId: Map<string, number>
+  guiltFreeByTxId: Map<string, number>
+} {
+  const bufferByTxId = new Map<string, number>()
+  const guiltFreeByTxId = new Map<string, number>()
   const assignedTxIds = new Set<string>()
   const matchOpts = {
     mainCheckingOnly: true as const,
     checkingBucketIds: input.checkingBucketIds,
   }
 
-  for (const { bill } of monthBudgetExpenseCandidates(
+  for (const { bill, group } of monthBudgetExpenseCandidates(
     input.bills,
     input.categoriesById,
   )) {
@@ -483,15 +501,16 @@ export function monthBudgetOverspendTransactionIds(input: {
     const actual = matched.reduce((sum, tx) => sum + tx.amount, 0)
     if (actual <= planned) continue
 
+    const demandMap = group === 'needs' ? bufferByTxId : guiltFreeByTxId
     const oldestFirst = [...matched].sort(compareTransactionsChrono)
     let remaining = planned
     for (const tx of oldestFirst) {
       if (remaining <= 0) {
-        ids.add(tx.id)
+        addTrackDemand(demandMap, tx.id, tx.amount)
         continue
       }
       if (tx.amount > remaining) {
-        ids.add(tx.id)
+        addTrackDemand(demandMap, tx.id, tx.amount - remaining)
         remaining = 0
         continue
       }
@@ -499,6 +518,64 @@ export function monthBudgetOverspendTransactionIds(input: {
     }
   }
 
+  return { bufferByTxId, guiltFreeByTxId }
+}
+
+/**
+ * Flag txs that chronologically push Buffer (Needs) or Guilt-Free (Wants)
+ * past their payday plafond. Demand = estimate-line overage only; callers
+ * add unplanned Needs/Wants demand before using this helper.
+ */
+export function idsExceedingTrackAllowance(input: {
+  demandByTxId: Map<string, number>
+  transactionsById: Map<string, TransactionWithCategory>
+  allowance: number
+}): Set<string> {
+  const ids = new Set<string>()
+  const allowance = Math.max(0, Math.round(input.allowance))
+  const entries: Array<{ tx: TransactionWithCategory; amount: number }> = []
+  for (const [txId, amount] of input.demandByTxId) {
+    const tx = input.transactionsById.get(txId)
+    if (!tx || amount <= 0) continue
+    entries.push({ tx, amount })
+  }
+  entries.sort((a, b) => compareTransactionsChrono(a.tx, b.tx))
+
+  let remaining = allowance
+  for (const { tx, amount } of entries) {
+    if (remaining <= 0) {
+      ids.add(tx.id)
+      continue
+    }
+    if (amount > remaining) {
+      ids.add(tx.id)
+      remaining = 0
+      continue
+    }
+    remaining -= amount
+  }
+  return ids
+}
+
+/**
+ * @deprecated Prefer monthBudgetCeilingOverspendTransactionIds — this only
+ * lists estimate-line overage txs, not Buffer/GF plafond crossings.
+ */
+export function monthBudgetOverspendTransactionIds(input: {
+  bills: RecurringBill[]
+  overridesByBillId: Map<string, RecurringBillMonthOverride>
+  skippedOccurrenceKeys?: Set<string>
+  categoriesById: Map<string, Category>
+  bucketsById: Map<string, EstimateBucketRef>
+  yearMonth: string
+  transactions: TransactionWithCategory[]
+  checkingBucketIds: Set<string>
+}): Set<string> {
+  const { bufferByTxId, guiltFreeByTxId } =
+    monthBudgetFlexibleTrackDemandByTxId(input)
+  const ids = new Set<string>()
+  for (const id of bufferByTxId.keys()) ids.add(id)
+  for (const id of guiltFreeByTxId.keys()) ids.add(id)
   return ids
 }
 

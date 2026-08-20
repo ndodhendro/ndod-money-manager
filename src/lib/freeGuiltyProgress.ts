@@ -1,9 +1,15 @@
 import {
+  idsExceedingTrackAllowance,
+  monthBudgetFlexibleTrackDemandByTxId,
   sumCappedEstimateActual,
   sumEstimateOverspend,
+  type EstimateBucketRef,
   type EstimateProgressRow,
 } from './estimateProgress'
-import type { RecurringBill } from './recurringBillsApi'
+import type {
+  RecurringBill,
+  RecurringBillMonthOverride,
+} from './recurringBillsApi'
 import { budgetGroupOfEstimate } from './freeWants'
 import { budgetGroupOfTx } from './moneyPlan'
 import type {
@@ -119,6 +125,78 @@ export function sumGuiltFreeSpent(input: {
 
 /** @deprecated Use sumGuiltFreeSpent. */
 export const sumFreeGuiltySpent = sumGuiltFreeSpent
+
+/**
+ * History "Overspend" badge: only txs that chronologically push Buffer
+ * (Needs flexible demand) or Guilt-Free (Wants flexible demand) past their
+ * payday plafond. Flexible demand = estimate-line overage + unplanned.
+ */
+export function monthBudgetCeilingOverspendTransactionIds(input: {
+  bills: RecurringBill[]
+  overridesByBillId: Map<string, RecurringBillMonthOverride>
+  skippedOccurrenceKeys?: Set<string>
+  categoriesById: Map<string, Category>
+  bucketsById: Map<string, EstimateBucketRef>
+  yearMonth: string
+  transactions: TransactionWithCategory[]
+  checkingBucketIds: Set<string>
+  estimateCoverageKeys: Set<string>
+  bufferAllowance: number
+  guiltFreeAllowance: number
+}): Set<string> {
+  const { bufferByTxId, guiltFreeByTxId } = monthBudgetFlexibleTrackDemandByTxId(
+    {
+      bills: input.bills,
+      overridesByBillId: input.overridesByBillId,
+      skippedOccurrenceKeys: input.skippedOccurrenceKeys,
+      categoriesById: input.categoriesById,
+      bucketsById: input.bucketsById,
+      yearMonth: input.yearMonth,
+      transactions: input.transactions,
+      checkingBucketIds: input.checkingBucketIds,
+    },
+  )
+
+  const txsById = new Map(
+    input.transactions.map((tx) => [tx.id, tx] as const),
+  )
+
+  for (const id of unplannedNeedsTransactionIds({
+    transactions: input.transactions,
+    estimateCoverageKeys: input.estimateCoverageKeys,
+    checkingBucketIds: input.checkingBucketIds,
+  })) {
+    const tx = txsById.get(id)
+    if (!tx) continue
+    bufferByTxId.set(id, (bufferByTxId.get(id) ?? 0) + tx.amount)
+  }
+  for (const id of unplannedWantsTransactionIds({
+    transactions: input.transactions,
+    estimateCoverageKeys: input.estimateCoverageKeys,
+    checkingBucketIds: input.checkingBucketIds,
+  })) {
+    const tx = txsById.get(id)
+    if (!tx) continue
+    guiltFreeByTxId.set(id, (guiltFreeByTxId.get(id) ?? 0) + tx.amount)
+  }
+
+  const ids = new Set<string>()
+  for (const id of idsExceedingTrackAllowance({
+    demandByTxId: bufferByTxId,
+    transactionsById: txsById,
+    allowance: input.bufferAllowance,
+  })) {
+    ids.add(id)
+  }
+  for (const id of idsExceedingTrackAllowance({
+    demandByTxId: guiltFreeByTxId,
+    transactionsById: txsById,
+    allowance: input.guiltFreeAllowance,
+  })) {
+    ids.add(id)
+  }
+  return ids
+}
 
 /** Category+group keys covered by active Needs/Wants expense estimates (incl. children). */
 export function estimateExpenseCoverageKeys(

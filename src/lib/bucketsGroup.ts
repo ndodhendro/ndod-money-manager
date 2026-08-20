@@ -183,19 +183,21 @@ export function isBucketLeaf(
  * sum of children's own balances for parents with children.
  */
 export function displayBucketBalance(
-  bucket: Pick<Bucket, 'id'>,
+  bucket: Pick<Bucket, 'id' | 'kind'>,
   ownBalances: Map<string, number>,
-  childrenMap: Map<string, Array<Pick<Bucket, 'id'>>>,
+  childrenMap: Map<string, Array<Pick<Bucket, 'id' | 'kind'>>>,
 ): number {
   const children = childrenMap.get(bucket.id)
   if (children && children.length > 0) {
     let sum = 0
     for (const child of children) {
-      sum += ownBalances.get(child.id) ?? 0
+      sum += displayBucketBalance(child, ownBalances, childrenMap)
     }
     return sum
   }
-  return ownBalances.get(bucket.id) ?? 0
+  const raw = ownBalances.get(bucket.id) ?? 0
+  if (bucket.kind === 'sinking') return Math.max(0, raw)
+  return raw
 }
 
 /**

@@ -222,6 +222,48 @@ export function sortRecurringBillsForSettings(
   })
 }
 
+export type RecurringBillSettingsGroup = {
+  key: string
+  title: string
+  items: RecurringBill[]
+}
+
+/**
+ * Settings Monthly Estimates groups: Estimates (non-recurring) first,
+ * then Day N with due day descending. `bills` should already be sorted.
+ */
+export function groupRecurringBillsForSettings(
+  bills: RecurringBill[],
+): RecurringBillSettingsGroup[] {
+  const estimates: RecurringBill[] = []
+  const byDay = new Map<number, RecurringBill[]>()
+  for (const bill of bills) {
+    if (!bill.is_recurring) {
+      estimates.push(bill)
+      continue
+    }
+    const list = byDay.get(bill.due_day) ?? []
+    list.push(bill)
+    byDay.set(bill.due_day, list)
+  }
+  const groups: RecurringBillSettingsGroup[] = []
+  if (estimates.length > 0) {
+    groups.push({
+      key: 'estimate',
+      title: 'Estimates',
+      items: estimates,
+    })
+  }
+  for (const [day, items] of [...byDay.entries()].sort(([a], [b]) => b - a)) {
+    groups.push({
+      key: `day:${day}`,
+      title: `Day ${day}`,
+      items,
+    })
+  }
+  return groups
+}
+
 export type RecurringChecklistOccurrence = {
   bill: RecurringBill
   occurredOn: string

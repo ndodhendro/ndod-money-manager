@@ -468,6 +468,40 @@ export function countDueOrOverdueUnchecked(
   return count
 }
 
+/** Unchecked checklist occurrences due after today in the given month. */
+export function countUpcomingUnchecked(
+  bills: RecurringBill[],
+  logByOccurrenceKey: Map<string, RecurringBillLog>,
+  _cursor: MonthCursor,
+  today: string,
+  yearMonth: string,
+  overrideByBillId?: Map<string, RecurringBillMonthOverride>,
+  skippedOccurrenceKeys?: Set<string>,
+): number {
+  let count = 0
+  for (const bill of bills) {
+    const override = overrideByBillId?.get(bill.id)
+    for (const occurredOn of occurrencesInMonth(bill, yearMonth, override)) {
+      if (
+        isOccurrenceSkipped(
+          bill.id,
+          occurredOn,
+          skippedOccurrenceKeys,
+          override,
+        )
+      ) {
+        continue
+      }
+      if (occurredOn <= today) continue
+      if (logByOccurrenceKey.has(occurrenceLogKey(bill.id, occurredOn))) {
+        continue
+      }
+      count += 1
+    }
+  }
+  return count
+}
+
 /** Still appears on checklist for this YYYY-MM (dated recurring only). */
 export function isRecurringActiveInMonth(
   bill: RecurringBill,

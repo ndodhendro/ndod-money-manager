@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ActionEmoji } from '../lib/actionEmoji'
 import { showAppToast } from '../lib/appToast'
@@ -30,10 +30,14 @@ import {
   type RecurringBillMonthOverride,
 } from '../lib/recurringBillsApi'
 import { createTransaction, deleteTransaction } from '../lib/transactionsApi'
-import { resolveExpenseFromBucketId } from '../lib/bucketsApi'
+import {
+  resolveExpenseFromBucketId,
+  sinkingLinkedCategoryIds,
+} from '../lib/bucketsApi'
 import {
   efLoanConfirmMessage,
   evaluateExpenseEfLoan,
+  evaluateSinkingFundEfLoan,
   resolveMonthWritePolicy,
 } from '../lib/budgetSaveGate'
 import { upsertEfLoanForTransaction } from '../lib/efLoansApi'
@@ -48,6 +52,7 @@ import {
   sumMonthRegularIncome,
 } from '../lib/moneyPlan'
 import { isBlankSearch, matchesRecurringBillSearch } from '../lib/listSearch'
+import { PlanTitle } from '../lib/planSections'
 import {
   estimatePlanBadgeGroup,
   estimatePlanTag,
@@ -56,7 +61,6 @@ import type { EfLoanSource, NewTransactionInput } from '../lib/types'
 import { ConfirmDialog } from './ConfirmDialog'
 import { GroupedListFrame } from './GroupedListFrame'
 import { CollapsibleDayGroup } from './CollapsibleDayGroup'
-import { CollapsibleSection } from './CollapsibleSection'
 import { RecurringBillRowContent } from './RecurringBillRowContent'
 import { RecurringMonthOverrideSheet } from './RecurringMonthOverrideSheet'
 import { SearchField } from './SearchField'
@@ -68,7 +72,7 @@ const EMPTY_SKIPPED_OCCURRENCE_KEYS = new Set<string>()
 
 type ChecklistStatus = 'due' | 'unchecked' | 'checked' | 'skipped'
 
-/** plan = skipped only; dueInbox = due/overdue only (Transactions). */
+/** plan = upcoming + skipped; dueInbox = due/overdue only (Transactions). */
 export type RecurringChecklistVariant = 'plan' | 'dueInbox'
 
 interface DueThisMonthChecklistProps {
@@ -86,7 +90,6 @@ interface DueThisMonthChecklistProps {
   loading: boolean
   available: boolean
   onChanged: () => void
-  embedded?: boolean
   variant?: RecurringChecklistVariant
   /** Partial-match filter across name, category, amount, owner, etc. */
   searchQuery?: string
@@ -96,7 +99,7 @@ interface DueThisMonthChecklistProps {
    */
   emptySearchMessage?: string
   /**
-   * When true (Plan Skipped Items), render the search field above the list.
+   * When true (Plan Upcoming & Skipped), render the search field above the list.
    * Parent-owned search via `searchQuery` / `onSearchQueryChange` can omit this.
    */
   showSearchField?: boolean
@@ -196,7 +199,6 @@ export function DueThisMonthChecklist({
   loading,
   available,
   onChanged,
-  embedded = false,
   variant = 'plan',
   searchQuery: searchQueryProp,
   emptySearchMessage,
@@ -285,9 +287,13 @@ export function DueThisMonthChecklist({
     [logByOccurrenceKeyProp, logByBillId, bills, yearMonth, overrideByBillId],
   )
   const { byId } = useCategories(undefined, { includeInactive: true })
-  const { buckets, loading: bucketsLoading } = useBuckets()
+  const { buckets, movements, loading: bucketsLoading } = useBuckets()
   const bucketsById = useMemo(
     () => new Map(buckets.map((b) => [b.id, b])),
+    [buckets],
+  )
+  const sinkingCategoryIds = useMemo(
+    () => sinkingLinkedCategoryIds(buckets),
     [buckets],
   )
   const { settings: pyfSettings, loading: pyfLoading } = usePyfSettings()
@@ -468,6 +474,7 @@ export function DueThisMonthChecklist({
 
   const statusSections = useMemo(() => {
     const due: RecurringChecklistOccurrence[] = []
+    const unchecked: RecurringChecklistOccurrence[] = []
     const skipped: RecurringChecklistOccurrence[] = []
     const today = todayIso()
     for (const item of filteredOccurrenceItems) {
@@ -477,6 +484,7 @@ export function DueThisMonthChecklist({
       }
       if (effectiveLogByOccurrenceKey.has(item.key)) continue
       if (item.occurredOn <= today) due.push(item)
+      else unchecked.push(item)
     }
     const sections: Array<{
       status: ChecklistStatus
@@ -493,7 +501,14 @@ export function DueThisMonthChecklist({
       }
       return sections
     }
-    // Plan Skipped Items: Skipped only (due lives on Transactions).
+    // Plan: upcoming + skipped (due lives on Transactions).
+    if (unchecked.length > 0) {
+      sections.push({
+        status: 'unchecked',
+        label: 'Upcoming',
+        groups: groupOccurrencesByDate(unchecked, 'asc'),
+      })
+    }
     if (skipped.length > 0) {
       sections.push({
         status: 'skipped',
@@ -612,32 +627,6 @@ export function DueThisMonthChecklist({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- version is the intentional trigger
   }, [variant, sectionDayForce.due.version])
 
-  const doneCount = useMemo(
-    () =>
-      occurrenceItems.filter(
-        (item) =>
-          effectiveLogByOccurrenceKey.has(item.key) &&
-          !isSkipped(item.bill.id, item.occurredOn),
-      ).length,
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- isSkipped via pendingSkipped
-    [
-      occurrenceItems,
-      effectiveLogByOccurrenceKey,
-      pendingSkipped,
-      overrideByBillId,
-      skippedOccurrenceKeys,
-    ],
-  )
-
-  const activeCount = useMemo(
-    () =>
-      occurrenceItems.filter(
-        (item) => !isSkipped(item.bill.id, item.occurredOn),
-      ).length,
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- isSkipped via pendingSkipped
-    [occurrenceItems, pendingSkipped, overrideByBillId, skippedOccurrenceKeys],
-  )
-
   async function handleToggle(
     bill: RecurringBill,
     occurredOn: string,
@@ -725,6 +714,7 @@ export function DueThisMonthChecklist({
                 circle,
                 occurred_on: occurredOn,
                 is_recurring: true,
+                recurring_bill_id: bill.id,
                 complete_later: false,
                 budget_group: null,
               }
@@ -742,6 +732,7 @@ export function DueThisMonthChecklist({
                 circle,
                 occurred_on: occurredOn,
                 is_recurring: true,
+                recurring_bill_id: bill.id,
                 complete_later: false,
                 budget_group:
                   bill.type === 'expense'
@@ -764,7 +755,31 @@ export function DueThisMonthChecklist({
           return
         }
 
-        if (draft.type === 'expense' && allocation) {
+        if (draft.type === 'expense') {
+          const sinkingEval = evaluateSinkingFundEfLoan({
+            draft,
+            buckets,
+            movements,
+          })
+          if (sinkingEval.borrowAmount > 0 && sinkingEval.source) {
+            setPendingDone((prev) => {
+              const next = new Map(prev)
+              next.delete(key)
+              return next
+            })
+            setPendingEfConfirm({
+              bill,
+              occurredOn,
+              draft,
+              borrowAmount: sinkingEval.borrowAmount,
+              source: sinkingEval.source,
+              yearMonth: policy.yearMonth,
+              amountOverride,
+            })
+            return
+          }
+
+          if (allocation) {
           const evalResult = evaluateExpenseEfLoan({
             draft,
             monthClosed: policy.monthClosed,
@@ -795,6 +810,7 @@ export function DueThisMonthChecklist({
               amountOverride,
             })
             return
+          }
           }
         }
 
@@ -1011,30 +1027,34 @@ export function DueThisMonthChecklist({
     }
   }
 
+  function renderPlanGroupedFrame(body: ReactNode) {
+    if (variant !== 'plan') return <>{body}</>
+    return (
+      <GroupedListFrame
+        label={PlanTitle.recurring}
+        expanded={allExpanded}
+        onToggle={toggleAllExpanded}
+      >
+        {body}
+      </GroupedListFrame>
+    )
+  }
+
   if (!available) {
     if (variant === 'dueInbox') return null
-    return (
-      <section className={embedded ? '' : 'mt-6'}>
-        {!embedded && (
-          <p className="mb-2 text-sm font-medium text-neutral-600 dark:text-neutral-300">
-            This month
-          </p>
-        )}
-        <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
-          Run migration{' '}
-          <code className="text-xs">migrate_recurring_bills.sql</code> in
-          Supabase, then add items in Settings → Monthly Estimates.
-        </p>
-      </section>
+    return renderPlanGroupedFrame(
+      <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
+        Run migration{' '}
+        <code className="text-xs">migrate_recurring_bills.sql</code> in
+        Supabase, then add items in Settings → Monthly Estimates.
+      </p>,
     )
   }
 
   if (displayLoading && (bills.length === 0 || !amountDepsReady)) {
     if (variant === 'dueInbox') return null
-    return (
-      <section className={embedded ? '' : 'mt-6'}>
-        <p className="text-sm text-neutral-400">Loading…</p>
-      </section>
+    return renderPlanGroupedFrame(
+      <p className="text-sm text-neutral-400">Loading…</p>,
     )
   }
 
@@ -1055,62 +1075,48 @@ export function DueThisMonthChecklist({
         <SearchField
           value={searchQuery}
           onChange={handleSearchChange}
-          placeholder="Search skipped items…"
-          aria-label="Search skipped items"
+          placeholder="Search upcoming and skipped…"
+          aria-label="Search upcoming and skipped"
           className="mb-3"
         />
       ) : null
 
     if (occurrenceItems.length === 0) {
       return (
-        <section className={embedded ? '' : 'mt-6'}>
+        <>
           {searchFieldEl}
-          {!embedded && (
-            <p className="mb-2 text-sm font-medium text-neutral-600 dark:text-neutral-300">
-              This month
-            </p>
+          {renderPlanGroupedFrame(
+            <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
+              No due items yet. Add recurring estimates in Settings → Monthly
+              Estimates.
+            </p>,
           )}
-          <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
-            No due items yet. Add recurring estimates in Settings → Monthly
-            Estimates.
-          </p>
-        </section>
+        </>
       )
     }
 
     if (searchActive) {
       return (
-        <section className={embedded ? '' : 'mt-6'}>
-          {searchFieldEl}
-          <p className="rounded-xl bg-white p-3 text-center text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
-            No matches.
-          </p>
-        </section>
-      )
-    }
-
-    // No skipped items — due bills live on Transactions.
-    const onlyDuesNote = (
-      <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
-        No skipped items. Due bills are on Transactions.
-      </p>
-    )
-    if (embedded) {
-      return (
         <>
           {searchFieldEl}
-          {onlyDuesNote}
+          {renderPlanGroupedFrame(
+            <p className="rounded-xl bg-white p-3 text-center text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
+              No matches.
+            </p>,
+          )}
         </>
       )
     }
+
     return (
-      <section className="mt-6">
+      <>
         {searchFieldEl}
-        <p className="mb-2 text-sm font-medium text-neutral-600 dark:text-neutral-300">
-          This month
-        </p>
-        {onlyDuesNote}
-      </section>
+        {renderPlanGroupedFrame(
+          <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
+            No upcoming or skipped items. Due bills are on Transactions.
+          </p>,
+        )}
+      </>
     )
   }
 
@@ -1179,6 +1185,8 @@ export function DueThisMonthChecklist({
                   const rowId = `recurring-bill-${key}`
                   const showCheckbox = variant !== 'plan' && !skipped
                   const canToggleCheck = variant !== 'plan'
+                  const showOccurrenceMeta =
+                    variant !== 'plan' || section.status === 'unchecked'
                   const rowInner = (
                     <>
                       {showCheckbox ? (
@@ -1193,12 +1201,17 @@ export function DueThisMonthChecklist({
                           displayAmount={amount}
                           done={done}
                           inactive={skipped}
-                          showMeta={variant !== 'plan'}
+                          linkedToSinkingFund={Boolean(
+                            display.childName &&
+                              bill.category_id &&
+                              sinkingCategoryIds.has(bill.category_id),
+                          )}
+                          showMeta={showOccurrenceMeta}
                           monthCursor={
-                            variant === 'plan' ? undefined : cursor
+                            showOccurrenceMeta ? cursor : undefined
                           }
                           occurredOn={
-                            variant === 'plan' ? undefined : occurredOn
+                            showOccurrenceMeta ? occurredOn : undefined
                           }
                           currentMonthDone={currentMonthDone}
                           budgetGroup={budgetGroup}
@@ -1343,11 +1356,6 @@ export function DueThisMonthChecklist({
           ))}
         </div>
       )
-
-      // Plan: flat list under Skipped Items — no nested "Skipped" status group.
-      if (variant === 'plan') {
-        return <div key={section.status}>{dayGroups}</div>
-      }
 
       return (
         <GroupedListFrame
@@ -1520,7 +1528,7 @@ export function DueThisMonthChecklist({
       <ConfirmDialog
         open={pendingRestore != null}
         title="Restore This Occurrence?"
-        message="It returns to Due on Transactions if already due."
+        message="It returns to Upcoming or Due on Transactions when applicable."
         confirmLabel="Restore"
         cancelLabel="Cancel"
         busyLabel="Restoring…"
@@ -1549,38 +1557,19 @@ export function DueThisMonthChecklist({
     <SearchField
       value={searchQuery}
       onChange={handleSearchChange}
-      placeholder="Search skipped items…"
-      aria-label="Search skipped items"
+      placeholder="Search upcoming and skipped…"
+      aria-label="Search upcoming and skipped"
       className="mb-3"
     />
   ) : null
 
-  const content = (
+  return (
     <>
       {searchFieldEl}
-      <GroupedListFrame
-        label={embedded ? 'Skipped Items' : 'Due This Month'}
-        expanded={allExpanded}
-        onToggle={toggleAllExpanded}
-      >
-        <div className="space-y-5">{renderStatusSections()}</div>
-      </GroupedListFrame>
-
+      {renderPlanGroupedFrame(
+        <div className="space-y-5">{renderStatusSections()}</div>,
+      )}
       {dialogs}
     </>
-  )
-
-  if (embedded) return content
-
-  return (
-    <CollapsibleSection
-      title="Due This Month"
-      subtitle={`${doneCount}/${activeCount} done`}
-      defaultOpen
-      className="mt-6"
-      persistKey="plan:recurring:section"
-    >
-      {content}
-    </CollapsibleSection>
   )
 }

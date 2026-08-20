@@ -1,6 +1,7 @@
 import { BudgetGroupBadge } from './BudgetGroupBadge'
 import { CircleBadge } from './CircleBadge'
 import { OwnerBadge } from './OwnerBadge'
+import { SinkingFundLabel } from './SinkingFundLabel'
 import {
   AMOUNT_IN_CLASS,
   AMOUNT_OUT_CLASS,
@@ -36,6 +37,8 @@ interface RecurringBillRowContentProps {
   budgetGroup?: BudgetGroup | null
   /** When set, show this instead of bill.amount (e.g. PYF auto from Money Plan). */
   displayAmount?: number
+  /** Subcategory is linked to an active sinking fund. */
+  linkedToSinkingFund?: boolean
 }
 
 export function RecurringBillRowContent({
@@ -51,6 +54,7 @@ export function RecurringBillRowContent({
   thisMonthYearMonth,
   budgetGroup = null,
   displayAmount,
+  linkedToSinkingFund = false,
 }: RecurringBillRowContentProps) {
   const amount = displayAmount ?? bill.amount
   const noteText = display.isTransfer
@@ -76,20 +80,20 @@ export function RecurringBillRowContent({
         {display.parentIcon}
       </span>
       <div className={`flex min-w-0 flex-1 flex-col gap-0.5 ${dim}`}>
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
-          <p
-            className={`truncate text-xs font-semibold leading-none ${titleClass}`}
-          >
-            {display.parentName}
-          </p>
-          <OwnerBadge owner={owner} size="inline" />
-        </div>
+        <p
+          className={`truncate text-xs font-semibold leading-none ${titleClass}`}
+        >
+          {display.parentName}
+        </p>
 
         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
           {display.childName ? (
-            <p className="flex min-w-0 items-center gap-1 truncate text-xs leading-none text-neutral-400">
-              <span aria-hidden>{display.childIcon}</span>
+            <p className="flex min-w-0 items-center gap-1 text-xs leading-none text-neutral-400">
+              <span className="shrink-0" aria-hidden>
+                {display.childIcon}
+              </span>
               <span className="truncate">{display.childName}</span>
+              {linkedToSinkingFund ? <SinkingFundLabel /> : null}
             </p>
           ) : display.isTransfer ? (
             <p className="truncate text-xs leading-none text-neutral-400">
@@ -98,20 +102,27 @@ export function RecurringBillRowContent({
           ) : (
             <span className="invisible truncate text-xs leading-none">.</span>
           )}
-          {!display.isTransfer ? (
-            <CircleBadge
-              circle={isCircle(display.circle) ? display.circle : 'hd_family'}
-              size="inline"
-            />
-          ) : (
-            <span className="invisible text-xs leading-none">.</span>
-          )}
+          <OwnerBadge owner={owner} size="inline" />
         </div>
 
         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
           {noteText ? (
             <p className={`truncate text-xs leading-none ${noteClass}`}>
               {noteText}
+            </p>
+          ) : (
+            <span className="invisible truncate text-xs leading-none">.</span>
+          )}
+          <CircleBadge
+            circle={isCircle(display.circle) ? display.circle : 'hd_family'}
+            size="inline"
+          />
+        </div>
+
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
+          {budgetGroup ? (
+            <p className="truncate text-left text-xs leading-none">
+              <BudgetGroupBadge group={budgetGroup} />
             </p>
           ) : (
             <span className="invisible truncate text-xs leading-none">.</span>
@@ -133,11 +144,6 @@ export function RecurringBillRowContent({
             {formatRupiah(amount)}
           </p>
         </div>
-        {budgetGroup ? (
-          <p className="truncate text-left text-xs leading-none">
-            <BudgetGroupBadge group={budgetGroup} />
-          </p>
-        ) : null}
         {showMeta ? (
           <p className="min-w-0 truncate text-xs leading-tight text-neutral-400">
             {meta}

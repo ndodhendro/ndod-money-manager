@@ -27,9 +27,11 @@ import { showAppToast } from '../lib/appToast'
 import {
   efLoanConfirmMessage,
   evaluateExpenseEfLoan,
+  evaluateSinkingFundEfLoan,
   resolveMonthWritePolicy,
   yearMonthFromOccurredOn,
 } from '../lib/budgetSaveGate'
+import { applyEfLoanRepayment } from '../lib/efLoansApi'
 import { resolveExpenseFromBucketId } from '../lib/bucketsApi'
 import { isExpenseOtherCategory } from '../lib/categoriesApi'
 import { budgetGroupOfCategory } from '../lib/freeWants'
@@ -134,6 +136,10 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   const wasActiveRef = useRef(false)
   /** True if this edit session opened an existing Complete Later placeholder. */
   const loadedAsCompleteLaterRef = useRef(false)
+  const editingPriorExpenseRef = useRef<{
+    from_bucket_id: string | null
+    amount: number
+  } | null>(null)
 
   const amountCallbackRef = useCallback(
     (el: HTMLInputElement | null) => {
@@ -162,7 +168,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   const { byId: expenseCategoriesById } = useCategories('expense', {
     includeInactive: true,
   })
-  const { buckets, loading: loadingBuckets, reload: reloadBuckets } =
+  const { buckets, movements, emergency, loading: loadingBuckets, reload: reloadBuckets } =
     useBuckets()
 
   useEffect(() => {
@@ -197,6 +203,14 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         const wasCompleteLater = data.complete_later === true
         loadedAsCompleteLaterRef.current = wasCompleteLater
         setCompleteLater(wasCompleteLater)
+        if ((data.type as TransactionType) === 'expense') {
+          editingPriorExpenseRef.current = {
+            from_bucket_id: (data.from_bucket_id as string | null) ?? null,
+            amount: Math.round(Number(data.amount) || 0),
+          }
+        } else {
+          editingPriorExpenseRef.current = null
+        }
         if ((data.type as TransactionType) === 'income') {
           setCircle('hd_family')
         } else if (isCircle(data.circle)) {
@@ -670,6 +684,23 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
       let loan:
         | { amount: number; source: EfLoanSource; yearMonth: string }
         | undefined
+      if (draft.type === 'expense' && !draft.complete_later) {
+        const sinkingEval = evaluateSinkingFundEfLoan({
+          draft,
+          buckets,
+          movements,
+          editingPrior: isEditing ? editingPriorExpenseRef.current : null,
+        })
+        if (sinkingEval.borrowAmount > 0 && sinkingEval.source) {
+          setEfConfirm({
+            draft,
+            borrowAmount: sinkingEval.borrowAmount,
+            source: sinkingEval.source,
+            yearMonth: policy.yearMonth,
+          })
+          return
+        }
+      }
       if (draft.type === 'expense' && !draft.complete_later && allocation) {
         const evalResult = evaluateExpenseEfLoan({
           draft,
@@ -755,6 +786,16 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
           amount: loan.amount,
           source: loan.source,
         })
+      }
+      if (
+        !isEditing &&
+        draft.type === 'transfer' &&
+        emergency?.id &&
+        draft.to_bucket_id === emergency.id &&
+        draft.from_bucket_id == null &&
+        draft.amount > 0
+      ) {
+        await applyEfLoanRepayment(draft.amount)
       }
       if (draft.category_id) bumpCategoryUsage(draft.category_id)
       if (draft.type !== 'income') setStoredCircle(draft.circle)

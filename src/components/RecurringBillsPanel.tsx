@@ -18,6 +18,7 @@ import { formatNumber, formatRupiah, todayIso } from '../lib/format'
 import { isBlankSearch, matchesRecurringBillSearch } from '../lib/listSearch'
 import {
   getRecurringBillDisplayParts,
+  groupRecurringBillsForSettings,
   sortRecurringBillsForSettings,
 } from '../lib/recurringBillDisplay'
 import { getStoredCircle, getStoredProfile, setStoredCircle } from '../lib/profile'
@@ -55,6 +56,7 @@ import {
   estimatePlanTag,
   sumEstimateTotalsByType,
 } from '../lib/freeWants'
+import { sinkingLinkedCategoryIds } from '../lib/bucketsApi'
 import {
   TRANSFER_TYPE_ICON,
   isBudgetGroup,
@@ -79,39 +81,6 @@ import { OwnerPicker } from './OwnerPicker'
 import { RecurringBillRowContent } from './RecurringBillRowContent'
 import { SearchField } from './SearchField'
 import { SwipeDeleteRow } from './SwipeDeleteRow'
-
-function groupEstimatesForSettings(
-  bills: RecurringBill[],
-): Array<{ key: string; title: string; items: RecurringBill[] }> {
-  const estimates: RecurringBill[] = []
-  const byDay = new Map<number, RecurringBill[]>()
-  for (const bill of bills) {
-    if (!bill.is_recurring) {
-      estimates.push(bill)
-      continue
-    }
-    const list = byDay.get(bill.due_day) ?? []
-    list.push(bill)
-    byDay.set(bill.due_day, list)
-  }
-  const groups: Array<{ key: string; title: string; items: RecurringBill[] }> =
-    []
-  if (estimates.length > 0) {
-    groups.push({
-      key: 'estimate',
-      title: 'Estimates',
-      items: estimates,
-    })
-  }
-  for (const [day, items] of [...byDay.entries()].sort(([a], [b]) => b - a)) {
-    groups.push({
-      key: `day:${day}`,
-      title: `Day ${day}`,
-      items,
-    })
-  }
-  return groups
-}
 
 function toYearMonth(year: number, month: number): string {
   return `${year}-${String(month).padStart(2, '0')}`
@@ -343,6 +312,10 @@ export function RecurringBillsPanel({
     () => new Map(buckets.map((b) => [b.id, b])),
     [buckets],
   )
+  const sinkingCategoryIds = useMemo(
+    () => sinkingLinkedCategoryIds(buckets),
+    [buckets],
+  )
   const emergencyPct = pyfSettings?.emergency_fund_pct ?? 10
   const investmentPct = pyfSettings?.investment_pct ?? 15
   const settingsThisMonthYm = useMemo(
@@ -405,7 +378,7 @@ export function RecurringBillsPanel({
   }, [sortedBills, searchQuery, allById, bucketsById, amountCtx])
   const searchActive = !isBlankSearch(searchQuery)
   const groupedBills = useMemo(
-    () => groupEstimatesForSettings(filteredBills),
+    () => groupRecurringBillsForSettings(filteredBills),
     [filteredBills],
   )
   const monthTotals = useMemo(
@@ -1244,6 +1217,11 @@ export function RecurringBillsPanel({
                                 )}
                                 thisMonthYearMonth={settingsThisMonthYm}
                                 budgetGroup={budgetGroup}
+                                linkedToSinkingFund={Boolean(
+                                  display.childName &&
+                                    bill.category_id &&
+                                    sinkingCategoryIds.has(bill.category_id),
+                                )}
                               />
                             </SwipeDeleteRow>
                           )

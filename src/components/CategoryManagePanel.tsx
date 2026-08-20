@@ -26,8 +26,10 @@ import {
   useCategories,
   type CategoryTreeNode,
 } from '../hooks/useCategories'
+import { useBuckets } from '../hooks/useBuckets'
 import { showAppToast } from '../lib/appToast'
 import { ActionEmoji } from '../lib/actionEmoji'
+import { sinkingLinkedCategoryIds } from '../lib/bucketsApi'
 import {
   addCategory,
   deleteCategory,
@@ -43,6 +45,7 @@ import { BudgetGroupBadge } from './BudgetGroupBadge'
 import { CollapseChevron } from './CollapseChevron'
 import { ConfirmDialog } from './ConfirmDialog'
 import { GroupedListFrame } from './GroupedListFrame'
+import { SinkingFundLabel } from './SinkingFundLabel'
 
 interface CategoryManagePanelProps {
   type: CategoryType
@@ -68,6 +71,11 @@ export function CategoryManagePanel({
   routeWantForm,
 }: CategoryManagePanelProps) {
   const { tree, parents, reload } = useCategories(type)
+  const { buckets } = useBuckets()
+  const sinkingCategoryIds = useMemo(
+    () => sinkingLinkedCategoryIds(buckets),
+    [buckets],
+  )
 
   const [orderedTree, setOrderedTree] = useState<CategoryTreeNode[]>([])
   const [name, setName] = useState('')
@@ -460,6 +468,7 @@ export function CategoryManagePanel({
                         onChildDragEnd={(event) =>
                           handleChildDragEnd(cat.id, event)
                         }
+                        sinkingCategoryIds={sinkingCategoryIds}
                       />
                     ))}
                   </div>
@@ -600,6 +609,7 @@ function SortableParentRow({
   onSaveEdit,
   onCancelEdit,
   onChildDragEnd,
+  sinkingCategoryIds,
 }: {
   cat: CategoryTreeNode
   categoryType: CategoryType
@@ -623,6 +633,7 @@ function SortableParentRow({
   onSaveEdit: () => void
   onCancelEdit: () => void
   onChildDragEnd: (event: DragEndEvent) => void
+  sinkingCategoryIds: Set<string>
 }) {
   const {
     attributes,
@@ -753,6 +764,9 @@ function SortableParentRow({
                       budgetGroup={editBudgetGroup}
                       showBudgetGroup={categoryType === 'expense'}
                       showParentSelect={editingIsSubcategory}
+                      disableParentSelect={
+                        editingIsSubcategory && sinkingCategoryIds.has(child.id)
+                      }
                       parentId={editParentId}
                       parentOptions={parentOptions.filter(
                         (p) => p.id !== child.id,
@@ -770,6 +784,7 @@ function SortableParentRow({
                   <SortableChildRow
                     key={child.id}
                     child={child}
+                    linkedToSinkingFund={sinkingCategoryIds.has(child.id)}
                     onStartEdit={onStartEdit}
                     onDelete={onDelete}
                   />
@@ -785,10 +800,12 @@ function SortableParentRow({
 
 function SortableChildRow({
   child,
+  linkedToSinkingFund = false,
   onStartEdit,
   onDelete,
 }: {
   child: Category
+  linkedToSinkingFund?: boolean
   onStartEdit: (cat: Category) => void
   onDelete: (cat: Category) => void
 }) {
@@ -826,10 +843,13 @@ function SortableChildRow({
         >
           {ActionEmoji.drag}
         </button>
-        <span className="min-w-0 truncate">
-          {child.icon} {child.name}
+        <span className="flex min-w-0 items-center gap-1 truncate">
+          <span className="truncate">
+            {child.icon} {child.name}
+          </span>
+          {linkedToSinkingFund ? <SinkingFundLabel /> : null}
           {child.budget_group ? (
-            <span className="ml-1.5 inline-flex align-middle">
+            <span className="shrink-0 align-middle">
               <BudgetGroupBadge group={child.budget_group} />
             </span>
           ) : null}
@@ -879,6 +899,7 @@ function EditRow({
   budgetGroup,
   showBudgetGroup = false,
   showParentSelect = false,
+  disableParentSelect = false,
   parentId = null,
   parentOptions = [],
   saving,
@@ -894,6 +915,7 @@ function EditRow({
   budgetGroup: BudgetGroup | null
   showBudgetGroup?: boolean
   showParentSelect?: boolean
+  disableParentSelect?: boolean
   parentId?: string | null
   parentOptions?: Category[]
   saving: boolean
@@ -942,11 +964,15 @@ function EditRow({
       {showParentSelect && onParentChange ? (
         <select
           value={parentId ?? '__main__'}
+          disabled={disableParentSelect}
           onChange={(e) => {
+            if (disableParentSelect) return
             const next = e.target.value
             onParentChange(next === '__main__' ? null : next)
           }}
-          className="w-full rounded-lg bg-neutral-100 px-2 py-1.5 text-sm dark:bg-neutral-700 dark:text-neutral-100"
+          className={`w-full rounded-lg bg-neutral-100 px-2 py-1.5 text-sm dark:bg-neutral-700 dark:text-neutral-100 ${
+            disableParentSelect ? 'cursor-not-allowed opacity-60' : ''
+          }`}
           aria-label="Parent category"
         >
           <option value="__main__">Main category</option>

@@ -2,30 +2,35 @@ import {
   formatRupiah,
 } from '../lib/format'
 import type { MoneyPlanBucket } from '../lib/moneyPlan'
+import type { BudgetGroup, Circle, Owner } from '../lib/types'
+import { isCircle, isOwner } from '../lib/types'
 import type { ReactNode } from 'react'
+import { BudgetGroupBadge } from './BudgetGroupBadge'
+import { CircleBadge } from './CircleBadge'
+import { OwnerBadge } from './OwnerBadge'
 
-export type PlanBudgetPaceMeta = {
-  expected: number
-  monthsElapsed: number
-  monthsTotal: number
-  deltaText: string
-  deltaClassName: string
+/** Ceiling fill: blue under 100%, green at 100%, red when over. */
+function ceilingFillClass(displayPct: number): string {
+  if (displayPct > 100) return 'bg-red-500'
+  if (displayPct === 100) return 'bg-emerald-500'
+  return 'bg-blue-500'
 }
 
-/** Ceiling fill: accent while safe, amber near limit, red when over. */
-function ceilingFillClass(
-  barPct: number,
-  over: boolean,
-  barClass: string,
-): string {
-  if (over) return 'bg-red-500'
-  if (barPct >= 80) return 'bg-amber-500'
-  return barClass
+/** Same hue as the ceiling fill (text variant of the bar color). */
+function ceilingStatusColorClass(displayPct: number): string {
+  if (displayPct > 100) return 'text-red-500'
+  if (displayPct === 100) return 'text-emerald-500'
+  return 'text-blue-500'
 }
 
-function monthsLeftLabel(monthsLeft: number): string {
-  const n = Math.max(0, Math.round(monthsLeft))
-  return n === 1 ? '1 month left' : `${n} months left`
+export type PlanBudgetDetailStack = {
+  childIcon?: string | null
+  childName?: string | null
+  note?: string | null
+  budgetGroup?: BudgetGroup | null
+  owner?: Owner | null
+  circle?: Circle | null
+  isTransfer?: boolean
 }
 
 export function PlanBudgetRow({
@@ -36,13 +41,17 @@ export function PlanBudgetRow({
   icon,
   surfaceClassName,
   leading,
+  trailing,
   badge,
   showMetrics = true,
-  paceMeta,
+  alertHint,
+  showToGo = true,
   ceilingStatusPlacement = 'below-bar',
+  floorStatusPlacement = 'below-bar',
+  detailStack = null,
 }: {
   bucket: MoneyPlanBucket
-  hint?: string
+  hint?: ReactNode
   barClass: string
   mode: 'floor' | 'ceiling'
   icon?: string
@@ -50,6 +59,8 @@ export function PlanBudgetRow({
   surfaceClassName?: string
   /** Optional control before the icon (e.g. collapse chevron). */
   leading?: ReactNode
+  /** Optional row action after the amounts (emoji-only). */
+  trailing?: ReactNode
   /** Status label on the right of the remaining/to-go line. */
   badge?: { label: string; className: string } | null
   /**
@@ -57,13 +68,25 @@ export function PlanBudgetRow({
    * Hides amounts, hint, bar, %, to-go, and pace label.
    */
   showMetrics?: boolean
-  /** Sinking pace: expected + over/under vs expected. */
-  paceMeta?: PlanBudgetPaceMeta | null
+  /** Amber note (e.g. missed sinking transfers). */
+  alertHint?: string | null
+  /** Floor status line (“Rp X to go” / “Target reached”). Savings sinking hides this. */
+  showToGo?: boolean
   /**
-   * Ceiling remaining/over line: under title (hint slot) or below the bar.
-   * Month Budget uses under-title; Needs vs Wants keeps below-bar + separate hint.
+   * Ceiling remaining/over line: under title (hint slot) or above the % label.
+   * Month Budget uses under-title; Needs vs Wants keeps above-% + separate hint.
    */
   ceilingStatusPlacement?: 'under-title' | 'below-bar'
+  /**
+   * Floor “Rp X to go”: under title (right-aligned) or below the bar.
+   * Pay Yourself First uses under-title.
+   */
+  floorStatusPlacement?: 'under-title' | 'below-bar'
+  /**
+   * History-like vertical meta (child → note → Needs/Wants) with tight gaps.
+   * When set, replaces the single hint line under the title.
+   */
+  detailStack?: PlanBudgetDetailStack | null
 }) {
   const rawPct =
     bucket.target > 0
@@ -79,16 +102,14 @@ export function PlanBudgetRow({
   const floorOver =
     mode === 'floor' && bucket.actual > bucket.target && bucket.target > 0
   const fillClass =
-    mode === 'ceiling'
-      ? ceilingFillClass(barPct, ceilingOver, barClass)
-      : barClass
-  const pctLabelClass = ceilingOver
-    ? 'text-red-600 dark:text-red-400'
-    : floorOver
+    mode === 'ceiling' ? ceilingFillClass(displayPct) : barClass
+  const ceilingStatusColor =
+    mode === 'ceiling' ? ceilingStatusColorClass(displayPct) : null
+  const pctLabelClass =
+    ceilingStatusColor ??
+    (floorOver
       ? 'text-emerald-600 dark:text-emerald-400'
-      : mode === 'ceiling' && barPct >= 80
-        ? 'text-amber-600 dark:text-amber-400'
-        : 'text-neutral-500 dark:text-neutral-400'
+      : 'text-neutral-500 dark:text-neutral-400')
   const showFloorFooter =
     showMetrics && mode === 'floor' && bucket.target > 0
   const ceilingStatusText =
@@ -97,23 +118,80 @@ export function PlanBudgetRow({
         ? `Over by ${formatRupiah(bucket.actual - bucket.target)}`
         : `${formatRupiah(Math.max(0, bucket.remaining))} left`
       : null
-  const underTitleLine =
-    showMetrics && paceMeta
-      ? null
-      : showMetrics &&
-          mode === 'ceiling' &&
-          ceilingStatusPlacement === 'under-title' &&
-          ceilingStatusText
-        ? ceilingStatusText
-        : showMetrics && hint
-          ? hint
-          : null
+  const overTarget = Math.max(0, Math.round(bucket.actual - bucket.target))
+  const toGo = Math.max(0, Math.round(bucket.target - bucket.actual))
+  const floorStatusText =
+    mode === 'floor' && bucket.target > 0
+      ? floorOver
+        ? `Over target ${formatRupiah(overTarget)}`
+        : toGo > 0
+          ? showToGo
+            ? `${formatRupiah(toGo)} to go`
+            : null
+          : showToGo
+            ? 'Target reached'
+            : null
+      : null
+  const floorStatusUnderTitle =
+    showMetrics &&
+    mode === 'floor' &&
+    floorStatusPlacement === 'under-title' &&
+    floorStatusText != null
+  const useDetailStack = detailStack != null
+  const ceilingStatusUnderTitle =
+    !useDetailStack &&
+    showMetrics &&
+    mode === 'ceiling' &&
+    ceilingStatusPlacement === 'under-title' &&
+    ceilingStatusText != null
+  const hintUnderTitle =
+    !useDetailStack && showMetrics && hint && !ceilingStatusUnderTitle
+      ? hint
+      : null
+  const showUnderTitleRow =
+    ceilingStatusUnderTitle ||
+    hintUnderTitle != null ||
+    floorStatusUnderTitle
   const showCeilingBelowBar =
+    !useDetailStack &&
     showMetrics &&
     mode === 'ceiling' &&
     bucket.target > 0 &&
     ceilingStatusPlacement === 'below-bar' &&
     ceilingStatusText != null
+  const showCeilingOnGroupRow =
+    useDetailStack &&
+    showMetrics &&
+    mode === 'ceiling' &&
+    bucket.target > 0 &&
+    ceilingStatusText != null
+
+  const floorFooterText =
+    floorStatusPlacement === 'below-bar' ? floorStatusText : null
+  const showFloorFooterRow =
+    showFloorFooter && (floorFooterText != null || badge)
+
+  const amountNode = showMetrics ? (
+    <p className="shrink-0 text-right text-xs leading-none text-neutral-500">
+      <span className="font-semibold text-neutral-700 dark:text-neutral-200">
+        {formatRupiah(bucket.actual)}
+      </span>
+      {bucket.target > 0 && <span> / {formatRupiah(bucket.target)}</span>}
+    </p>
+  ) : (
+    <p className="shrink-0 text-right text-xs font-semibold leading-none text-neutral-700 dark:text-neutral-200">
+      {formatRupiah(bucket.actual)}
+    </p>
+  )
+
+  const stackChild = detailStack?.childName?.trim() || null
+  const stackNote = detailStack?.note?.trim() || null
+  const stackGroup = detailStack?.budgetGroup ?? null
+  const stackOwner = isOwner(detailStack?.owner) ? detailStack.owner : 'suami'
+  const stackCircle = isCircle(detailStack?.circle)
+    ? detailStack.circle
+    : 'hd_family'
+  const stackIsTransfer = detailStack?.isTransfer ?? false
 
   return (
     <div
@@ -124,106 +202,185 @@ export function PlanBudgetRow({
       <div className="flex items-start gap-2">
         {leading}
         {icon != null && (
-          <span className="mt-0.5 text-xl leading-none" aria-hidden>
+          <span className="text-xl leading-none" aria-hidden>
             {icon}
           </span>
         )}
-        <div className="min-w-0 flex-1">
-          <div className="flex items-baseline justify-between gap-2">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">
+        {useDetailStack ? (
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
+              <p className="truncate text-xs font-semibold leading-none text-neutral-800 dark:text-white">
                 {bucket.label}
               </p>
+              {amountNode}
             </div>
-            {showMetrics ? (
-              <p className="shrink-0 text-right text-xs text-neutral-500">
-                <span className="font-semibold text-neutral-700 dark:text-neutral-200">
-                  {formatRupiah(bucket.actual)}
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
+              {stackChild ? (
+                <p className="flex min-w-0 items-center gap-1 text-xs leading-none text-neutral-400">
+                  {detailStack?.childIcon ? (
+                    <span className="shrink-0" aria-hidden>
+                      {detailStack.childIcon}
+                    </span>
+                  ) : null}
+                  <span className="truncate">{stackChild}</span>
+                </p>
+              ) : stackIsTransfer ? (
+                <p className="truncate text-xs leading-none text-neutral-400">
+                  Transfer
+                </p>
+              ) : (
+                <span className="invisible truncate text-xs leading-none">
+                  .
                 </span>
-                {bucket.target > 0 && (
-                  <span> / {formatRupiah(bucket.target)}</span>
+              )}
+              <OwnerBadge owner={stackOwner} size="inline" />
+            </div>
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
+              {stackNote ? (
+                <p className="truncate text-xs leading-none text-neutral-500 dark:text-neutral-400">
+                  {stackNote}
+                </p>
+              ) : (
+                <span className="invisible truncate text-xs leading-none">
+                  .
+                </span>
+              )}
+              {!stackIsTransfer ? (
+                <CircleBadge circle={stackCircle} size="inline" />
+              ) : (
+                <span className="invisible text-xs leading-none">.</span>
+              )}
+            </div>
+            {stackGroup || showCeilingOnGroupRow ? (
+              <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
+                {stackGroup ? (
+                  <p className="truncate text-left text-xs leading-none">
+                    <BudgetGroupBadge group={stackGroup} />
+                  </p>
+                ) : (
+                  <span className="invisible truncate text-xs leading-none">
+                    .
+                  </span>
                 )}
+                {showCeilingOnGroupRow ? (
+                  <p
+                    className={`shrink-0 text-right text-xs font-semibold tabular-nums whitespace-nowrap ${ceilingStatusColor}`}
+                  >
+                    {ceilingStatusText}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+            {alertHint ? (
+              <p className="text-[11px] font-medium leading-none text-amber-700 dark:text-amber-300">
+                {alertHint}
               </p>
-            ) : (
-              <p className="shrink-0 text-right text-xs font-semibold text-neutral-700 dark:text-neutral-200">
-                {formatRupiah(bucket.actual)}
-              </p>
-            )}
+            ) : null}
           </div>
-          {showMetrics && paceMeta ? (
-            <div className="mt-0.5 space-y-0.5">
-              <div className="flex items-baseline justify-between gap-2 text-[11px] text-neutral-400">
-                <span className="min-w-0 truncate">
-                  Expected {formatRupiah(paceMeta.expected)}
-                </span>
-                <span className="shrink-0 tabular-nums">
-                  {paceMeta.monthsElapsed}/{paceMeta.monthsTotal} months
-                </span>
+        ) : (
+          <div className="min-w-0 flex-1">
+            <div className="flex items-baseline justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">
+                  {bucket.label}
+                </p>
               </div>
-              <div className="flex items-baseline justify-between gap-2 text-[11px]">
-                <span
-                  className={`min-w-0 truncate ${paceMeta.deltaClassName}`}
-                >
-                  {paceMeta.deltaText}
-                </span>
-                <span className="shrink-0 text-neutral-400 tabular-nums">
-                  {monthsLeftLabel(
-                    paceMeta.monthsTotal - paceMeta.monthsElapsed,
-                  )}
-                </span>
-              </div>
+              {amountNode}
             </div>
-          ) : underTitleLine ? (
-            <p
-              className={`mt-0.5 text-[11px] text-neutral-400 ${
-                mode === 'ceiling' &&
-                ceilingStatusPlacement === 'under-title'
-                  ? 'text-right tabular-nums'
-                  : ''
-              }`}
-            >
-              {underTitleLine}
-            </p>
-          ) : null}
-        </div>
+            {showUnderTitleRow ? (
+              <div
+                className={`mt-0.5 flex items-baseline gap-2 ${
+                  hintUnderTitle &&
+                  (ceilingStatusUnderTitle || floorStatusUnderTitle)
+                    ? 'justify-between'
+                    : ceilingStatusUnderTitle || floorStatusUnderTitle
+                      ? 'justify-end'
+                      : ''
+                }`}
+              >
+                {hintUnderTitle ? (
+                  <div className="min-w-0 text-[11px] text-neutral-400">
+                    {hintUnderTitle}
+                  </div>
+                ) : null}
+                {ceilingStatusUnderTitle ? (
+                  <p
+                    className={`shrink-0 text-right text-xs font-semibold tabular-nums ${ceilingStatusColor}`}
+                  >
+                    {ceilingStatusText}
+                  </p>
+                ) : null}
+                {floorStatusUnderTitle ? (
+                  <p
+                    className={`shrink-0 text-right text-[11px] tabular-nums ${
+                      floorOver
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : 'text-neutral-400'
+                    }`}
+                  >
+                    {floorStatusText}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+            {alertHint ? (
+              <p className="mt-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                {alertHint}
+              </p>
+            ) : null}
+          </div>
+        )}
+        {trailing}
       </div>
       {showMetrics && bucket.target > 0 ? (
-        <div className="mt-2 flex items-center gap-2">
-          <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-neutral-100 dark:bg-neutral-700">
-            <div
-              className={`h-full rounded-full ${fillClass}`}
-              style={{ width: `${barPct}%` }}
-            />
+        <div className="mt-2">
+          {showCeilingBelowBar ? (
+            <p
+              className={`mb-0.5 text-right text-xs font-semibold tabular-nums ${ceilingStatusColor}`}
+            >
+              {ceilingStatusText}
+            </p>
+          ) : null}
+          <div className="flex items-center gap-2">
+            <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-neutral-100 dark:bg-neutral-700">
+              <div
+                className={`h-full rounded-full ${fillClass}`}
+                style={{ width: `${barPct}%` }}
+              />
+            </div>
+            <span
+              className={`shrink-0 text-[11px] font-semibold tabular-nums ${pctLabelClass}`}
+              aria-label={
+                mode === 'ceiling'
+                  ? `${displayPct}% used`
+                  : `${displayPct}% progress`
+              }
+            >
+              {mode === 'ceiling' ? `${displayPct}% used` : `${displayPct}%`}
+            </span>
           </div>
-          <span
-            className={`shrink-0 text-[11px] font-semibold tabular-nums ${pctLabelClass}`}
-            aria-label={
-              mode === 'ceiling'
-                ? `${displayPct}% used`
-                : `${displayPct}% progress`
-            }
-          >
-            {mode === 'ceiling' ? `${displayPct}% used` : `${displayPct}%`}
-          </span>
         </div>
       ) : null}
-      {showCeilingBelowBar ? (
-        <p className="mt-1 text-[11px] text-neutral-400">{ceilingStatusText}</p>
-      ) : null}
-      {showFloorFooter ? (
+      {showFloorFooterRow ? (
         <div className="mt-1 flex items-center justify-between gap-2">
-          <p className="min-w-0 text-[11px] text-neutral-400">
-            {bucket.remaining > 0
-              ? `${formatRupiah(bucket.remaining)} to go`
-              : 'Target reached'}
+          <p
+            className={`min-w-0 text-[11px] ${
+              floorOver
+                ? 'text-emerald-600 dark:text-emerald-400'
+                : 'text-neutral-400'
+            }`}
+          >
+            {floorFooterText}
           </p>
-          {badge ? (
-            <span
-              className={`shrink-0 text-[11px] font-semibold ${badge.className}`}
-            >
-              {badge.label}
-            </span>
-          ) : null}
+          <div className="flex shrink-0 items-center gap-2">
+            {badge ? (
+              <span
+                className={`text-[11px] font-semibold ${badge.className}`}
+              >
+                {badge.label}
+              </span>
+            ) : null}
+          </div>
         </div>
       ) : null}
     </div>

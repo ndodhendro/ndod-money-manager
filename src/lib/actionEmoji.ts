@@ -11,4 +11,6 @@ export const ActionEmoji = {
   add: '➕',
   delete: '🗑️',
   restore: '♻️',
+  /** Move leftover / surplus into EF, Investment, Buffer, or Guilt-Free. */
+  allocate: '📤',
 } as const

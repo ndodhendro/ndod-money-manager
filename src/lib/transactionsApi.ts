@@ -222,6 +222,7 @@ function toBaseRow(input: NewTransactionInput): Record<string, unknown> {
     input.type === 'expense' && isBudgetGroup(input.budget_group)
       ? input.budget_group
       : null
+  const recurring_bill_id = input.recurring_bill_id ?? null
   if (input.type === 'transfer') {
     return {
       type: input.type,
@@ -232,6 +233,7 @@ function toBaseRow(input: NewTransactionInput): Record<string, unknown> {
       circle: input.circle,
       occurred_on: input.occurred_on,
       is_recurring: input.is_recurring,
+      recurring_bill_id,
       complete_later: input.complete_later,
       budget_group,
     }
@@ -245,6 +247,7 @@ function toBaseRow(input: NewTransactionInput): Record<string, unknown> {
     circle: input.circle,
     occurred_on: input.occurred_on,
     is_recurring: input.is_recurring,
+    recurring_bill_id,
     complete_later: input.complete_later,
     budget_group,
   }

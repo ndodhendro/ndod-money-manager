@@ -70,6 +70,10 @@ create table if not exists buckets (
   icon text not null default '🏦',
   target_amount numeric(14, 2),
   opening_balance numeric(14, 2) not null default 0,
+  -- When the app is initialized mid-way through a recurring sinking plan,
+  -- user can optionally say how many recurring transfers already happened
+  -- before this "opening_balance" was recorded (to keep pacing aligned).
+  opening_transfers integer not null default 0,
   -- Needs/Wants for sinking funds; null for emergency/investment.
   budget_group budget_group,
   sort_order integer not null default 0,
@@ -104,6 +108,8 @@ create table if not exists transactions (
   circle circle_type not null default 'hd_family',
   occurred_on date not null default current_date,
   is_recurring boolean not null default false,
+  -- Links a recurring due-item check back to its monthly estimate bill. Null for Quick Add manual entries.
+  recurring_bill_id uuid references recurring_bills(id) on delete set null,
   complete_later boolean not null default false,
   -- Expense Needs/Wants for this row; null = inherit subcategory default.
   budget_group budget_group,
@@ -124,6 +130,9 @@ create index if not exists transactions_to_bucket_idx on transactions (to_bucket
 create index if not exists transactions_complete_later_idx
   on transactions (complete_later)
   where complete_later = true;
+create index if not exists transactions_recurring_bill_id_idx
+  on transactions (recurring_bill_id)
+  where recurring_bill_id is not null;
 
 create or replace function set_updated_at()
 returns trigger as $$

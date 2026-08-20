@@ -14,8 +14,8 @@ export const PLAN_PROGRESS_SECTIONS = [
   {
     to: '/rencana/recurring',
     icon: '📆',
-    title: 'Skipped Items',
-    subtitle: 'Restore items skipped this month',
+    title: 'Upcoming & Skipped',
+    subtitle: 'Bills not yet due and skipped this month',
   },
   {
     to: '/rencana/pay-yourself-first',

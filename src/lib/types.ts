@@ -92,6 +92,9 @@ export const BUCKET_KIND_LABELS: Record<BucketKind, string> = {
   sinking: 'Sinking Fund',
 }
 
+/** Compact SF marker — same sky tone as Wants text markers. */
+export const SINKING_FUND_LABEL_CLASS = BUDGET_GROUP_TEXT_CLASS.wants
+
 /** Sentinel: null bucket id = shared main account (checking / available money). */
 export const CASHFLOW_LABEL = 'Main Account'
 
@@ -102,6 +105,11 @@ export interface Bucket {
   icon: string
   target_amount: number | null
   opening_balance: number
+  /**
+   * Optional: how many recurring transfers have already happened before
+   * `opening_balance` was recorded (used for pacing when app starts mid-plan).
+   */
+  opening_transfers: number
   /**
    * Needs/Wants for sinking funds (Money Plan).
    * Null for emergency/investment system buckets.
@@ -165,6 +173,8 @@ export interface Transaction {
   circle: Circle
   occurred_on: string
   is_recurring: boolean
+  /** Links a recurring due-item check back to its monthly estimate bill. Null for Quick Add manual entries. */
+  recurring_bill_id: string | null
   /** Placeholder to finish later; note required, other fields optional. */
   complete_later: boolean
   /** Expense Needs/Wants; null for income/transfer or legacy rows. */
@@ -192,6 +202,8 @@ export interface NewTransactionInput {
   circle: Circle
   occurred_on: string
   is_recurring: boolean
+  /** Pass bill.id when creating a transaction from a due-item check. Omit/null for Quick Add. */
+  recurring_bill_id?: string | null
   complete_later: boolean
   /** Expense Needs/Wants; omit/null for income, transfer, or inherit default. */
   budget_group?: BudgetGroup | null
@@ -294,7 +306,7 @@ export function categoryDisplayParts(
   }
 }
 
-export type EfLoanSource = 'buffer' | 'guilt_free'
+export type EfLoanSource = 'buffer' | 'guilt_free' | 'sinking_fund'
 export type EfLoanStatus = 'open' | 'repaid'
 
 export interface EfLoan {

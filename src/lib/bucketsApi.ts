@@ -24,6 +24,7 @@ function mapBucket(row: Record<string, unknown>): Bucket {
     target_amount:
       row.target_amount == null ? null : Number(row.target_amount),
     opening_balance: Number(row.opening_balance ?? 0),
+    opening_transfers: Number(row.opening_transfers ?? 0),
     budget_group: mapBudgetGroup(row.budget_group),
     parent_id:
       row.parent_id == null || row.parent_id === ''
@@ -192,6 +193,19 @@ export function findActiveBucketForCategory(
       b.kind === 'sinking' &&
       b.category_id === categoryId,
   )
+}
+
+/** Category ids that currently have an active linked sinking fund. */
+export function sinkingLinkedCategoryIds(
+  buckets: Array<Pick<Bucket, 'kind' | 'category_id' | 'is_active'>>,
+): Set<string> {
+  const ids = new Set<string>()
+  for (const b of buckets) {
+    if (b.is_active && b.kind === 'sinking' && b.category_id) {
+      ids.add(b.category_id)
+    }
+  }
+  return ids
 }
 
 /** Active sinking bucket id for an expense category (spend-from-bucket). */
@@ -421,6 +435,7 @@ export type NewSinkingFromCategoryInput = {
   category_id: string
   target_amount: number
   opening_balance: number
+  opening_transfers?: number
 }
 
 /**
@@ -447,6 +462,12 @@ export async function createSinkingBucketFromCategory(
   }
   const opening_balance = Number.isFinite(input.opening_balance)
     ? Math.max(0, input.opening_balance)
+    : 0
+
+  const opening_transfers = Number.isFinite(
+    input.opening_transfers,
+  )
+    ? Math.max(0, Math.round(input.opening_transfers ?? 0))
     : 0
 
   const group =
@@ -484,6 +505,7 @@ export async function createSinkingBucketFromCategory(
         icon: cat.icon || '🎯',
         target_amount,
         opening_balance,
+        opening_transfers,
         budget_group: group,
         parent_id: parentBucket.id,
         category_id: cat.id,
@@ -502,6 +524,7 @@ export async function createSinkingBucketFromCategory(
         icon: cat.icon || '🎯',
         target_amount,
         opening_balance,
+        opening_transfers,
         budget_group: group,
         parent_id: parentBucket.id,
         category_id: cat.id,
@@ -550,6 +573,7 @@ export type UpdateBucketInput = {
   icon?: string
   target_amount?: number | null
   opening_balance?: number
+  opening_transfers?: number
   budget_group?: 'needs' | 'wants' | null
   parent_id?: string | null
   is_active?: boolean
@@ -604,6 +628,14 @@ export async function updateBucket(
     const kids = active.filter((b) => b.parent_id === id)
     if (kids.length > 0) {
       delete nextPatch.opening_balance
+    }
+  }
+
+  if (nextPatch.opening_transfers !== undefined) {
+    const active = await fetchBuckets()
+    const kids = active.filter((b) => b.parent_id === id)
+    if (kids.length > 0) {
+      delete nextPatch.opening_transfers
     }
   }
 
@@ -752,6 +784,81 @@ export async function reparentSinkingForSubcategoryMove(
     .eq('id', childBucket.id)
   if (error) throwMappedBucketError(error.message)
   await reorderBucketsByNameWithinKinds()
+}
+
+/**
+ * Relink an existing sinking bucket (preserving its id + ledger/history)
+ * from one expense subcategory to another.
+ *
+ * Intended for "leaf" sinking funds:
+ * - bucket must be sinking
+ * - bucket must be linked to a category_id (subcategory)
+ * - bucket must not be a bank-mirror parent bucket (parent_id == null)
+ */
+export async function relinkSinkingBucketToSubcategory(
+  bucketId: string,
+  nextSubcategoryId: string,
+): Promise<Bucket> {
+  const { data: existing, error: existingError } = await supabase
+    .from('buckets')
+    .select('*')
+    .eq('id', bucketId)
+    .maybeSingle()
+  if (existingError) throw new Error(existingError.message)
+  if (!existing) throw new Error('Bucket not found')
+
+  const current = mapBucket(existing as Record<string, unknown>)
+  if (current.kind !== 'sinking') {
+    throw new Error('Only sinking funds can be relinked')
+  }
+  if (!current.category_id) {
+    throw new Error('Bucket is not linked to a subcategory')
+  }
+  if (current.parent_id == null) {
+    // Bank mirror parent buckets are intentionally non-editable in UI.
+    throw new Error('Bank mirror bucket cannot be relinked')
+  }
+
+  const nextCat = await fetchCategory(nextSubcategoryId)
+  if (nextCat.type !== 'expense' || !nextCat.parent_id) {
+    throw new Error('Sinking funds link to expense subcategories only')
+  }
+  if (!nextCat.is_active) {
+    throw new Error('Selected subcategory is inactive')
+  }
+
+  const active = await fetchBuckets()
+  const destination = findActiveBucketForCategory(active, nextSubcategoryId)
+  if (destination && destination.id !== bucketId) {
+    throw new Error('This subcategory already has an active sinking fund')
+  }
+
+  const parentBucket = await ensureParentSinkingBucketForCategory(
+    nextCat.parent_id,
+  )
+
+  const group =
+    nextCat.budget_group === 'wants' || nextCat.budget_group === 'needs'
+      ? nextCat.budget_group
+      : 'needs'
+
+  const { data, error } = await supabase
+    .from('buckets')
+    .update({
+      category_id: nextSubcategoryId,
+      parent_id: parentBucket.id,
+      name: nextCat.name,
+      icon: nextCat.icon || '🎯',
+      budget_group: group,
+    })
+    .eq('id', bucketId)
+    .select('*')
+    .single()
+  if (error) throw new Error(error.message)
+
+  await reorderBucketsByNameWithinKinds()
+
+  return mapBucket(data as Record<string, unknown>)
 }
 
 export type BucketMovement = {

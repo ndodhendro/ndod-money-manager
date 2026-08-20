@@ -3,9 +3,12 @@ import { CollapseChevron } from '../../components/CollapseChevron'
 import { GroupedListFrame } from '../../components/GroupedListFrame'
 import { PlanBudgetRow } from '../../components/PlanBudgetRow'
 import { PlanSubPage } from '../../components/PlanSubPage'
+import { SinkingAllocateSheet } from '../../components/SinkingAllocateSheet'
 import { useBuckets } from '../../hooks/useBuckets'
 import { useCategories } from '../../hooks/useCategories'
 import { usePyfSettings } from '../../hooks/usePyfSettings'
+import { ActionEmoji } from '../../lib/actionEmoji'
+import { showAppToast } from '../../lib/appToast'
 import { groupBucketsByKindAsTree } from '../../lib/bucketsGroup'
 import {
   getCollapseOpen,
@@ -25,13 +28,9 @@ import {
   type RecurringBill,
 } from '../../lib/recurringBillsApi'
 import {
-  computeSinkingFundPace,
-  SINKING_PACE_BADGE_CLASS,
-  SINKING_PACE_BAR_CLASS,
-  SINKING_PACE_DELTA_CLASS,
-  sinkingPaceDeltaLabel,
-  sinkingPaceLabel,
-} from '../../lib/sinkingFundPace'
+  missedTransferHint,
+  sinkingMissedTransferAmount,
+} from '../../lib/sinkingTransferArrears'
 import {
   BUCKET_KIND_LABELS,
   type BucketKind,
@@ -51,84 +50,28 @@ function overallRowForBucket(
   emergencyId: string | null,
   efTarget: number,
   efMultiplier: number,
-  bills: RecurringBill[],
-  yearMonth: string,
 ): {
   bucket: MoneyPlanBucket
   hint: string
-  badge: { label: string; className: string } | null
-  /** Pace-colored bar for sinking; null = use kind default. */
-  barClass: string | null
-  paceMeta: {
-    expected: number
-    monthsElapsed: number
-    monthsTotal: number
-    deltaText: string
-    deltaClassName: string
-  } | null
 } {
   const isSystemEmergency = emergencyId != null && b.id === emergencyId
   if (isSystemEmergency && efTarget > 0) {
-    const row = makeMoneyPlanBucket(b.name, efTarget, b.balance, 'floor')
     return {
-      bucket: row,
+      bucket: makeMoneyPlanBucket(b.name, efTarget, b.balance, 'floor'),
       hint: `${efMultiplier}× planned needs`,
-      badge: null,
-      barClass: null,
-      paceMeta: null,
     }
   }
   if (b.kind === 'investment') {
     return {
       bucket: makeMoneyPlanBucket(b.name, 0, b.balance, 'floor'),
       hint: '',
-      badge: null,
-      barClass: null,
-      paceMeta: null,
     }
   }
 
   const target = b.target_amount ?? 0
-  const pace =
-    b.kind === 'sinking' && target > 0
-      ? computeSinkingFundPace({
-          destinationIds: [b.id],
-          target,
-          balance: b.balance,
-          yearMonth,
-          bills,
-        })
-      : null
-  const badge = pace
-    ? {
-        label: sinkingPaceLabel(pace.status),
-        className: SINKING_PACE_BADGE_CLASS[pace.status],
-      }
-    : null
-  const delta = pace
-    ? sinkingPaceDeltaLabel(pace.balance, pace.expected)
-    : null
-  const paceMeta = pace
-    ? {
-        expected: pace.expected,
-        monthsElapsed: pace.monthsElapsed,
-        monthsTotal: pace.monthsTotal,
-        deltaText: delta!.text,
-        deltaClassName: SINKING_PACE_DELTA_CLASS[delta!.tone],
-      }
-    : null
-  const hint =
-    pace != null
-      ? ''
-      : target > 0
-        ? 'Balance vs target'
-        : ''
   return {
     bucket: makeMoneyPlanBucket(b.name, target, b.balance, 'floor'),
-    hint,
-    badge,
-    barClass: pace ? SINKING_PACE_BAR_CLASS[pace.status] : null,
-    paceMeta,
+    hint: '',
   }
 }
 
@@ -140,10 +83,13 @@ export function PlanEmergency() {
   } = usePyfSettings()
   const {
     buckets,
+    movements,
     byId: bucketsById,
     emergency,
+    investment,
     loading: bucketsLoading,
     error: bucketsError,
+    reload: reloadBuckets,
   } = useBuckets()
   const {
     byId: categoriesById,
@@ -156,6 +102,11 @@ export function PlanEmergency() {
   )
   const [bills, setBills] = useState<RecurringBill[]>([])
   const [billsLoading, setBillsLoading] = useState(true)
+  const [allocateBucket, setAllocateBucket] = useState<BucketWithBalance | null>(
+    null,
+  )
+
+  const viewYm = monthCursorKey(currentMonthCursor())
 
   useEffect(() => {
     let cancelled = false
@@ -177,7 +128,6 @@ export function PlanEmergency() {
     }
   }, [])
 
-  const viewYm = monthCursorKey(currentMonthCursor())
   const plannedNeeds = useMemo(
     () =>
       sumPlannedNeeds(
@@ -215,6 +165,24 @@ export function PlanEmergency() {
       .filter((node) => node.children.length > 0)
       .map((node) => node.bucket.id)
   }, [groupedBuckets])
+
+  const missedByBucketId = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const b of buckets) {
+      if (b.kind !== 'sinking') continue
+      map.set(
+        b.id,
+        sinkingMissedTransferAmount({
+          destinationIds: [b.id],
+          bills,
+          movements,
+          throughYearMonth: viewYm,
+          openingTransfers: b.opening_transfers,
+        }),
+      )
+    }
+    return map
+  }, [buckets, bills, movements, viewYm])
 
   const allSinkingCatsExpanded =
     expandableSinkingParentIds.length > 0 &&
@@ -271,6 +239,27 @@ export function PlanEmergency() {
   const systemEmergencyFunded =
     emergency != null && efTarget > 0 && emergency.balance >= efTarget
 
+  function allocateTrailing(b: BucketWithBalance) {
+    if (b.kind !== 'sinking' || b.balance <= 0) return null
+    return (
+      <button
+        type="button"
+        title="Allocate Surplus"
+        aria-label="Allocate Surplus"
+        onClick={() => {
+          if (!emergency || !investment) {
+            showAppToast('Emergency or Investment bucket missing')
+            return
+          }
+          setAllocateBucket(b)
+        }}
+        className="mt-0.5 shrink-0 rounded-lg px-1.5 py-1 text-base leading-none hover:bg-neutral-100 dark:hover:bg-neutral-700"
+      >
+        {ActionEmoji.allocate}
+      </button>
+    )
+  }
+
   function renderSinkingNode(node: BucketTreeNode, kind: BucketKind) {
     const hasChildren = node.children.length > 0
     const expanded = expandedParentIds.has(node.bucket.id)
@@ -289,6 +278,12 @@ export function PlanEmergency() {
             barClass={KIND_BAR[kind]}
             mode="floor"
             showMetrics={false}
+            alertHint={missedTransferHint(
+              node.children.reduce(
+                (sum, child) => sum + (missedByBucketId.get(child.id) ?? 0),
+                0,
+              ),
+            )}
             leading={
               <button
                 type="button"
@@ -303,28 +298,28 @@ export function PlanEmergency() {
           />
           {expanded
             ? node.children.map((child) => {
-                const { bucket, hint, badge, barClass, paceMeta } =
-                  overallRowForBucket(
-                    child,
-                    emergency?.id ?? null,
-                    efTarget,
-                    efMultiplier,
-                    bills,
-                    viewYm,
-                  )
+                const { bucket, hint } = overallRowForBucket(
+                  child,
+                  emergency?.id ?? null,
+                  efTarget,
+                  efMultiplier,
+                )
                 return (
-                  <div key={child.id} className="pl-5">
-                    <PlanBudgetRow
-                      icon={child.icon}
-                      bucket={bucket}
-                      hint={hint}
-                      badge={badge}
-                      paceMeta={paceMeta}
-                      barClass={barClass ?? KIND_BAR[kind]}
-                      mode="floor"
-                      surfaceClassName="bg-neutral-100 dark:bg-neutral-700/70"
-                    />
-                  </div>
+                <div key={child.id} className="pl-5">
+                  <PlanBudgetRow
+                    icon={child.icon}
+                    bucket={bucket}
+                    hint={hint}
+                    alertHint={missedTransferHint(
+                      missedByBucketId.get(child.id) ?? 0,
+                    )}
+                    barClass={KIND_BAR[kind]}
+                    mode="floor"
+                    showToGo={false}
+                    surfaceClassName="bg-neutral-100 dark:bg-neutral-700/70"
+                    trailing={allocateTrailing(child)}
+                  />
+                </div>
                 )
               })
             : null}
@@ -332,13 +327,11 @@ export function PlanEmergency() {
       )
     }
 
-    const { bucket, hint, badge, barClass, paceMeta } = overallRowForBucket(
+    const { bucket, hint } = overallRowForBucket(
       node.bucket,
       emergency?.id ?? null,
       efTarget,
       efMultiplier,
-      bills,
-      viewYm,
     )
     return (
       <div key={node.bucket.id} className="space-y-2">
@@ -346,16 +339,20 @@ export function PlanEmergency() {
           icon={node.bucket.icon}
           bucket={bucket}
           hint={hint}
-          badge={badge}
-          paceMeta={paceMeta}
-          barClass={barClass ?? KIND_BAR[kind]}
+          alertHint={missedTransferHint(
+            missedByBucketId.get(node.bucket.id) ?? 0,
+          )}
+          barClass={KIND_BAR[kind]}
           mode="floor"
+          showToGo={false}
+          trailing={allocateTrailing(node.bucket)}
         />
       </div>
     )
   }
 
   return (
+    <>
     <PlanSubPage
       title={PlanTitle.emergency}
       icon={PlanIcon.emergency}
@@ -440,8 +437,6 @@ export function PlanEmergency() {
                           emergency?.id ?? null,
                           efTarget,
                           efMultiplier,
-                          bills,
-                          viewYm,
                         )
                         const isSystemEmergency =
                           emergency != null &&
@@ -473,5 +468,26 @@ export function PlanEmergency() {
         </div>
       )}
     </PlanSubPage>
+    {emergency && investment ? (
+      <SinkingAllocateSheet
+        open={allocateBucket != null}
+        bucket={
+          allocateBucket
+            ? {
+                id: allocateBucket.id,
+                name: allocateBucket.name,
+                balance: allocateBucket.balance,
+                target: allocateBucket.target_amount ?? 0,
+                budget_group: allocateBucket.budget_group,
+              }
+            : null
+        }
+        emergencyId={emergency.id}
+        investmentId={investment.id}
+        onClose={() => setAllocateBucket(null)}
+        onSaved={() => void reloadBuckets()}
+      />
+    ) : null}
+    </>
   )
 }

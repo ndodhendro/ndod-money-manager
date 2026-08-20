@@ -31,6 +31,11 @@ import {
   type RecurringBill,
 } from '../../lib/recurringBillsApi'
 import {
+  missedTransferHint,
+  sinkingMissedTransferAmount,
+  sinkingMonthTransferTarget,
+} from '../../lib/sinkingTransferArrears'
+import {
   BUCKET_KIND_LABELS,
   type BucketKind,
   type BucketTreeNode,
@@ -79,7 +84,7 @@ function rowForBucket(
     hint:
       monthInflow > 0
         ? `Funded this month · bal ${formatRupiah(b.balance)}`
-        : `No funding this month · bal ${formatRupiah(b.balance)}`,
+        : `bal ${formatRupiah(b.balance)}`,
   }
 }
 
@@ -102,6 +107,7 @@ export function PlanPayYourselfFirst() {
   } = usePyfSettings()
   const {
     buckets,
+    movements,
     byId: bucketsById,
     emergency,
     investment,
@@ -244,6 +250,24 @@ export function PlanPayYourselfFirst() {
     [transactions],
   )
 
+  const missedByBucketId = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const b of buckets) {
+      if (b.kind !== 'sinking') continue
+      map.set(
+        b.id,
+        sinkingMissedTransferAmount({
+          destinationIds: [b.id],
+          bills,
+          movements,
+          throughYearMonth: viewYm,
+          openingTransfers: b.opening_transfers,
+        }),
+      )
+    }
+    return map
+  }, [buckets, bills, movements, viewYm])
+
   function inflowForNode(
     bucket: BucketWithBalance,
     children: BucketWithBalance[],
@@ -262,6 +286,12 @@ export function PlanPayYourselfFirst() {
     const hasChildren = node.children.length > 0
     const expanded = expandedParentIds.has(node.bucket.id)
     const parentInflow = inflowForNode(node.bucket, node.children)
+    const parentMissed = hasChildren
+      ? node.children.reduce(
+          (sum, child) => sum + (missedByBucketId.get(child.id) ?? 0),
+          0,
+        )
+      : (missedByBucketId.get(node.bucket.id) ?? 0)
     const { bucket: parentRow, hint: parentHint } = rowForBucket(
       node.bucket,
       null,
@@ -282,8 +312,10 @@ export function PlanPayYourselfFirst() {
               : parentRow
           }
           hint={parentHint}
+          alertHint={missedTransferHint(parentMissed)}
           barClass={KIND_BAR[kind]}
           mode="floor"
+          floorStatusPlacement="under-title"
           leading={
             hasChildren ? (
               <button
@@ -300,21 +332,36 @@ export function PlanPayYourselfFirst() {
         />
         {hasChildren && expanded
           ? node.children.map((child) => {
-              const { bucket, hint } = rowForBucket(
-                child,
-                null,
-                null,
-                totalIncome,
-                inflowsByBucket.get(child.id) ?? 0,
+              const monthInflow = inflowsByBucket.get(child.id) ?? 0
+              const monthTarget = sinkingMonthTransferTarget({
+                destinationIds: [child.id],
+                bills,
+                yearMonth: viewYm,
+              })
+              const bucket = makeMoneyPlanBucket(
+                child.name,
+                monthTarget,
+                monthInflow,
+                'floor',
               )
+              const hint =
+                monthInflow > 0
+                  ? `Funded this month · ${formatRupiah(monthInflow)}`
+                  : monthTarget > 0
+                    ? undefined
+                    : 'No transfer scheduled this month'
               return (
                 <div key={child.id} className="pl-5">
                   <PlanBudgetRow
                     icon={child.icon}
                     bucket={bucket}
                     hint={hint}
+                    alertHint={missedTransferHint(
+                      missedByBucketId.get(child.id) ?? 0,
+                    )}
                     barClass={KIND_BAR[kind]}
                     mode="floor"
+                    floorStatusPlacement="under-title"
                     surfaceClassName="bg-neutral-100 dark:bg-neutral-700/70"
                   />
                 </div>
@@ -446,6 +493,7 @@ export function PlanPayYourselfFirst() {
                               hint={hint}
                               barClass={KIND_BAR[kind]}
                               mode="floor"
+                              floorStatusPlacement="under-title"
                             />
                           )
                         })}

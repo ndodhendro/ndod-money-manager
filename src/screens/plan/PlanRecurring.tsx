@@ -51,7 +51,6 @@ export function PlanRecurring() {
             currentMonthDoneByBillId={currentMonthDoneByBillId}
             loading={billsLoading}
             available={billsAvailable}
-            embedded
             variant="plan"
             showSearchField
             onChanged={() => {

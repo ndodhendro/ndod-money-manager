@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useState } from 'react'
+import { CollapsibleDayGroup } from '../../components/CollapsibleDayGroup'
+import { GroupedListFrame } from '../../components/GroupedListFrame'
 import { MonthPager } from '../../components/MonthPager'
 import { PlanBudgetRow } from '../../components/PlanBudgetRow'
 import { PlanSubPage } from '../../components/PlanSubPage'
+import { SearchField } from '../../components/SearchField'
 import { useBuckets } from '../../hooks/useBuckets'
 import { useCategories } from '../../hooks/useCategories'
 import { useMonthCursor } from '../../hooks/useMonthCursor'
 import { usePyfSettings } from '../../hooks/usePyfSettings'
 import { useTransactions } from '../../hooks/useTransactions'
 import { formatRupiah, todayIso } from '../../lib/format'
+import { isBlankSearch, matchesRecurringBillSearch } from '../../lib/listSearch'
 import {
   buildEstimateProgressRows,
-  sumEstimateOverspend,
-  type EstimateProgressStatus,
 } from '../../lib/estimateProgress'
 import {
   buildFreeWantsPace,
@@ -33,6 +35,12 @@ import {
 } from '../../lib/moneyPlan'
 import { monthCursorKey, monthCursorRange } from '../../lib/monthCursor'
 import { PlanIcon, PlanTitle } from '../../lib/planSections'
+import { areAllCollapseOpen } from '../../lib/collapseState'
+import {
+  getRecurringBillDisplayParts,
+  groupRecurringBillsForSettings,
+  sortRecurringBillsForSettings,
+} from '../../lib/recurringBillDisplay'
 import {
   BUDGET_GROUP_BAR_CLASS,
   BUDGET_GROUP_LABELS,
@@ -89,6 +97,9 @@ export function PlanNeedsWants() {
   >([])
   const [recurringLoading, setRecurringLoading] = useState(true)
   const [recurringError, setRecurringError] = useState<string | null>(null)
+  const [estimateGroupsExpanded, setEstimateGroupsExpanded] = useState(true)
+  const [estimateGroupsVersion, setEstimateGroupsVersion] = useState(0)
+  const [estimateSearchQuery, setEstimateSearchQuery] = useState('')
 
   const lookbackStartYm = monthCursorKey(lookbackMonths[0])
   const lookbackEndYm = monthCursorKey(cursor)
@@ -378,15 +389,73 @@ export function PlanNeedsWants() {
     monthTx,
   ])
 
-  const estimateBorrowed = sumEstimateOverspend(estimateProgress)
-  const estimatePlannedTotal = estimateProgress.reduce(
-    (sum, row) => sum + row.planned,
-    0,
+  const estimateProgressByBillId = useMemo(() => {
+    const map = new Map(
+      estimateProgress.map((row) => [row.billId, row] as const),
+    )
+    return map
+  }, [estimateProgress])
+
+  const estimateProgressBills = useMemo(() => {
+    const byId = new Map(bills.map((bill) => [bill.id, bill]))
+    const listed: RecurringBill[] = []
+    for (const row of estimateProgress) {
+      const bill = byId.get(row.billId)
+      if (bill) listed.push(bill)
+    }
+    return sortRecurringBillsForSettings(
+      listed,
+      categoriesById,
+      bucketsById,
+    )
+  }, [bills, estimateProgress, categoriesById, bucketsById])
+
+  const estimateSearchActive = !isBlankSearch(estimateSearchQuery)
+
+  const filteredEstimateProgressBills = useMemo(() => {
+    if (!estimateSearchActive) return estimateProgressBills
+    return estimateProgressBills.filter((bill) => {
+      const row = estimateProgressByBillId.get(bill.id)
+      if (!row) return false
+      const display = getRecurringBillDisplayParts(
+        bill,
+        categoriesById,
+        bucketsById,
+      )
+      return matchesRecurringBillSearch(estimateSearchQuery, bill, display, {
+        amount: row.planned,
+        planTag: BUDGET_GROUP_LABELS[row.group],
+        meta: `${row.actual} ${row.remaining}`,
+      })
+    })
+  }, [
+    estimateSearchActive,
+    estimateSearchQuery,
+    estimateProgressBills,
+    estimateProgressByBillId,
+    categoriesById,
+    bucketsById,
+  ])
+
+  const estimateProgressGroups = useMemo(
+    () => groupRecurringBillsForSettings(filteredEstimateProgressBills),
+    [filteredEstimateProgressBills],
   )
-  const estimateActualTotal = estimateProgress.reduce(
-    (sum, row) => sum + row.actual,
-    0,
+
+  const estimateGroupPersistKeys = useMemo(
+    () =>
+      estimateProgressGroups.map((g) => estimateProgressPersistKey(g.key)),
+    [estimateProgressGroups],
   )
+
+  useEffect(() => {
+    if (estimateGroupsVersion > 0) return
+    setEstimateGroupsExpanded(areAllCollapseOpen(estimateGroupPersistKeys, true))
+  }, [estimateGroupPersistKeys, estimateGroupsVersion])
+
+  const searchForceVersion = estimateSearchActive
+    ? Math.max(1, estimateGroupsVersion)
+    : estimateGroupsVersion
 
   return (
     <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
@@ -516,38 +585,93 @@ export function PlanNeedsWants() {
 
             {estimateProgress.length > 0 && (
               <div className="space-y-2 pt-3">
-                <p className="text-[11px] font-medium uppercase tracking-wide text-neutral-400">
-                  Estimate Progress
-                </p>
-                <p className="text-[11px] text-neutral-400">
-                  Planned {formatRupiah(estimatePlannedTotal)} · Actual{' '}
-                  {formatRupiah(estimateActualTotal)}
-                  {estimateBorrowed > 0
-                    ? ` · Over ${formatRupiah(estimateBorrowed)}`
-                    : ''}
-                </p>
-                {estimateBorrowed > 0 && (
-                  <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
-                    Overspend uses Buffer first; beyond Buffer borrows from
-                    Emergency Fund {formatRupiah(estimateBorrowed)} (see Payday
-                    Allocation). Needs outside estimates also use Buffer.
+                <SearchField
+                  value={estimateSearchQuery}
+                  onChange={setEstimateSearchQuery}
+                  placeholder="Search estimates…"
+                  aria-label="Search Estimate Progress"
+                  className="min-w-0"
+                />
+                {estimateSearchActive &&
+                filteredEstimateProgressBills.length === 0 ? (
+                  <p className="rounded-xl bg-white p-3 text-center text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
+                    No matches.
                   </p>
+                ) : (
+                  // Extra top space: GroupedListFrame legend sits on the border
+                  // with -translate-y-1/2 and must not overlap the search field.
+                  <div className="pt-4">
+                    <GroupedListFrame
+                      label="Estimate Progress"
+                      expanded={
+                        estimateSearchActive ? true : estimateGroupsExpanded
+                      }
+                      onToggle={(expanded) => {
+                        setEstimateGroupsExpanded(expanded)
+                        setEstimateGroupsVersion((v) => v + 1)
+                      }}
+                    >
+                      <div className="space-y-5">
+                        {estimateProgressGroups.map((group) => (
+                          <CollapsibleDayGroup
+                            key={group.key}
+                            title={group.title}
+                            persistKey={estimateProgressPersistKey(group.key)}
+                            forceOpen={
+                              estimateSearchActive
+                                ? true
+                                : estimateGroupsVersion > 0
+                                  ? estimateGroupsExpanded
+                                  : undefined
+                            }
+                            forceVersion={searchForceVersion}
+                          >
+                            <div className="space-y-2">
+                              {group.items.map((bill) => {
+                                const row = estimateProgressByBillId.get(
+                                  bill.id,
+                                )
+                                if (!row) return null
+                                const display = getRecurringBillDisplayParts(
+                                  bill,
+                                  categoriesById,
+                                  bucketsById,
+                                )
+                                return (
+                                  <PlanBudgetRow
+                                    key={row.billId}
+                                    icon={display.parentIcon}
+                                    bucket={makeMoneyPlanBucket(
+                                      display.parentName,
+                                      row.planned,
+                                      row.actual,
+                                      'ceiling',
+                                    )}
+                                    detailStack={{
+                                      childIcon: display.childIcon,
+                                      childName: display.childName,
+                                      note:
+                                        bill.name.trim() ||
+                                        display.transferToLabel,
+                                      budgetGroup: row.group,
+                                      owner: bill.owner,
+                                      circle: display.circle,
+                                      isTransfer: display.isTransfer,
+                                    }}
+                                    barClass={
+                                      BUDGET_GROUP_BAR_CLASS[row.group]
+                                    }
+                                    mode="ceiling"
+                                  />
+                                )
+                              })}
+                            </div>
+                          </CollapsibleDayGroup>
+                        ))}
+                      </div>
+                    </GroupedListFrame>
+                  </div>
                 )}
-                {estimateProgress.map((row) => (
-                  <PlanBudgetRow
-                    key={row.billId}
-                    icon={row.icon}
-                    bucket={makeMoneyPlanBucket(
-                      row.name,
-                      row.planned,
-                      row.actual,
-                      'ceiling',
-                    )}
-                    hint={`${BUDGET_GROUP_LABELS[row.group]} · ${estimateStatusLabel(row.status)}`}
-                    barClass={BUDGET_GROUP_BAR_CLASS[row.group]}
-                    mode="ceiling"
-                  />
-                ))}
               </div>
             )}
           </div>
@@ -557,10 +681,10 @@ export function PlanNeedsWants() {
   )
 }
 
-function estimateStatusLabel(status: EstimateProgressStatus): string {
-  if (status === 'over') return 'Over'
-  if (status === 'under') return 'Under'
-  return 'On Track'
+function estimateProgressPersistKey(groupKey: string): string {
+  return groupKey === 'estimate'
+    ? 'plan:needs-wants:estimates:nodate'
+    : `plan:needs-wants:estimates:day:${groupKey.replace('day:', '')}`
 }
 
 function isCurrentWeekLabel(

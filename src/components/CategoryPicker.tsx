@@ -1,11 +1,14 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useOverlayBack } from '../hooks/useBackButton'
 import type { CategoryTreeNode } from '../hooks/useCategories'
+import { useBuckets } from '../hooks/useBuckets'
 import { ActionEmoji } from '../lib/actionEmoji'
+import { sinkingLinkedCategoryIds } from '../lib/bucketsApi'
 import { budgetGroupOfCategory } from '../lib/freeWants'
 import { type Category, type CategoryType } from '../lib/types'
 import { BudgetGroupBadge } from './BudgetGroupBadge'
 import { CategoryManagePanel } from './CategoryManagePanel'
+import { SinkingFundLabel } from './SinkingFundLabel'
 
 interface CategoryPickerProps {
   tree: CategoryTreeNode[]
@@ -33,6 +36,11 @@ export function CategoryPicker({
   highlighted = false,
   showBudgetGroup = false,
 }: CategoryPickerProps) {
+  const { buckets } = useBuckets()
+  const sinkingCategoryIds = useMemo(
+    () => sinkingLinkedCategoryIds(buckets),
+    [buckets],
+  )
   const selected = selectedId ? byId.get(selectedId) : null
   const isChild = Boolean(selected?.parent_id)
   const parentCategory = selected
@@ -134,9 +142,14 @@ export function CategoryPicker({
               {parentCategory?.name ?? 'Select category'}
             </p>
             {childCategory && (
-              <p className="mt-0.5 flex min-w-0 items-center gap-1.5 truncate text-xs text-neutral-400">
-                <span aria-hidden>{childCategory.icon}</span>
+              <p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-neutral-400">
+                <span className="shrink-0" aria-hidden>
+                  {childCategory.icon}
+                </span>
                 <span className="truncate">{childCategory.name}</span>
+                {sinkingCategoryIds.has(childCategory.id) ? (
+                  <SinkingFundLabel />
+                ) : null}
               </p>
             )}
             {budgetGroup ? (
@@ -280,6 +293,9 @@ export function CategoryPicker({
                         const childGroup = showBudgetGroup
                           ? budgetGroupOfCategory(child.id, byId)
                           : null
+                        const linkedToSinkingFund = sinkingCategoryIds.has(
+                          child.id,
+                        )
                         return (
                           <button
                             key={child.id}
@@ -297,6 +313,7 @@ export function CategoryPicker({
                             <span className="min-w-0 flex-1 truncate">
                               {child.name}
                             </span>
+                            {linkedToSinkingFund ? <SinkingFundLabel /> : null}
                             {childGroup ? (
                               <BudgetGroupBadge group={childGroup} />
                             ) : null}

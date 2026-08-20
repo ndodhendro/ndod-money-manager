@@ -3,23 +3,17 @@ import { useBuckets } from './useBuckets'
 import { useCategories } from './useCategories'
 import { usePyfSettings } from './usePyfSettings'
 import { useRecurringBills } from './useRecurringBills'
-import {
-  buildEstimateProgressRows,
-  sumEstimateOverspend,
-} from '../lib/estimateProgress'
+import { buildMonthBudgetEstimateRows } from '../lib/estimateProgress'
 import {
   buildMonthBudgetProgress,
   checkingBucketIdSet,
+  computeMonthBudgetSpend,
   estimateExpenseCoverageKeys,
-  sumGuiltFreeSpent,
-  sumUnplannedNeedsSpent,
   type MonthBudgetProgress,
 } from '../lib/freeGuiltyProgress'
 import {
   budgetGroupOfEstimate,
-  budgetGroupOfTransferTo,
   isPlannedNeedsSchedule,
-  type BucketBudgetRef,
 } from '../lib/freeWants'
 import { sumMonthIncomeParts } from '../lib/moneyPlan'
 import { fetchOpeningCarryForMonth } from '../lib/monthClosesApi'
@@ -30,21 +24,14 @@ import {
 import type { RecurringBill } from '../lib/recurringBillsApi'
 import type { Category, TransactionWithCategory } from '../lib/types'
 
-function isNeedsOrWantsEstimateBill(
+function isExpenseNeedsOrWantsEstimateBill(
   bill: RecurringBill,
   categoriesById: Map<string, Category>,
-  bucketsById: Map<string, BucketBudgetRef>,
 ): boolean {
   if (!isPlannedNeedsSchedule(bill)) return false
-  if (bill.type === 'expense') {
-    const g = budgetGroupOfEstimate(bill, categoriesById)
-    return g === 'needs' || g === 'wants'
-  }
-  if (bill.type === 'transfer') {
-    const g = budgetGroupOfTransferTo(bill.to_bucket_id, bucketsById)
-    return g === 'needs' || g === 'wants'
-  }
-  return false
+  if (bill.type !== 'expense') return false
+  const g = budgetGroupOfEstimate(bill, categoriesById)
+  return g === 'needs' || g === 'wants'
 }
 
 /**
@@ -58,6 +45,10 @@ export function useFreeGuiltyProgress(
   progress: MonthBudgetProgress | null
   skippedOccurrenceKeys: Set<string>
   bills: RecurringBill[]
+  logByOccurrenceKey: Map<
+    string,
+    import('../lib/recurringBillsApi').RecurringBillLog
+  >
   overrideByBillId: Map<string, import('../lib/recurringBillsApi').RecurringBillMonthOverride>
   categoriesById: Map<string, Category>
   bucketsById: ReturnType<typeof useBuckets>['byId']
@@ -73,6 +64,7 @@ export function useFreeGuiltyProgress(
   } = usePyfSettings()
   const {
     bills,
+    logByOccurrenceKey,
     overrideByBillId,
     skippedOccurrenceKeys,
     loading: billsLoading,
@@ -152,7 +144,7 @@ export function useFreeGuiltyProgress(
 
   const estimateRows = useMemo(() => {
     if (!billsAvailable) return []
-    return buildEstimateProgressRows({
+    return buildMonthBudgetEstimateRows({
       bills,
       overridesByBillId: overrideByBillId,
       skippedOccurrenceKeys,
@@ -160,6 +152,7 @@ export function useFreeGuiltyProgress(
       bucketsById,
       yearMonth,
       transactions,
+      checkingBucketIds: checkingBucketIdSet(buckets),
     })
   }, [
     billsAvailable,
@@ -174,36 +167,27 @@ export function useFreeGuiltyProgress(
 
   const progress = useMemo(() => {
     if (!allocation) return null
-    let needsActual = 0
-    let wantsActual = 0
-    for (const row of estimateRows) {
-      if (row.group === 'needs') needsActual += row.actual
-      else if (row.group === 'wants') wantsActual += row.actual
-    }
     const estimateCoverageKeys = estimateExpenseCoverageKeys(
       bills,
       categoriesById,
-      (bill) => isNeedsOrWantsEstimateBill(bill, categoriesById, bucketsById),
+      (bill) => isExpenseNeedsOrWantsEstimateBill(bill, categoriesById),
     )
-    const checkingIds = checkingBucketIdSet(buckets)
+    const spend = computeMonthBudgetSpend({
+      estimateRows,
+      transactions,
+      estimateCoverageKeys,
+      checkingBucketIds: checkingBucketIdSet(buckets),
+    })
     return buildMonthBudgetProgress({
       plannedNeeds: allocation.plannedNeeds,
-      needsActual,
+      needsUsed: spend.needsUsed,
       plannedWants: allocation.plannedWants,
-      wantsActual,
+      wantsUsed: spend.wantsUsed,
       buffer: allocation.buffer,
       guiltFree: allocation.guiltFree,
-      guiltFreeSpent: sumGuiltFreeSpent({
-        transactions,
-        estimateCoverageKeys,
-        checkingBucketIds: checkingIds,
-      }),
-      estimateOverspend: sumEstimateOverspend(estimateRows),
-      unplannedNeedsSpent: sumUnplannedNeedsSpent({
-        transactions,
-        estimateCoverageKeys,
-        checkingBucketIds: checkingIds,
-      }),
+      bufferSpent: spend.bufferSpent,
+      guiltFreeSpent: spend.guiltFreeSpent,
+      overspendTotal: spend.needsOverspend + spend.wantsOverspend,
     })
   }, [
     allocation,
@@ -224,6 +208,7 @@ export function useFreeGuiltyProgress(
     progress,
     skippedOccurrenceKeys,
     bills,
+    logByOccurrenceKey,
     overrideByBillId,
     categoriesById,
     bucketsById,

@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
+import {
+  FourWayAllocationFields,
+  type AllocMode,
+} from '../../components/FourWayAllocationFields'
 import { PlanSubPage } from '../../components/PlanSubPage'
 import { useBuckets } from '../../hooks/useBuckets'
 import { useFreeGuiltyProgress } from '../../hooks/useFreeGuiltyProgress'
@@ -30,155 +34,6 @@ import { PlanIcon } from '../../lib/planSections'
 import { getStoredProfile } from '../../lib/profile'
 import { createTransaction } from '../../lib/transactionsApi'
 import type { MonthCloseAllocation } from '../../lib/types'
-
-type AllocMode = 'percent' | 'amount'
-
-function amountsFromPercents(
-  remaining: number,
-  pct: MonthCloseAllocation,
-): MonthCloseAllocation {
-  if (remaining <= 0) return { ...ZERO_CLOSE_ALLOC }
-  const ef = Math.round((remaining * pct.ef) / 100)
-  const investment = Math.round((remaining * pct.investment) / 100)
-  const buffer = Math.round((remaining * pct.buffer) / 100)
-  let guiltFree = remaining - ef - investment - buffer
-  if (guiltFree < 0) {
-    return {
-      ef,
-      investment,
-      buffer: buffer + guiltFree,
-      guiltFree: 0,
-    }
-  }
-  return { ef, investment, buffer, guiltFree }
-}
-
-function percentsFromAmounts(
-  remaining: number,
-  amounts: MonthCloseAllocation,
-): MonthCloseAllocation {
-  if (remaining <= 0) return { ...ZERO_CLOSE_ALLOC }
-  return {
-    ef: Math.round((amounts.ef * 100) / remaining),
-    investment: Math.round((amounts.investment * 100) / remaining),
-    buffer: Math.round((amounts.buffer * 100) / remaining),
-    guiltFree: Math.round((amounts.guiltFree * 100) / remaining),
-  }
-}
-
-function FourWayFields({
-  title,
-  subtitle,
-  remaining,
-  amounts,
-  onAmountsChange,
-  mode,
-  onModeChange,
-}: {
-  title: string
-  subtitle?: string
-  remaining: number
-  amounts: MonthCloseAllocation
-  onAmountsChange: (next: MonthCloseAllocation) => void
-  mode: AllocMode
-  onModeChange: (mode: AllocMode) => void
-}) {
-  const pct = percentsFromAmounts(remaining, amounts)
-  const display = mode === 'percent' ? pct : amounts
-  const total = mode === 'percent' ? allocationSum(pct) : allocationSum(amounts)
-  const target = mode === 'percent' ? 100 : remaining
-  const ok = remaining === 0 || total === target
-
-  function setField(key: keyof MonthCloseAllocation, raw: string) {
-    const n = Math.max(0, Math.round(Number(raw.replace(/\D/g, '')) || 0))
-    if (mode === 'percent') {
-      onAmountsChange(amountsFromPercents(remaining, { ...pct, [key]: n }))
-    } else {
-      onAmountsChange({ ...amounts, [key]: n })
-    }
-  }
-
-  const fields: { key: keyof MonthCloseAllocation; label: string }[] = [
-    { key: 'ef', label: 'Emergency Fund' },
-    { key: 'investment', label: 'Investment Transit' },
-    { key: 'buffer', label: 'Buffer' },
-    { key: 'guiltFree', label: 'Guilt-Free Fund' },
-  ]
-
-  return (
-    <section className="rounded-xl bg-white p-4 shadow-sm dark:bg-neutral-800">
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
-            {title}
-          </h2>
-          <p className="text-xs text-neutral-400">
-            Remaining {formatRupiah(remaining)}
-          </p>
-          {subtitle ? (
-            <p className="mt-0.5 text-[11px] text-neutral-400">{subtitle}</p>
-          ) : null}
-        </div>
-        <div className="flex shrink-0 rounded-lg bg-neutral-100 p-0.5 text-xs dark:bg-neutral-900">
-          <button
-            type="button"
-            className={`rounded-md px-2 py-1 ${
-              mode === 'percent'
-                ? 'bg-white font-semibold shadow-sm dark:bg-neutral-800'
-                : 'text-neutral-500'
-            }`}
-            onClick={() => onModeChange('percent')}
-          >
-            %
-          </button>
-          <button
-            type="button"
-            className={`rounded-md px-2 py-1 ${
-              mode === 'amount'
-                ? 'bg-white font-semibold shadow-sm dark:bg-neutral-800'
-                : 'text-neutral-500'
-            }`}
-            onClick={() => onModeChange('amount')}
-          >
-            Rp
-          </button>
-        </div>
-      </div>
-
-      {remaining <= 0 ? (
-        <p className="mt-3 text-xs text-neutral-400">Nothing left to allocate.</p>
-      ) : (
-        <div className="mt-3 space-y-2">
-          {fields.map(({ key, label }) => (
-            <label key={key} className="flex items-center justify-between gap-3">
-              <span className="text-sm text-neutral-600 dark:text-neutral-300">
-                {label}
-              </span>
-              <input
-                inputMode="numeric"
-                className="w-28 rounded-lg border border-neutral-200 bg-neutral-50 px-2 py-1.5 text-right text-sm tabular-nums dark:border-neutral-700 dark:bg-neutral-900"
-                value={display[key] || ''}
-                onChange={(e) => setField(key, e.target.value)}
-              />
-            </label>
-          ))}
-          <p
-            className={`text-xs ${
-              ok
-                ? 'text-emerald-600 dark:text-emerald-400'
-                : 'text-amber-600 dark:text-amber-400'
-            }`}
-          >
-            Total {mode === 'percent' ? `${total}%` : formatRupiah(total)}
-            {ok
-              ? ' · OK'
-              : ` · need ${mode === 'percent' ? '100%' : formatRupiah(remaining)}`}
-          </p>
-        </div>
-      )}
-    </section>
-  )
-}
 
 export function PlanCloseMonth() {
   const navigate = useNavigate()
@@ -212,7 +67,12 @@ export function PlanCloseMonth() {
   const { emergency, investment, reload: reloadBuckets } = useBuckets()
 
   const [alreadyClosed, setAlreadyClosed] = useState(false)
-  const [efOwed, setEfOwed] = useState({ buffer: 0, guiltFree: 0, total: 0 })
+  const [efOwed, setEfOwed] = useState({
+    buffer: 0,
+    guiltFree: 0,
+    sinkingFund: 0,
+    total: 0,
+  })
   const [needsAlloc, setNeedsAlloc] = useState<MonthCloseAllocation>({
     ...ZERO_CLOSE_ALLOC,
   })
@@ -447,12 +307,13 @@ export function PlanCloseMonth() {
               </dl>
               <p className="mt-2 text-[11px] text-neutral-400">
                 Defaults repay EF from Needs Side first, then Buffer carry.
-                Wants Side defaults to Guilt-Free rollover. You can edit before
-                closing.
+                Wants Side defaults to Guilt-Free rollover. Sinking Fund
+                leftover stays in the bucket until you allocate it on Savings
+                Goals. You can edit before closing.
               </p>
             </section>
 
-            <FourWayFields
+            <FourWayAllocationFields
               title="Allocate Needs Side Leftover"
               subtitle={`Planned Needs ${formatRupiah(rem.plannedNeedsRemaining)} + Buffer ${formatRupiah(rem.bufferRemaining)}`}
               remaining={rem.needsSideRemaining}
@@ -461,7 +322,7 @@ export function PlanCloseMonth() {
               mode={needsMode}
               onModeChange={setNeedsMode}
             />
-            <FourWayFields
+            <FourWayAllocationFields
               title="Allocate Wants Side Leftover"
               subtitle={`Planned Wants ${formatRupiah(rem.plannedWantsRemaining)} + Guilt-Free ${formatRupiah(rem.guiltFreeRemaining)}`}
               remaining={rem.wantsSideRemaining}

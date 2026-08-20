@@ -1,18 +1,13 @@
-import {
-  buildEstimateProgressRows,
-  sumEstimateOverspend,
-} from './estimateProgress'
+import { buildMonthBudgetEstimateRows } from './estimateProgress'
 import {
   buildMonthBudgetProgress,
   checkingBucketIdSet,
+  computeMonthBudgetSpend,
   estimateExpenseCoverageKeys,
-  sumGuiltFreeSpent,
-  sumUnplannedNeedsSpent,
 } from './freeGuiltyProgress'
 import {
   isPlannedNeedsSchedule,
   budgetGroupOfEstimate,
-  budgetGroupOfTransferTo,
   type BucketBudgetRef,
 } from './freeWants'
 import { formatRupiah, formatYearMonthLabel } from './format'
@@ -25,6 +20,7 @@ import {
 import { hasAnyMonthClose, isMonthClosed } from './monthClosesApi'
 import type { RecurringBill, RecurringBillMonthOverride } from './recurringBillsApi'
 import type {
+  Bucket,
   Category,
   EfLoanSource,
   NewTransactionInput,
@@ -78,21 +74,14 @@ export async function resolveMonthWritePolicy(
   return { allowed: true, monthClosed, yearMonth }
 }
 
-function isNeedsOrWantsEstimateBill(
+function isExpenseNeedsOrWantsEstimateBill(
   bill: RecurringBill,
   categoriesById: Map<string, Category>,
-  bucketsById: Map<string, BucketBudgetRef>,
 ): boolean {
   if (!isPlannedNeedsSchedule(bill)) return false
-  if (bill.type === 'expense') {
-    const g = budgetGroupOfEstimate(bill, categoriesById)
-    return g === 'needs' || g === 'wants'
-  }
-  if (bill.type === 'transfer') {
-    const g = budgetGroupOfTransferTo(bill.to_bucket_id, bucketsById)
-    return g === 'needs' || g === 'wants'
-  }
-  return false
+  if (bill.type !== 'expense') return false
+  const g = budgetGroupOfEstimate(bill, categoriesById)
+  return g === 'needs' || g === 'wants'
 }
 
 function syntheticExpense(
@@ -112,6 +101,7 @@ function syntheticExpense(
     circle: draft.circle,
     occurred_on: draft.occurred_on,
     is_recurring: draft.is_recurring,
+    recurring_bill_id: draft.recurring_bill_id ?? null,
     complete_later: false,
     budget_group: draft.budget_group ?? null,
     sort_order: 0,
@@ -130,7 +120,8 @@ export type EfLoanEvaluation = {
 
 /**
  * How much of this expense draft must be borrowed from Emergency Fund.
- * Open month: Buffer then EF for estimate overspend; GF overspend → EF.
+ * Open month: Buffer then EF for Needs overspend / unplanned Needs;
+ * Guilt-Free then EF for Wants overspend / unplanned Wants.
  * Closed month: leftover capacity frozen — new overage → EF only.
  */
 export function evaluateExpenseEfLoan(input: {
@@ -174,77 +165,57 @@ export function evaluateExpenseEfLoan(input: {
   const estimateCoverageKeys = estimateExpenseCoverageKeys(
     input.bills,
     input.categoriesById,
-    (bill) =>
-      isNeedsOrWantsEstimateBill(
-        bill,
-        input.categoriesById,
-        input.bucketsById,
-      ),
+    (bill) => isExpenseNeedsOrWantsEstimateBill(bill, input.categoriesById),
   )
   const category = input.categoriesById.get(draft.category_id) ?? null
   const draftTx = syntheticExpense(draft, input.editId ?? '__draft__', category)
   const draftGroup = budgetGroupOfTx(draftTx)
-  const isEstimateCat = Boolean(
-    draft.category_id &&
-      draftGroup &&
-      estimateCoverageKeys.has(`${draft.category_id}:${draftGroup}`),
-  )
 
   const baseTxs = input.editId
     ? input.transactions.filter((t) => t.id !== input.editId)
     : input.transactions
 
-  const beforeRows = buildEstimateProgressRows({
-    bills: input.bills,
-    overridesByBillId: input.overridesByBillId,
-    skippedOccurrenceKeys: input.skippedOccurrenceKeys,
-    categoriesById: input.categoriesById,
-    bucketsById: input.bucketsById,
-    yearMonth: input.yearMonth,
-    transactions: baseTxs,
-  })
-  const overspendBefore = sumEstimateOverspend(beforeRows)
-  const unplannedNeedsBefore = sumUnplannedNeedsSpent({
-    transactions: baseTxs,
+  const spendInput = {
     estimateCoverageKeys,
     checkingBucketIds: checkingIds,
-  })
-  const gfSpentBefore = sumGuiltFreeSpent({
-    transactions: baseTxs,
-    estimateCoverageKeys,
-    checkingBucketIds: checkingIds,
-  })
+  }
 
+  const before = computeMonthBudgetSpend({
+    estimateRows: buildMonthBudgetEstimateRows({
+      bills: input.bills,
+      overridesByBillId: input.overridesByBillId,
+      skippedOccurrenceKeys: input.skippedOccurrenceKeys,
+      categoriesById: input.categoriesById,
+      bucketsById: input.bucketsById,
+      yearMonth: input.yearMonth,
+      transactions: baseTxs,
+      checkingBucketIds: checkingIds,
+    }),
+    transactions: baseTxs,
+    ...spendInput,
+  })
   const afterTxs = [...baseTxs, draftTx]
-  const afterRows = buildEstimateProgressRows({
-    bills: input.bills,
-    overridesByBillId: input.overridesByBillId,
-    skippedOccurrenceKeys: input.skippedOccurrenceKeys,
-    categoriesById: input.categoriesById,
-    bucketsById: input.bucketsById,
-    yearMonth: input.yearMonth,
+  const after = computeMonthBudgetSpend({
+    estimateRows: buildMonthBudgetEstimateRows({
+      bills: input.bills,
+      overridesByBillId: input.overridesByBillId,
+      skippedOccurrenceKeys: input.skippedOccurrenceKeys,
+      categoriesById: input.categoriesById,
+      bucketsById: input.bucketsById,
+      yearMonth: input.yearMonth,
+      transactions: afterTxs,
+      checkingBucketIds: checkingIds,
+    }),
     transactions: afterTxs,
-  })
-  const overspendAfter = sumEstimateOverspend(afterRows)
-  const unplannedNeedsAfter = sumUnplannedNeedsSpent({
-    transactions: afterTxs,
-    estimateCoverageKeys,
-    checkingBucketIds: checkingIds,
-  })
-  const gfSpentAfter = sumGuiltFreeSpent({
-    transactions: afterTxs,
-    estimateCoverageKeys,
-    checkingBucketIds: checkingIds,
+    ...spendInput,
   })
 
   const buffer = Math.max(0, Math.round(input.bufferAllowance))
   const guiltFree = Math.max(0, Math.round(input.guiltFreeAllowance))
 
-  // Estimate-line overspend + Needs outside estimates both demand Buffer.
-  const usesBuffer = isEstimateCat || draftGroup === 'needs'
-  if (usesBuffer) {
-    const demandBefore = overspendBefore + unplannedNeedsBefore
-    const demandAfter = overspendAfter + unplannedNeedsAfter
+  if (draftGroup === 'needs') {
+    const demandBefore = before.bufferSpent
+    const demandAfter = after.bufferSpent
     const bufferCap = input.monthClosed
       ? Math.min(buffer, demandBefore)
       : buffer
@@ -257,16 +228,89 @@ export function evaluateExpenseEfLoan(input: {
     }
   }
 
-  // Guilt-Free Fund (non-Needs, non-estimate Main/checking expense)
-  const gfCap = input.monthClosed
-    ? Math.min(guiltFree, gfSpentBefore)
-    : guiltFree
-  const overBefore = Math.max(0, gfSpentBefore - gfCap)
-  const overAfter = Math.max(0, gfSpentAfter - gfCap)
-  const borrowAmount = Math.max(0, overAfter - overBefore)
+  if (draftGroup === 'wants') {
+    const demandBefore = before.guiltFreeSpent
+    const demandAfter = after.guiltFreeSpent
+    const gfCap = input.monthClosed
+      ? Math.min(guiltFree, demandBefore)
+      : guiltFree
+    const overBefore = Math.max(0, demandBefore - gfCap)
+    const overAfter = Math.max(0, demandAfter - gfCap)
+    const borrowAmount = Math.max(0, overAfter - overBefore)
+    return {
+      borrowAmount,
+      source: borrowAmount > 0 ? 'guilt_free' : null,
+    }
+  }
+
+  return { borrowAmount: 0, source: null }
+}
+
+function ownBucketLedgerBalance(
+  bucketId: string,
+  openingBalance: number,
+  movements: Array<{
+    amount: number
+    from_bucket_id: string | null
+    to_bucket_id: string | null
+  }>,
+): number {
+  let balance = openingBalance
+  for (const m of movements) {
+    if (m.to_bucket_id === bucketId) balance += m.amount
+    if (m.from_bucket_id === bucketId) balance -= m.amount
+  }
+  return balance
+}
+
+/**
+ * How much of a sinking-fund expense must be borrowed from Emergency Fund
+ * when the expense exceeds the bucket ledger balance (display floors at 0).
+ */
+export function evaluateSinkingFundEfLoan(input: {
+  draft: NewTransactionInput
+  buckets: Array<Pick<Bucket, 'id' | 'kind' | 'opening_balance'>>
+  movements: Array<{
+    amount: number
+    from_bucket_id: string | null
+    to_bucket_id: string | null
+  }>
+  /** When editing, reverse the prior expense from this bucket first. */
+  editingPrior?: {
+    from_bucket_id: string | null
+    amount: number
+  } | null
+}): EfLoanEvaluation {
+  const draft = input.draft
+  if (
+    draft.type !== 'expense' ||
+    draft.complete_later ||
+    draft.amount <= 0 ||
+    !draft.from_bucket_id
+  ) {
+    return { borrowAmount: 0, source: null }
+  }
+
+  const bucket = input.buckets.find((b) => b.id === draft.from_bucket_id)
+  if (!bucket || bucket.kind !== 'sinking') {
+    return { borrowAmount: 0, source: null }
+  }
+
+  let balance = ownBucketLedgerBalance(
+    bucket.id,
+    bucket.opening_balance,
+    input.movements,
+  )
+  const prior = input.editingPrior
+  if (prior?.from_bucket_id === bucket.id && prior.amount > 0) {
+    balance += prior.amount
+  }
+
+  const available = Math.max(0, Math.round(balance))
+  const borrowAmount = Math.max(0, Math.round(draft.amount) - available)
   return {
     borrowAmount,
-    source: borrowAmount > 0 ? 'guilt_free' : null,
+    source: borrowAmount > 0 ? 'sinking_fund' : null,
   }
 }
 
@@ -274,6 +318,9 @@ export function efLoanConfirmMessage(
   borrowAmount: number,
   source: EfLoanSource,
 ): string {
+  if (source === 'sinking_fund') {
+    return `This expense exceeds the sinking fund and will borrow ${formatRupiah(borrowAmount)} from Emergency Fund. Continue?`
+  }
   const track = source === 'buffer' ? 'Buffer' : 'Guilt-Free Fund'
   return `This overspends ${track} and will borrow ${formatRupiah(borrowAmount)} from Emergency Fund. Continue?`
 }

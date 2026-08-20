@@ -15,6 +15,7 @@ import {
   createSinkingBucketFromCategory,
   deleteBucket,
   findActiveBucketForCategory,
+  relinkSinkingBucketToSubcategory,
   updateBucket,
 } from '../lib/bucketsApi'
 import { groupBucketsByKindAsTree } from '../lib/bucketsGroup'
@@ -66,7 +67,7 @@ export function BucketManagePanel({
   const { buckets, byId: bucketsById, loading, error, reload } = useBuckets()
   const { settings: pyfSettings } = usePyfSettings()
   const {
-    tree: expenseTree,
+    treeByUsage: activeExpenseTree,
     byId: categoriesById,
     reload: reloadCategories,
   } = useCategories('expense', { includeInactive: true })
@@ -75,6 +76,7 @@ export function BucketManagePanel({
   const [categoryOpen, setCategoryOpen] = useState(false)
   const [targetDigits, setTargetDigits] = useState('')
   const [openingDigits, setOpeningDigits] = useState('')
+  const [openingTransfersDigits, setOpeningTransfersDigits] = useState('')
   const [saving, setSaving] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(
     () => routeEditId ?? null,
@@ -146,21 +148,31 @@ export function BucketManagePanel({
 
   const categoriesLinked = useMemo(() => {
     const set = new Set<string>()
+    const editingCategoryId =
+      editingId != null
+        ? buckets.find(
+            (b) => b.id === editingId && b.kind === 'sinking' && b.category_id,
+          )?.category_id ?? null
+        : null
     for (const b of buckets) {
-      if (b.kind === 'sinking' && b.category_id) set.add(b.category_id)
+      if (b.kind !== 'sinking' || !b.category_id) continue
+      // For linked sinking fund editing, allow selecting the current category
+      // in the picker (so the UI reflects the active state).
+      if (editingCategoryId && b.category_id === editingCategoryId) continue
+      set.add(b.category_id)
     }
     return set
-  }, [buckets])
+  }, [buckets, editingId])
 
-  /** Tree with subcategories that already have a sinking fund filtered out (add form). */
+  /** Active-only tree; subcategories already linked to a sinking fund excluded (add form). */
   const availableExpenseTree = useMemo(() => {
-    return expenseTree
+    return activeExpenseTree
       .map((parent) => ({
         ...parent,
         children: parent.children.filter((c) => !categoriesLinked.has(c.id)),
       }))
       .filter((p) => p.children.length > 0)
-  }, [expenseTree, categoriesLinked])
+  }, [activeExpenseTree, categoriesLinked])
 
   useEffect(() => {
     let cancelled = false
@@ -207,8 +219,11 @@ export function BucketManagePanel({
     if (!editingId) return false
     return buckets.some((b) => b.parent_id === editingId)
   }, [buckets, editingId])
+
   const isCategoryLinkedSinking =
     editingBucket?.kind === 'sinking' && Boolean(editingBucket.category_id)
+  const canEditLinkedSubcategory =
+    isCategoryLinkedSinking && editingBucket?.parent_id != null
   const linkedCategory =
     editingBucket?.category_id
       ? categoriesById.get(editingBucket.category_id) ?? null
@@ -360,6 +375,7 @@ export function BucketManagePanel({
     setCategoryOpen(false)
     setTargetDigits('')
     setOpeningDigits('')
+    setOpeningTransfersDigits('')
     setEditingId(null)
     hydratedEditIdRef.current = null
   }
@@ -383,6 +399,11 @@ export function BucketManagePanel({
     setOpeningDigits(
       b.opening_balance > 0 ? String(Math.round(b.opening_balance)) : '',
     )
+    setOpeningTransfersDigits(
+      b.opening_transfers > 0
+        ? String(Math.round(b.opening_transfers))
+        : '',
+    )
     setOpenSwipeId(null)
   }
 
@@ -402,9 +423,13 @@ export function BucketManagePanel({
       showAppToast('Pick a subcategory')
       return
     }
-    if (findActiveBucketForCategory(buckets, id)) {
-      showAppToast('This subcategory already has a sinking fund')
-      return
+    const activeForCat = findActiveBucketForCategory(buckets, id)
+    if (activeForCat) {
+      // Allow selecting the currently linked category for the active bucket.
+      if (activeForCat.id !== editingId) {
+        showAppToast('This subcategory already has a sinking fund')
+        return
+      }
     }
     setCategoryId(id)
     setCategoryOpen(false)
@@ -433,6 +458,9 @@ export function BucketManagePanel({
         category_id: categoryId,
         target_amount: target,
         opening_balance: openingDigits ? Number(openingDigits) : 0,
+        opening_transfers: openingTransfersDigits
+          ? Number(openingTransfersDigits)
+          : 0,
       })
       resetForm()
       setKindGroupsExpanded(true)
@@ -463,6 +491,21 @@ export function BucketManagePanel({
     }
     setSaving(true)
     try {
+      // When editing a linked leaf sinking fund, we can preserve the bucket id
+      // and only update its linked category + bank mirror (parent_id).
+      if (
+        current?.kind === 'sinking' &&
+        current.category_id &&
+        categoryId &&
+        categoryId !== current.category_id
+      ) {
+        if (editingHasChildren) {
+          showAppToast('Cannot relink a bucket group with children')
+          return
+        }
+        await relinkSinkingBucketToSubcategory(updatedId, categoryId)
+      }
+
       await updateBucket(updatedId, {
         ...(skipTarget || (editingHasChildren && current?.kind === 'sinking')
           ? editingHasChildren && current?.kind === 'sinking' && targetDigits
@@ -471,7 +514,16 @@ export function BucketManagePanel({
           : { target_amount: Number(targetDigits) }),
         ...(editingHasChildren
           ? {}
-          : { opening_balance: openingDigits ? Number(openingDigits) : 0 }),
+          : {
+              opening_balance: openingDigits ? Number(openingDigits) : 0,
+              ...(current?.kind === 'sinking'
+                ? {
+                    opening_transfers: openingTransfersDigits
+                      ? Number(openingTransfersDigits)
+                      : 0,
+                  }
+                : {}),
+            }),
       })
       resetForm()
       setKindGroupsExpanded(true)
@@ -617,6 +669,13 @@ export function BucketManagePanel({
                             toggleParentExpanded(node.bucket.id)
                           }
                           onEdit={openEditForm}
+                          disableEdit={
+                            node.bucket.kind === 'sinking' &&
+                            node.bucket.category_id != null
+                              ? categoriesById.get(node.bucket.category_id)
+                                  ?.parent_id == null
+                              : false
+                          }
                           onDelete={(b) => {
                             setOpenSwipeId(b.id)
                             setDeleteTarget(b)
@@ -645,6 +704,7 @@ export function BucketManagePanel({
                             toggleParentExpanded(node.bucket.id)
                           }
                           onEdit={openEditForm}
+                          disableEdit={false}
                           onDelete={(b) => {
                             setOpenSwipeId(b.id)
                             setDeleteTarget(b)
@@ -695,28 +755,76 @@ export function BucketManagePanel({
                 )}
               </div>
             ) : isCategoryLinkedSinking ? (
-              <div className="rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700">
-                <span className="text-neutral-800 dark:text-neutral-100">
-                  {editingBucket?.icon} {editingBucket?.name}
-                </span>
-                {linkedCategory?.parent_id ? (
-                  <p className="mt-0.5 text-[11px] text-neutral-400">
-                    Subcategory
-                    {categoriesById.get(linkedCategory.parent_id)
-                      ? ` · ${categoriesById.get(linkedCategory.parent_id)?.name}`
-                      : ''}
-                  </p>
-                ) : (
-                  <p className="mt-0.5 text-[11px] text-neutral-400">
-                    Bank mirror (parent category)
-                  </p>
-                )}
-                {selectedBudgetGroup ? (
-                  <span className="mt-1 inline-block">
-                    <BudgetGroupBadge group={selectedBudgetGroup} />
+              canEditLinkedSubcategory ? (
+                <div className="space-y-2 rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700">
+                  <CategoryPicker
+                    tree={availableExpenseTree}
+                    selectedId={categoryId}
+                    byId={categoriesById}
+                    open={categoryOpen}
+                    onOpenChange={setCategoryOpen}
+                    onSelect={handleCategorySelect}
+                    transactionType="expense"
+                    onCategoriesChanged={() => void reloadCategories()}
+                    showBudgetGroup
+                  />
+
+                  {selectedBudgetGroup ? (
+                    <p className="text-[11px] text-neutral-400">
+                      Needs or Wants comes from the subcategory (
+                      {selectedBudgetGroup === 'wants' ? 'Wants' : 'Needs'}
+                      ).
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-neutral-400">
+                      Pick a subcategory. Parent category becomes the bank
+                      mirror automatically.
+                    </p>
+                  )}
+
+                  {selectedCategory?.parent_id ? (
+                    <p className="text-[11px] text-neutral-400">
+                      Subcategory
+                      {categoriesById.get(selectedCategory.parent_id)
+                        ? ` · ${categoriesById.get(selectedCategory.parent_id)?.name}`
+                        : ''}
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-neutral-400">
+                      Bank mirror (parent category)
+                    </p>
+                  )}
+
+                  {selectedBudgetGroup ? (
+                    <span className="inline-block">
+                      <BudgetGroupBadge group={selectedBudgetGroup} />
+                    </span>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700">
+                  <span className="text-neutral-800 dark:text-neutral-100">
+                    {editingBucket?.icon} {editingBucket?.name}
                   </span>
-                ) : null}
-              </div>
+                  {linkedCategory?.parent_id ? (
+                    <p className="mt-0.5 text-[11px] text-neutral-400">
+                      Subcategory
+                      {categoriesById.get(linkedCategory.parent_id)
+                        ? ` · ${categoriesById.get(linkedCategory.parent_id)?.name}`
+                        : ''}
+                    </p>
+                  ) : (
+                    <p className="mt-0.5 text-[11px] text-neutral-400">
+                      Bank mirror (parent category)
+                    </p>
+                  )}
+                  {selectedBudgetGroup ? (
+                    <span className="mt-1 inline-block">
+                      <BudgetGroupBadge group={selectedBudgetGroup} />
+                    </span>
+                  ) : null}
+                </div>
+              )
             ) : null}
 
             {isEditingEmergency ? (
@@ -764,26 +872,58 @@ export function BucketManagePanel({
             ) : null}
 
             {!editingHasChildren ? (
-              <label className="block">
-                <span className="mb-1 block text-xs text-neutral-500">
-                  Opening balance (optional)
-                </span>
-                <input
-                  ref={openingRef}
-                  type="text"
-                  inputMode="numeric"
-                  enterKeyHint="done"
-                  placeholder="0"
-                  value={
-                    openingDigits ? formatNumber(Number(openingDigits)) : ''
-                  }
-                  onChange={(e) =>
-                    setOpeningDigits(e.target.value.replace(/\D/g, ''))
-                  }
-                  onKeyDown={handleOpeningKeyDown}
-                  className="w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
-                />
-              </label>
+              <div className="space-y-2">
+                <label className="block">
+                  <span className="mb-1 block text-xs text-neutral-500">
+                    Opening balance (optional)
+                  </span>
+                  <input
+                    ref={openingRef}
+                    type="text"
+                    inputMode="numeric"
+                    enterKeyHint="next"
+                    placeholder="0"
+                    value={
+                      openingDigits ? formatNumber(Number(openingDigits)) : ''
+                    }
+                    onChange={(e) =>
+                      setOpeningDigits(e.target.value.replace(/\D/g, ''))
+                    }
+                    onKeyDown={handleOpeningKeyDown}
+                    className="w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
+                  />
+                </label>
+
+                {!editingId || editingBucket?.kind === 'sinking' ? (
+                  <label className="block">
+                    <span className="mb-1 block text-xs text-neutral-500">
+                      Opening transfers (optional)
+                    </span>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      enterKeyHint="done"
+                      placeholder="0"
+                      value={
+                        openingTransfersDigits
+                          ? formatNumber(Number(openingTransfersDigits))
+                          : ''
+                      }
+                      onChange={(e) =>
+                        setOpeningTransfersDigits(
+                          e.target.value.replace(/\D/g, ''),
+                        )
+                      }
+                      onKeyDown={handleOpeningKeyDown}
+                      className="w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
+                    />
+                    <span className="mt-1 block text-[11px] text-neutral-400">
+                      Used for pacing when you enter balances mid-plan.
+                    </span>
+                  </label>
+                ) : null}
+
+              </div>
             ) : (
               <p className="text-[11px] text-neutral-400">
                 Opening balance lives on children. Parent balance is the sum
@@ -857,6 +997,7 @@ function BucketTreeRows({
   onToggleExpand,
   onEdit,
   onDelete,
+  disableEdit = false,
 }: {
   node: BucketTreeNode
   openSwipeId: string | null
@@ -868,6 +1009,8 @@ function BucketTreeRows({
   onToggleExpand: () => void
   onEdit: (b: BucketWithBalance) => void
   onDelete: (b: BucketWithBalance) => void
+  /** Disable tap-to-edit for parent/bank-mirror buckets. */
+  disableEdit?: boolean
 }) {
   const hasChildren = node.children.length > 0
   return (
@@ -884,7 +1027,7 @@ function BucketTreeRows({
         expandable={hasChildren}
         expanded={expanded}
         onToggleExpand={hasChildren ? onToggleExpand : undefined}
-        onEdit={onEdit}
+        onEdit={disableEdit ? undefined : onEdit}
         onDelete={onDelete}
       />
       {hasChildren && expanded
@@ -935,7 +1078,7 @@ function BucketListRow({
   expandable?: boolean
   expanded?: boolean
   onToggleExpand?: () => void
-  onEdit: (b: BucketWithBalance) => void
+  onEdit?: (b: BucketWithBalance) => void
   onDelete: (b: BucketWithBalance) => void
 }) {
   const isHighlighted = highlightId === bucket.id
@@ -957,6 +1100,19 @@ function BucketListRow({
   )
 
   if (!bucket.is_system) {
+    if (!onEdit) {
+      return (
+        <div
+          key={bucket.id}
+          ref={isHighlighted ? highlightRef : undefined}
+          className={`flex w-full cursor-default items-start gap-3 rounded-xl px-3 py-2.5 text-left shadow-sm ${
+            isHighlighted ? 'tx-row-highlight' : surfaceClassName
+          }`}
+        >
+          {row}
+        </div>
+      )
+    }
     return (
       <SwipeDeleteRow
         key={bucket.id}
@@ -966,7 +1122,7 @@ function BucketListRow({
         contentRef={isHighlighted ? highlightRef : undefined}
         highlighted={isHighlighted}
         surfaceClassName={surfaceClassName}
-        onContentClick={() => onEdit(bucket)}
+        onContentClick={() => onEdit?.(bucket)}
       >
         {row}
       </SwipeDeleteRow>
@@ -979,11 +1135,11 @@ function BucketListRow({
       role="button"
       tabIndex={0}
       ref={isHighlighted ? highlightRef : undefined}
-      onClick={() => onEdit(bucket)}
+      onClick={() => onEdit?.(bucket)}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault()
-          onEdit(bucket)
+          onEdit?.(bucket)
         }
       }}
       className={`flex w-full cursor-pointer items-start gap-3 rounded-xl px-3 py-2.5 text-left shadow-sm ${

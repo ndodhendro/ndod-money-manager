@@ -14,6 +14,7 @@ import { MonthPager } from '../components/MonthPager'
 import { OwnerBadge } from '../components/OwnerBadge'
 import { PageTitle } from '../components/PageTitle'
 import { SearchField } from '../components/SearchField'
+import { SinkingFundLabel } from '../components/SinkingFundLabel'
 import { NavIcon } from '../lib/navTabs'
 import { isBlankSearch, matchesTransactionSearch } from '../lib/listSearch'
 import { useCategories } from '../hooks/useCategories'
@@ -37,17 +38,17 @@ import { requestAmountFocus } from '../lib/keyboardFocus'
 import { monthCursorKey } from '../lib/monthCursor'
 import { budgetGroupOfTx } from '../lib/moneyPlan'
 import {
-  overspendTransactionIds,
+  monthBudgetOverspendTransactionIds,
   compareHistoryDayDisplay,
 } from '../lib/estimateProgress'
 import {
   checkingBucketIdSet,
   estimateExpenseCoverageKeys,
   unplannedNeedsTransactionIds,
+  unplannedWantsTransactionIds,
 } from '../lib/freeGuiltyProgress'
 import {
   budgetGroupOfEstimate,
-  budgetGroupOfTransferTo,
   isPlannedNeedsSchedule,
 } from '../lib/freeWants'
 import {
@@ -57,6 +58,7 @@ import {
   occurrencesInMonth,
 } from '../lib/recurringBillsApi'
 import { deleteTransaction, reorderTransactions } from '../lib/transactionsApi'
+import { sinkingLinkedCategoryIds } from '../lib/bucketsApi'
 import {
   CIRCLE_LABELS,
   CIRCLES,
@@ -152,6 +154,10 @@ export function History() {
     includeInactive: true,
   })
   const { buckets, byId: bucketsById } = useBuckets()
+  const sinkingCategoryIds = useMemo(
+    () => sinkingLinkedCategoryIds(buckets),
+    [buckets],
+  )
 
   // Hanya di device ini, via location state — tidak disimpan ke DB.
   const navHighlightId =
@@ -263,7 +269,9 @@ export function History() {
           seen.add(key)
           options.push({
             id: child.id,
-            label: `${child.icon} ${child.name}`,
+            label: `${child.icon} ${child.name}${
+              sinkingCategoryIds.has(child.id) ? ' SF' : ''
+            }`,
           })
         }
       }
@@ -283,7 +291,9 @@ export function History() {
           seen.add(key)
           options.push({
             id: child.id,
-            label: `${child.icon} ${parentRow.name} / ${child.name}`,
+            label: `${child.icon} ${parentRow.name} / ${child.name}${
+              sinkingCategoryIds.has(child.id) ? ' SF' : ''
+            }`,
           })
         }
       }
@@ -296,6 +306,7 @@ export function History() {
     categoryOptions,
     parents,
     byId,
+    sinkingCategoryIds,
   ])
 
   const canGoNext = !isCurrentMonth(cursor) && !isAfterCurrentMonth(cursor)
@@ -435,7 +446,19 @@ export function History() {
     subcategoryFilter === 'all'
 
   const overspendTxIds = useMemo(() => {
-    const fromEstimates = overspendTransactionIds({
+    const checkingIds = checkingBucketIdSet(buckets)
+    const isExpenseNeedsOrWantsEstimate = (bill: (typeof bills)[number]) => {
+      if (!isPlannedNeedsSchedule(bill)) return false
+      if (bill.type !== 'expense') return false
+      const g = budgetGroupOfEstimate(bill, categoriesById)
+      return g === 'needs' || g === 'wants'
+    }
+    const coverageKeys = estimateExpenseCoverageKeys(
+      bills,
+      categoriesById,
+      isExpenseNeedsOrWantsEstimate,
+    )
+    const fromEstimates = monthBudgetOverspendTransactionIds({
       bills,
       overridesByBillId: overrideByBillId,
       skippedOccurrenceKeys,
@@ -443,29 +466,20 @@ export function History() {
       bucketsById,
       yearMonth,
       transactions,
+      checkingBucketIds: checkingIds,
     })
-    const coverageKeys = estimateExpenseCoverageKeys(
-      bills,
-      categoriesById,
-      (bill) => {
-        if (!isPlannedNeedsSchedule(bill)) return false
-        if (bill.type === 'expense') {
-          const g = budgetGroupOfEstimate(bill, categoriesById)
-          return g === 'needs' || g === 'wants'
-        }
-        if (bill.type === 'transfer') {
-          const g = budgetGroupOfTransferTo(bill.to_bucket_id, bucketsById)
-          return g === 'needs' || g === 'wants'
-        }
-        return false
-      },
-    )
     const fromUnplannedNeeds = unplannedNeedsTransactionIds({
       transactions,
       estimateCoverageKeys: coverageKeys,
-      checkingBucketIds: checkingBucketIdSet(buckets),
+      checkingBucketIds: checkingIds,
+    })
+    const fromUnplannedWants = unplannedWantsTransactionIds({
+      transactions,
+      estimateCoverageKeys: coverageKeys,
+      checkingBucketIds: checkingIds,
     })
     for (const id of fromUnplannedNeeds) fromEstimates.add(id)
+    for (const id of fromUnplannedWants) fromEstimates.add(id)
     return fromEstimates
   }, [
     bills,
@@ -694,9 +708,15 @@ export function History() {
 
                     <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
                       {childName ? (
-                        <p className="flex min-w-0 items-center gap-1 truncate text-xs leading-none text-neutral-400">
-                          <span aria-hidden>{childIcon}</span>
+                        <p className="flex min-w-0 items-center gap-1 text-xs leading-none text-neutral-400">
+                          <span className="shrink-0" aria-hidden>
+                            {childIcon}
+                          </span>
                           <span className="truncate">{childName}</span>
+                          {tx.category_id &&
+                          sinkingCategoryIds.has(tx.category_id) ? (
+                            <SinkingFundLabel />
+                          ) : null}
                         </p>
                       ) : isTransfer ? (
                         <p className="truncate text-xs leading-none text-neutral-400">
@@ -966,7 +986,6 @@ export function History() {
                 currentMonthDoneByBillId={currentMonthDoneByBillId}
                 loading={billsLoading}
                 available={billsAvailable}
-                embedded
                 variant="dueInbox"
                 searchQuery={searchQuery}
                 emptySearchMessage={

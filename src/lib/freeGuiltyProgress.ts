@@ -1,11 +1,16 @@
+import {
+  sumCappedEstimateActual,
+  sumEstimateOverspend,
+  type EstimateProgressRow,
+} from './estimateProgress'
+import type { RecurringBill } from './recurringBillsApi'
+import { budgetGroupOfEstimate } from './freeWants'
+import { budgetGroupOfTx } from './moneyPlan'
 import type {
   Bucket,
   Category,
   TransactionWithCategory,
 } from './types'
-import type { RecurringBill } from './recurringBillsApi'
-import { budgetGroupOfEstimate } from './freeWants'
-import { budgetGroupOfTx } from './moneyPlan'
 
 export type CheckingBucketRef = Pick<Bucket, 'id' | 'name' | 'kind'>
 
@@ -63,13 +68,28 @@ export function unplannedNeedsTransactionIds(input: {
   return ids
 }
 
+/** Transaction ids for Wants outside estimates (full amount uses Guilt-Free). */
+export function unplannedWantsTransactionIds(input: {
+  transactions: TransactionWithCategory[]
+  estimateCoverageKeys: Set<string>
+  checkingBucketIds: Set<string>
+}): Set<string> {
+  const ids = new Set<string>()
+  for (const tx of input.transactions) {
+    if (!isMainOrCheckingExpense(tx, input.checkingBucketIds)) continue
+    const group = budgetGroupOfTx(tx)
+    if (group !== 'wants' || !tx.category_id) continue
+    if (input.estimateCoverageKeys.has(`${tx.category_id}:wants`)) continue
+    ids.add(tx.id)
+  }
+  return ids
+}
+
 /**
- * Guilt-Free Fund spent this month: completed expenses from Main Account
- * (from_bucket null) or a checking bucket, excluding:
- * - Needs/Wants categories on estimate lines (Planned / Buffer via overspend)
- * - Needs outside estimates (those use Buffer via sumUnplannedNeedsSpent)
+ * Wants expenses outside Monthly Estimate coverage (Main/checking).
+ * Full amount uses Guilt-Free Fund (not Planned Wants).
  */
-export function sumGuiltFreeSpent(input: {
+export function sumUnplannedWantsSpent(input: {
   transactions: TransactionWithCategory[]
   estimateCoverageKeys: Set<string>
   checkingBucketIds: Set<string>
@@ -78,18 +98,23 @@ export function sumGuiltFreeSpent(input: {
   for (const tx of input.transactions) {
     if (!isMainOrCheckingExpense(tx, input.checkingBucketIds)) continue
     const group = budgetGroupOfTx(tx)
-    // All Needs go to Planned (if covered) or Buffer (if unplanned) — never GF.
-    if (group === 'needs') continue
-    if (
-      tx.category_id &&
-      group &&
-      input.estimateCoverageKeys.has(`${tx.category_id}:${group}`)
-    ) {
-      continue
-    }
+    if (group !== 'wants' || !tx.category_id) continue
+    if (input.estimateCoverageKeys.has(`${tx.category_id}:wants`)) continue
     sum += tx.amount
   }
   return sum
+}
+
+/**
+ * Guilt-Free Fund: Wants outside estimates only.
+ * Estimate-line Wants overspend is added separately in computeMonthBudgetSpend.
+ */
+export function sumGuiltFreeSpent(input: {
+  transactions: TransactionWithCategory[]
+  estimateCoverageKeys: Set<string>
+  checkingBucketIds: Set<string>
+}): number {
+  return sumUnplannedWantsSpent(input)
 }
 
 /** @deprecated Use sumGuiltFreeSpent. */
@@ -144,91 +169,132 @@ export interface MonthBudgetProgress {
   buffer: BudgetTrackProgress
   plannedWants: BudgetTrackProgress
   guiltFree: BudgetTrackProgress
-  /** Total estimate overspend this month. */
+  /** Total Needs + Wants per-line estimate overspend. */
   overspendTotal: number
-  /** Estimate overspend absorbed by Buffer. */
+  /** Needs overspend + unplanned Needs (may exceed Buffer plafond). */
   bufferUsed: number
   /**
-   * Estimate overspend beyond Buffer (needs EF loan — no longer borrows
-   * Guilt-Free Fund).
+   * Buffer used beyond allowance (needs EF loan).
    */
   bufferOverEfLoan: number
-  /** Guilt-Free spend beyond allowance (needs EF loan). */
+  /** Guilt-Free used beyond allowance (needs EF loan). */
   guiltFreeOverEfLoan: number
   /** @deprecated Prefer bufferOverEfLoan — no longer borrows Guilt-Free. */
   guiltFreeBorrowed: number
+}
+
+export type MonthBudgetSpend = {
+  /** Per-line min(actual, planned) for Needs estimates. */
+  needsUsed: number
+  /** Per-line min(actual, planned) for Wants estimates. */
+  wantsUsed: number
+  needsOverspend: number
+  wantsOverspend: number
+  unplannedNeeds: number
+  unplannedWants: number
+  /** Needs overspend + unplanned Needs (may exceed Buffer plafond). */
+  bufferSpent: number
+  /** Wants overspend + unplanned Wants (may exceed Guilt-Free plafond). */
+  guiltFreeSpent: number
+}
+
+/**
+ * Split History spend across the four Month Budget tracks.
+ * Planned used is capped per estimate line; leftover Needs → Buffer,
+ * leftover Wants → Guilt-Free.
+ */
+export function computeMonthBudgetSpend(input: {
+  estimateRows: EstimateProgressRow[]
+  transactions: TransactionWithCategory[]
+  estimateCoverageKeys: Set<string>
+  checkingBucketIds: Set<string>
+}): MonthBudgetSpend {
+  const needsUsed = sumCappedEstimateActual(input.estimateRows, 'needs')
+  const wantsUsed = sumCappedEstimateActual(input.estimateRows, 'wants')
+  const needsOverspend = sumEstimateOverspend(input.estimateRows, 'needs')
+  const wantsOverspend = sumEstimateOverspend(input.estimateRows, 'wants')
+  const unplannedNeeds = sumUnplannedNeedsSpent(input)
+  const unplannedWants = sumUnplannedWantsSpent(input)
+  return {
+    needsUsed,
+    wantsUsed,
+    needsOverspend,
+    wantsOverspend,
+    unplannedNeeds,
+    unplannedWants,
+    bufferSpent: needsOverspend + unplannedNeeds,
+    guiltFreeSpent: wantsOverspend + unplannedWants,
+  }
 }
 
 /**
  * Four payday tracks in display order:
  * Planned Needs → Buffer → Planned Wants → Guilt-Free Fund.
  *
- * Buffer demand = per-line estimate overspend + Needs outside estimates.
- * Beyond Buffer → EF loan need. Guilt-Free excludes all Needs.
+ * Planned used = per-line min(actual, planned).
+ * Buffer used = Needs overspend + Needs outside estimates (not capped).
+ * Guilt-Free used = Wants overspend + Wants outside estimates (not capped).
+ * Used beyond plafond → EF loan need; bar fill stays at 100%.
  */
 export function buildMonthBudgetProgress(input: {
   plannedNeeds: number
-  needsActual: number
+  needsUsed: number
   plannedWants: number
-  wantsActual: number
+  wantsUsed: number
   buffer: number
   guiltFree: number
+  bufferSpent: number
   guiltFreeSpent: number
-  estimateOverspend: number
-  /** Needs expenses not covered by Monthly Estimates (full amount → Buffer). */
-  unplannedNeedsSpent?: number
+  /** Needs + Wants per-line estimate overspend (excludes unplanned). */
+  overspendTotal?: number
 }): MonthBudgetProgress {
   const plannedNeeds = Math.max(0, Math.round(input.plannedNeeds))
-  const needsActual = Math.max(0, Math.round(input.needsActual))
+  const needsUsed = Math.max(0, Math.round(input.needsUsed))
   const plannedWants = Math.max(0, Math.round(input.plannedWants))
-  const wantsActual = Math.max(0, Math.round(input.wantsActual))
+  const wantsUsed = Math.max(0, Math.round(input.wantsUsed))
   const buffer = Math.max(0, Math.round(input.buffer))
   const guiltFree = Math.max(0, Math.round(input.guiltFree))
-  const spent = Math.max(0, Math.round(input.guiltFreeSpent))
-  const overspend = Math.max(0, Math.round(input.estimateOverspend))
-  const unplannedNeeds = Math.max(0, Math.round(input.unplannedNeedsSpent ?? 0))
-  const bufferDemand = overspend + unplannedNeeds
+  const bufferSpent = Math.max(0, Math.round(input.bufferSpent))
+  const gfSpent = Math.max(0, Math.round(input.guiltFreeSpent))
 
-  const bufferUsed = Math.min(buffer, bufferDemand)
-  const bufferOverEfLoan = Math.max(0, bufferDemand - buffer)
-  const guiltFreeUsed = spent
-  const guiltFreeOverEfLoan = Math.max(0, spent - guiltFree)
+  const bufferOverEfLoan = Math.max(0, bufferSpent - buffer)
+  const guiltFreeOverEfLoan = Math.max(0, gfSpent - guiltFree)
 
   return {
-    overspendTotal: overspend,
-    bufferUsed,
+    overspendTotal: Math.max(0, Math.round(input.overspendTotal ?? 0)),
+    bufferUsed: bufferSpent,
     bufferOverEfLoan,
     guiltFreeOverEfLoan,
     guiltFreeBorrowed: bufferOverEfLoan,
     plannedNeeds: {
       label: BUDGET_TRACK_LABELS.plannedNeeds,
       allowance: plannedNeeds,
-      used: needsActual,
-      remaining: Math.max(0, plannedNeeds - needsActual),
+      used: needsUsed,
+      remaining: Math.max(0, plannedNeeds - needsUsed),
       emphasize: false,
       barClass: 'bg-rose-500',
     },
     buffer: {
       label: BUDGET_TRACK_LABELS.buffer,
       allowance: buffer,
-      used: bufferUsed,
-      remaining: Math.max(0, buffer - bufferUsed),
+      used: bufferSpent,
+      remaining: Math.max(0, buffer - bufferSpent),
       emphasize: true,
       barClass: 'bg-amber-500',
     },
     plannedWants: {
       label: BUDGET_TRACK_LABELS.plannedWants,
       allowance: plannedWants,
-      used: wantsActual,
-      remaining: Math.max(0, plannedWants - wantsActual),
+      used: wantsUsed,
+      remaining: Math.max(0, plannedWants - wantsUsed),
       emphasize: false,
       barClass: 'bg-sky-500',
     },
     guiltFree: {
       label: BUDGET_TRACK_LABELS.guiltFree,
       allowance: guiltFree,
-      used: guiltFreeUsed,
-      remaining: Math.max(0, guiltFree - guiltFreeUsed),
+      used: gfSpent,
+      remaining: Math.max(0, guiltFree - gfSpent),
       emphasize: true,
       barClass: 'bg-emerald-500',
     },

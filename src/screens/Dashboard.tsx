@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { CircleFilterChips } from '../components/CircleFilterChips'
-import { ConfirmDialog } from '../components/ConfirmDialog'
 import { MonthPager } from '../components/MonthPager'
 import { PageTitle } from '../components/PageTitle'
 import { NavIcon } from '../lib/navTabs'
@@ -10,12 +9,9 @@ import {
   HorizontalBars,
   type ChartSlice,
 } from '../components/SimpleCharts'
-import { useBuckets } from '../hooks/useBuckets'
 import { useMonthCursor } from '../hooks/useMonthCursor'
 import { useTransactions } from '../hooks/useTransactions'
-import { showAppToast } from '../lib/appToast'
 import {
-  applyEfLoanRepayment,
   fetchOpenEfLoans,
   sumEfLoansBySource,
 } from '../lib/efLoansApi'
@@ -26,8 +22,6 @@ import {
   formatRupiah,
 } from '../lib/format'
 import { budgetGroupOfTx } from '../lib/moneyPlan'
-import { getStoredProfile } from '../lib/profile'
-import { createTransaction } from '../lib/transactionsApi'
 import {
   BUDGET_GROUP_COLOR,
   categoryIcon,
@@ -46,18 +40,20 @@ export function Dashboard() {
     handleTouchEnd,
   } = useMonthCursor()
   const { transactions, loading, error } = useTransactions(range)
-  const { emergency, reload: reloadBuckets } = useBuckets()
   const [circleFilter, setCircleFilter] = useState<Circle | 'semua'>('semua')
-  const [efOwed, setEfOwed] = useState({ buffer: 0, guiltFree: 0, total: 0 })
-  const [repayOpen, setRepayOpen] = useState(false)
-  const [repaying, setRepaying] = useState(false)
+  const [efOwed, setEfOwed] = useState({
+    buffer: 0,
+    guiltFree: 0,
+    sinkingFund: 0,
+    total: 0,
+  })
 
   const reloadEfOwed = useCallback(async () => {
     try {
       const loans = await fetchOpenEfLoans()
       setEfOwed(sumEfLoansBySource(loans))
     } catch {
-      setEfOwed({ buffer: 0, guiltFree: 0, total: 0 })
+      setEfOwed({ buffer: 0, guiltFree: 0, sinkingFund: 0, total: 0 })
     }
   }, [])
 
@@ -155,36 +151,6 @@ export function Dashboard() {
 
   const topBars = categorySlices.slice(0, 5)
 
-  async function confirmRepayAll() {
-    if (efOwed.total <= 0 || !emergency) return
-    setRepaying(true)
-    try {
-      const owner = getStoredProfile() ?? 'suami'
-      await createTransaction({
-        type: 'transfer',
-        category_id: null,
-        from_bucket_id: null,
-        to_bucket_id: emergency.id,
-        amount: efOwed.total,
-        description: 'Repay Emergency Fund loan',
-        owner,
-        circle: 'hd_family',
-        occurred_on: new Date().toISOString().slice(0, 10),
-        is_recurring: false,
-        complete_later: false,
-      })
-      await applyEfLoanRepayment(efOwed.total)
-      setRepayOpen(false)
-      await reloadEfOwed()
-      void reloadBuckets()
-      showAppToast('Emergency Fund repaid')
-    } catch (err) {
-      showAppToast(err instanceof Error ? err.message : 'Failed to repay')
-    } finally {
-      setRepaying(false)
-    }
-  }
-
   return (
     <div
       className="mx-auto max-w-md px-4 pt-5 pb-24"
@@ -226,14 +192,10 @@ export function Dashboard() {
               <p className="mt-1 text-xs text-amber-800 dark:text-amber-200">
                 Buffer {formatRupiah(efOwed.buffer)} · Guilt-Free{' '}
                 {formatRupiah(efOwed.guiltFree)}
+                {efOwed.sinkingFund > 0
+                  ? ` · Sinking ${formatRupiah(efOwed.sinkingFund)}`
+                  : ''}
               </p>
-              <button
-                type="button"
-                onClick={() => setRepayOpen(true)}
-                className="mt-3 w-full rounded-xl bg-amber-600 py-2.5 text-sm font-semibold text-white active:bg-amber-700"
-              >
-                Repay All
-              </button>
             </section>
           )}
 
@@ -290,22 +252,6 @@ export function Dashboard() {
           </section>
         </>
       )}
-
-      <ConfirmDialog
-        open={repayOpen}
-        title="Repay Emergency Fund?"
-        message={`Transfer ${formatRupiah(efOwed.total)} from Main Account back to Emergency Fund and clear the debt.`}
-        confirmLabel="Repay All"
-        cancelLabel="Cancel"
-        busyLabel="Repaying…"
-        danger={false}
-        busy={repaying}
-        onCancel={() => {
-          if (repaying) return
-          setRepayOpen(false)
-        }}
-        onConfirm={() => void confirmRepayAll()}
-      />
     </div>
   )
 }

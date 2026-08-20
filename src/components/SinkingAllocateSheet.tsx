@@ -4,7 +4,8 @@ import { ActionEmoji } from '../lib/actionEmoji'
 import { showAppToast } from '../lib/appToast'
 import { allocationSum } from '../lib/closeMonthDefaults'
 import { applyEfLoanRepayment } from '../lib/efLoansApi'
-import { formatNumber, formatRupiah, todayIso } from '../lib/format'
+import { FormattedAmountInput } from './FormattedAmountInput'
+import { formatRupiah, todayIso } from '../lib/format'
 import { getStoredProfile } from '../lib/profile'
 import {
   defaultSinkingAllocation,
@@ -69,8 +70,7 @@ export function SinkingAllocateSheet({
   const amount = Math.max(0, Math.round(Number(amountDigits) || 0))
   const ok = amount > 0 && amount <= available && allocationSum(alloc) === amount
 
-  function handleAmountChange(raw: string) {
-    const digits = raw.replace(/\D/g, '').slice(0, 11)
+  function handleAmountDigitsChange(digits: string) {
     setAmountDigits(digits)
     const next = Math.max(0, Math.round(Number(digits) || 0))
     setAlloc(defaultSinkingAllocation(next, bucket?.budget_group))
@@ -149,14 +149,12 @@ export function SinkingAllocateSheet({
             </span>
             <div className="flex items-center gap-2 rounded-xl bg-neutral-50 px-4 py-3 dark:bg-neutral-900">
               <span className="text-sm font-medium text-neutral-400">Rp</span>
-              <input
-                type="text"
-                inputMode="numeric"
+              <FormattedAmountInput
                 pattern="[0-9]*"
                 autoComplete="off"
-                value={amountDigits ? formatNumber(Number(amountDigits)) : ''}
+                digits={amountDigits}
+                onDigitsChange={handleAmountDigitsChange}
                 disabled={busy}
-                onChange={(e) => handleAmountChange(e.target.value)}
                 placeholder="0"
                 className="w-full bg-transparent text-2xl font-semibold tabular-nums text-neutral-800 outline-none placeholder:text-neutral-400 disabled:opacity-60 dark:text-neutral-100 dark:placeholder:text-neutral-500"
               />

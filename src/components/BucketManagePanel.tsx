@@ -24,6 +24,7 @@ import {
   setCollapseOpen,
 } from '../lib/collapseState'
 import { sumPlannedNeeds } from '../lib/freeWants'
+import { FormattedAmountInput } from './FormattedAmountInput'
 import { formatNumber, formatRupiah } from '../lib/format'
 import { emergencyFundTarget } from '../lib/moneyPlan'
 import { currentMonthCursor, monthCursorKey } from '../lib/monthCursor'
@@ -853,18 +854,12 @@ export function BucketManagePanel({
                   Target amount
                   {editingHasChildren ? ' (optional group goal)' : ''}
                 </span>
-                <input
+                <FormattedAmountInput
                   ref={targetRef}
-                  type="text"
-                  inputMode="numeric"
                   enterKeyHint="next"
                   placeholder="0"
-                  value={
-                    targetDigits ? formatNumber(Number(targetDigits)) : ''
-                  }
-                  onChange={(e) =>
-                    setTargetDigits(e.target.value.replace(/\D/g, ''))
-                  }
+                  digits={targetDigits}
+                  onDigitsChange={setTargetDigits}
                   onKeyDown={handleTargetKeyDown}
                   className="w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
                 />
@@ -877,18 +872,12 @@ export function BucketManagePanel({
                   <span className="mb-1 block text-xs text-neutral-500">
                     Opening balance (optional)
                   </span>
-                  <input
+                  <FormattedAmountInput
                     ref={openingRef}
-                    type="text"
-                    inputMode="numeric"
                     enterKeyHint="next"
                     placeholder="0"
-                    value={
-                      openingDigits ? formatNumber(Number(openingDigits)) : ''
-                    }
-                    onChange={(e) =>
-                      setOpeningDigits(e.target.value.replace(/\D/g, ''))
-                    }
+                    digits={openingDigits}
+                    onDigitsChange={setOpeningDigits}
                     onKeyDown={handleOpeningKeyDown}
                     className="w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
                   />
@@ -899,21 +888,11 @@ export function BucketManagePanel({
                     <span className="mb-1 block text-xs text-neutral-500">
                       Opening transfers (optional)
                     </span>
-                    <input
-                      type="text"
-                      inputMode="numeric"
+                    <FormattedAmountInput
                       enterKeyHint="done"
                       placeholder="0"
-                      value={
-                        openingTransfersDigits
-                          ? formatNumber(Number(openingTransfersDigits))
-                          : ''
-                      }
-                      onChange={(e) =>
-                        setOpeningTransfersDigits(
-                          e.target.value.replace(/\D/g, ''),
-                        )
-                      }
+                      digits={openingTransfersDigits}
+                      onDigitsChange={setOpeningTransfersDigits}
                       onKeyDown={handleOpeningKeyDown}
                       className="w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
                     />

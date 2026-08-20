@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useOverlayBack } from '../hooks/useBackButton'
 import { ActionEmoji } from '../lib/actionEmoji'
-import { formatNumber } from '../lib/format'
+import { FormattedAmountInput } from './FormattedAmountInput'
 import { daysInMonth, type MonthCursor } from '../lib/monthCursor'
 import type { RecurringBill } from '../lib/recurringBillsApi'
 
@@ -62,7 +62,6 @@ export function RecurringMonthOverrideSheet({
 
   if (!open || !bill) return null
 
-  const displayAmount = amountDigits ? formatNumber(Number(amountDigits)) : ''
   const canSave =
     (amountLocked || Number(amountDigits) > 0) && !busy
 
@@ -122,20 +121,14 @@ export function RecurringMonthOverrideSheet({
               }`}
             >
               <span className="text-sm font-medium text-neutral-400">Rp</span>
-              <input
+              <FormattedAmountInput
                 ref={amountInputRef}
-                type="text"
-                inputMode="numeric"
                 pattern="[0-9]*"
                 autoComplete="off"
-                value={displayAmount}
+                digits={amountDigits}
+                onDigitsChange={setAmountDigits}
                 readOnly={amountLocked}
                 disabled={busy || amountLocked}
-                onChange={(e) => {
-                  if (amountLocked) return
-                  const digits = e.target.value.replace(/\D/g, '').slice(0, 11)
-                  setAmountDigits(digits)
-                }}
                 placeholder="0"
                 className="w-full bg-transparent text-2xl font-semibold tabular-nums text-neutral-900 outline-none placeholder:text-neutral-300 disabled:cursor-not-allowed disabled:opacity-60 dark:text-neutral-50"
               />

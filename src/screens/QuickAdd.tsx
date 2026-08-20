@@ -39,7 +39,8 @@ import {
   deleteEfLoanForTransaction,
   upsertEfLoanForTransaction,
 } from '../lib/efLoansApi'
-import { formatNumber, monthRange, todayIso } from '../lib/format'
+import { FormattedAmountInput } from '../components/FormattedAmountInput'
+import { monthRange, todayIso } from '../lib/format'
 import {
   bumpCategoryUsage,
   getStoredCircle,
@@ -845,7 +846,6 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     return <div className="p-6 text-center text-neutral-400">Loading…</div>
   }
 
-  const displayAmount = amountDigits ? formatNumber(Number(amountDigits)) : ''
   const isTransfer = type === 'transfer'
   const isIncome = type === 'income'
 
@@ -919,18 +919,13 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         </span>
         <div className="flex items-center gap-2 rounded-xl bg-white px-4 py-3 shadow-sm dark:bg-neutral-800">
           <span className="text-sm font-medium text-neutral-400">Rp</span>
-          <input
+          <FormattedAmountInput
             ref={amountCallbackRef}
-            type="text"
-            inputMode="numeric"
             pattern="[0-9]*"
             enterKeyHint="next"
             autoComplete="off"
-            value={displayAmount}
-            onChange={(e) => {
-              const digits = e.target.value.replace(/\D/g, '').slice(0, 11)
-              setAmountDigits(digits)
-            }}
+            digits={amountDigits}
+            onDigitsChange={setAmountDigits}
             onKeyDown={handleAmountKeyDown}
             placeholder="0"
             className="w-full bg-transparent text-2xl font-semibold tabular-nums text-neutral-900 outline-none placeholder:text-neutral-300 dark:text-neutral-50"

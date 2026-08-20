@@ -12,7 +12,8 @@ import {
   getCollapseOpen,
   setCollapseOpen,
 } from '../../lib/collapseState'
-import { formatNumber, formatRupiah } from '../../lib/format'
+import { FormattedAmountInput } from '../../components/FormattedAmountInput'
+import { formatRupiah } from '../../lib/format'
 import { sumPlannedNeeds } from '../../lib/freeWants'
 import {
   currentMonthCursor,
@@ -167,15 +168,10 @@ function MonthlyAllocationField({
           aria-label={label}
         />
       ) : (
-        <input
-          type="text"
-          inputMode="numeric"
+        <FormattedAmountInput
           placeholder="0"
-          value={amountDigits ? formatNumber(Number(amountDigits)) : ''}
-          onChange={(e) => {
-            const digits = e.target.value.replace(/\D/g, '').slice(0, 11)
-            onAmountDigitsChange(digits)
-          }}
+          digits={amountDigits}
+          onDigitsChange={onAmountDigitsChange}
           className={INPUT_CLASS}
           aria-label={label}
         />

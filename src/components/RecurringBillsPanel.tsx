@@ -14,7 +14,8 @@ import { isExpenseOtherCategory } from '../lib/categoriesApi'
 import { ActionEmoji } from '../lib/actionEmoji'
 import { showAppToast } from '../lib/appToast'
 import { areAllCollapseOpen } from '../lib/collapseState'
-import { formatNumber, formatRupiah, todayIso } from '../lib/format'
+import { FormattedAmountInput } from './FormattedAmountInput'
+import { formatRupiah, todayIso } from '../lib/format'
 import { isBlankSearch, matchesRecurringBillSearch } from '../lib/listSearch'
 import {
   getRecurringBillDisplayParts,
@@ -1025,15 +1026,6 @@ export function RecurringBillsPanel({
     )
   }
 
-  const displayAmount = isFormAutoAmount
-    ? !amountDepsReady
-      ? ''
-      : formAutoAmount > 0
-        ? formatNumber(formAutoAmount)
-        : '0'
-    : amountDigits
-      ? formatNumber(Number(amountDigits))
-      : ''
   const settingsDescriptionBase = isRecurring
     ? formatRecurringSettingsDescription({
         intervalUnit,
@@ -1263,21 +1255,23 @@ export function RecurringBillsPanel({
             }`}
           >
             <span className="text-sm font-medium text-neutral-400">Rp</span>
-            <input
+            <FormattedAmountInput
               ref={amountRef}
-              type="text"
-              inputMode="numeric"
               pattern="[0-9]*"
               enterKeyHint="next"
               autoComplete="off"
-              value={displayAmount}
+              digits={
+                isFormAutoAmount
+                  ? !amountDepsReady
+                    ? ''
+                    : formAutoAmount > 0
+                      ? String(Math.round(formAutoAmount))
+                      : '0'
+                  : amountDigits
+              }
+              onDigitsChange={setAmountDigits}
               readOnly={isFormAutoAmount}
               disabled={isFormAutoAmount}
-              onChange={(e) => {
-                if (isFormAutoAmount) return
-                const digits = e.target.value.replace(/\D/g, '').slice(0, 11)
-                setAmountDigits(digits)
-              }}
               onKeyDown={handleAmountKeyDown}
               placeholder="0"
               className="w-full bg-transparent text-2xl font-semibold tabular-nums text-neutral-900 outline-none placeholder:text-neutral-300 disabled:cursor-not-allowed dark:text-neutral-50"

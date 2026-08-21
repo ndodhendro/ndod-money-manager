@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { FreeGuiltyRemainingBlock } from '../../components/FreeGuiltyRemaining'
 import { GroupedListFrame } from '../../components/GroupedListFrame'
 import { MonthPager } from '../../components/MonthPager'
 import { PlanSubPage } from '../../components/PlanSubPage'
@@ -66,7 +65,6 @@ export function PlanPayday() {
   const { transactions, loading, error } = useTransactions(range)
   const {
     allocation,
-    progress: budgetProgress,
     loading: budgetLoading,
     error: budgetError,
     available: billsAvailable,
@@ -83,7 +81,7 @@ export function PlanPayday() {
       <PlanSubPage
         title={PlanTitle.payday}
         icon={PlanIcon.payday}
-        description="Month budget, sinking transfers, and bonus allocation."
+        description="Sinking transfers and bonus allocation."
       >
         <MonthPager
           monthLabel={monthLabel}
@@ -135,15 +133,6 @@ export function PlanPayday() {
                 />
               </div>
             </section>
-
-            {budgetProgress && (
-              <section className="space-y-2">
-                <p className="text-[11px] font-medium uppercase tracking-wide text-neutral-400">
-                  Month Budget
-                </p>
-                <FreeGuiltyRemainingBlock progress={budgetProgress} />
-              </section>
-            )}
 
             {allocation.bonusAllocation && (
               <GroupedListFrame

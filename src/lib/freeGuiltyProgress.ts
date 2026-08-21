@@ -2,12 +2,15 @@ import {
   idsExceedingTrackAllowance,
   monthBudgetFlexibleTrackDemandByTxId,
   sumCappedEstimateActual,
+  sumCappedUpcomingOnRows,
   sumEstimateOverspend,
+  upcomingExpenseAmountByBillId,
   type EstimateBucketRef,
   type EstimateProgressRow,
 } from './estimateProgress'
 import type {
   RecurringBill,
+  RecurringBillLog,
   RecurringBillMonthOverride,
 } from './recurringBillsApi'
 import { budgetGroupOfEstimate } from './freeWants'
@@ -37,18 +40,34 @@ function isMainOrCheckingExpense(
   return from == null || checkingBucketIds.has(from)
 }
 
+/** Due-item check (FK, checklist log, or legacy is_recurring). Not Quick Add. */
+function isDueItemTx(
+  tx: TransactionWithCategory,
+  dueBillIdByTxId?: Map<string, string>,
+): boolean {
+  return (
+    tx.recurring_bill_id != null ||
+    tx.is_recurring === true ||
+    (dueBillIdByTxId?.has(tx.id) ?? false)
+  )
+}
+
 /**
- * Needs expenses outside Monthly Estimate coverage (Main/checking).
+ * Needs expenses outside non-recurring Monthly Estimate coverage (Main/checking).
+ * Quick Add on a recurring-only estimate category is included (Buffer).
+ * Due-item checks are excluded — they fill Planned via the estimate line.
  * These consume Buffer directly (not Planned Needs, not Guilt-Free).
  */
 export function sumUnplannedNeedsSpent(input: {
   transactions: TransactionWithCategory[]
   estimateCoverageKeys: Set<string>
   checkingBucketIds: Set<string>
+  dueBillIdByTxId?: Map<string, string>
 }): number {
   let sum = 0
   for (const tx of input.transactions) {
     if (!isMainOrCheckingExpense(tx, input.checkingBucketIds)) continue
+    if (isDueItemTx(tx, input.dueBillIdByTxId)) continue
     const group = budgetGroupOfTx(tx)
     if (group !== 'needs' || !tx.category_id) continue
     if (input.estimateCoverageKeys.has(`${tx.category_id}:needs`)) continue
@@ -57,15 +76,17 @@ export function sumUnplannedNeedsSpent(input: {
   return sum
 }
 
-/** Transaction ids for Needs outside estimates (full amount uses Buffer). */
+/** Transaction ids for Needs outside non-recurring estimates (full amount uses Buffer). */
 export function unplannedNeedsTransactionIds(input: {
   transactions: TransactionWithCategory[]
   estimateCoverageKeys: Set<string>
   checkingBucketIds: Set<string>
+  dueBillIdByTxId?: Map<string, string>
 }): Set<string> {
   const ids = new Set<string>()
   for (const tx of input.transactions) {
     if (!isMainOrCheckingExpense(tx, input.checkingBucketIds)) continue
+    if (isDueItemTx(tx, input.dueBillIdByTxId)) continue
     const group = budgetGroupOfTx(tx)
     if (group !== 'needs' || !tx.category_id) continue
     if (input.estimateCoverageKeys.has(`${tx.category_id}:needs`)) continue
@@ -74,15 +95,17 @@ export function unplannedNeedsTransactionIds(input: {
   return ids
 }
 
-/** Transaction ids for Wants outside estimates (full amount uses Guilt-Free). */
+/** Transaction ids for Wants outside non-recurring estimates (full amount uses Guilt-Free). */
 export function unplannedWantsTransactionIds(input: {
   transactions: TransactionWithCategory[]
   estimateCoverageKeys: Set<string>
   checkingBucketIds: Set<string>
+  dueBillIdByTxId?: Map<string, string>
 }): Set<string> {
   const ids = new Set<string>()
   for (const tx of input.transactions) {
     if (!isMainOrCheckingExpense(tx, input.checkingBucketIds)) continue
+    if (isDueItemTx(tx, input.dueBillIdByTxId)) continue
     const group = budgetGroupOfTx(tx)
     if (group !== 'wants' || !tx.category_id) continue
     if (input.estimateCoverageKeys.has(`${tx.category_id}:wants`)) continue
@@ -92,17 +115,21 @@ export function unplannedWantsTransactionIds(input: {
 }
 
 /**
- * Wants expenses outside Monthly Estimate coverage (Main/checking).
+ * Wants expenses outside non-recurring Monthly Estimate coverage (Main/checking).
+ * Quick Add on a recurring-only estimate category is included (Guilt-Free).
+ * Due-item checks are excluded — they fill Planned via the estimate line.
  * Full amount uses Guilt-Free Fund (not Planned Wants).
  */
 export function sumUnplannedWantsSpent(input: {
   transactions: TransactionWithCategory[]
   estimateCoverageKeys: Set<string>
   checkingBucketIds: Set<string>
+  dueBillIdByTxId?: Map<string, string>
 }): number {
   let sum = 0
   for (const tx of input.transactions) {
     if (!isMainOrCheckingExpense(tx, input.checkingBucketIds)) continue
+    if (isDueItemTx(tx, input.dueBillIdByTxId)) continue
     const group = budgetGroupOfTx(tx)
     if (group !== 'wants' || !tx.category_id) continue
     if (input.estimateCoverageKeys.has(`${tx.category_id}:wants`)) continue
@@ -143,6 +170,7 @@ export function monthBudgetCeilingOverspendTransactionIds(input: {
   estimateCoverageKeys: Set<string>
   bufferAllowance: number
   guiltFreeAllowance: number
+  dueBillIdByTxId?: Map<string, string>
 }): Set<string> {
   const { bufferByTxId, guiltFreeByTxId } = monthBudgetFlexibleTrackDemandByTxId(
     {
@@ -154,6 +182,7 @@ export function monthBudgetCeilingOverspendTransactionIds(input: {
       yearMonth: input.yearMonth,
       transactions: input.transactions,
       checkingBucketIds: input.checkingBucketIds,
+      dueBillIdByTxId: input.dueBillIdByTxId,
     },
   )
 
@@ -165,6 +194,7 @@ export function monthBudgetCeilingOverspendTransactionIds(input: {
     transactions: input.transactions,
     estimateCoverageKeys: input.estimateCoverageKeys,
     checkingBucketIds: input.checkingBucketIds,
+    dueBillIdByTxId: input.dueBillIdByTxId,
   })) {
     const tx = txsById.get(id)
     if (!tx) continue
@@ -174,6 +204,7 @@ export function monthBudgetCeilingOverspendTransactionIds(input: {
     transactions: input.transactions,
     estimateCoverageKeys: input.estimateCoverageKeys,
     checkingBucketIds: input.checkingBucketIds,
+    dueBillIdByTxId: input.dueBillIdByTxId,
   })) {
     const tx = txsById.get(id)
     if (!tx) continue
@@ -198,7 +229,11 @@ export function monthBudgetCeilingOverspendTransactionIds(input: {
   return ids
 }
 
-/** Category+group keys covered by active Needs/Wants expense estimates (incl. children). */
+/**
+ * Category+group keys covered by active non-recurring Needs/Wants expense
+ * estimates (incl. children). Recurring estimate categories are omitted so
+ * Quick Add spend uses Buffer / Guilt-Free instead of Planned.
+ */
 export function estimateExpenseCoverageKeys(
   bills: RecurringBill[],
   categoriesById: Map<string, Category>,
@@ -209,6 +244,7 @@ export function estimateExpenseCoverageKeys(
     if (!bill.is_active || bill.type !== 'expense' || !bill.category_id) {
       continue
     }
+    if (bill.is_recurring) continue
     if (!isNeedsOrWantsEstimate(bill)) continue
     const group = budgetGroupOfEstimate(bill, categoriesById)
     if (group !== 'needs' && group !== 'wants') continue
@@ -237,6 +273,11 @@ export interface BudgetTrackProgress {
   allowance: number
   used: number
   remaining: number
+  /**
+   * Unchecked future estimate occurrences (Upcoming), capped to remaining
+   * room on each Planned line. 0 on Buffer / Guilt-Free.
+   */
+  upcoming: number
   /** Inset + lighter gray surface (Buffer, Guilt-Free Fund). */
   emphasize: boolean
   barClass: string
@@ -278,14 +319,16 @@ export type MonthBudgetSpend = {
 
 /**
  * Split History spend across the four Month Budget tracks.
- * Planned used is capped per estimate line; leftover Needs → Buffer,
- * leftover Wants → Guilt-Free.
+ * Planned used is capped per estimate line (due items + Quick Add on
+ * non-recurring estimates). Leftover Needs and Quick Add on recurring-only
+ * estimate categories → Buffer; leftover Wants / same for Wants → Guilt-Free.
  */
 export function computeMonthBudgetSpend(input: {
   estimateRows: EstimateProgressRow[]
   transactions: TransactionWithCategory[]
   estimateCoverageKeys: Set<string>
   checkingBucketIds: Set<string>
+  dueBillIdByTxId?: Map<string, string>
 }): MonthBudgetSpend {
   const needsUsed = sumCappedEstimateActual(input.estimateRows, 'needs')
   const wantsUsed = sumCappedEstimateActual(input.estimateRows, 'wants')
@@ -305,14 +348,54 @@ export function computeMonthBudgetSpend(input: {
   }
 }
 
+function emptyTrackUpcoming(): { needsUpcoming: number; wantsUpcoming: number } {
+  return { needsUpcoming: 0, wantsUpcoming: 0 }
+}
+
+/**
+ * Upcoming expense amounts that still fit on Planned Needs / Planned Wants
+ * lines. Due, skipped, and already-checked occurrences are excluded.
+ */
+export function computeMonthBudgetUpcoming(input: {
+  estimateRows: EstimateProgressRow[]
+  bills: RecurringBill[]
+  overridesByBillId: Map<string, RecurringBillMonthOverride>
+  skippedOccurrenceKeys?: Set<string>
+  logByOccurrenceKey: Map<string, RecurringBillLog>
+  categoriesById: Map<string, Category>
+  yearMonth: string
+  today: string
+}): { needsUpcoming: number; wantsUpcoming: number } {
+  if (input.estimateRows.length === 0) return emptyTrackUpcoming()
+  const upcomingByBillId = upcomingExpenseAmountByBillId(input)
+  if (upcomingByBillId.size === 0) return emptyTrackUpcoming()
+  return {
+    needsUpcoming: sumCappedUpcomingOnRows(
+      input.estimateRows,
+      upcomingByBillId,
+      'needs',
+    ),
+    wantsUpcoming: sumCappedUpcomingOnRows(
+      input.estimateRows,
+      upcomingByBillId,
+      'wants',
+    ),
+  }
+}
+
+function capUpcomingToRoom(upcoming: number, allowance: number, used: number): number {
+  return Math.min(Math.max(0, Math.round(upcoming)), Math.max(0, allowance - used))
+}
+
 /**
  * Four payday tracks in display order:
  * Planned Needs → Buffer → Planned Wants → Guilt-Free Fund.
  *
  * Planned used = per-line min(actual, planned).
- * Buffer used = Needs overspend + Needs outside estimates (not capped).
- * Guilt-Free used = Wants overspend + Wants outside estimates (not capped).
+ * Buffer used = Needs overspend + Needs outside non-recurring estimates (not capped).
+ * Guilt-Free used = Wants overspend + Wants outside non-recurring estimates (not capped).
  * Used beyond plafond → EF loan need; bar fill stays at 100%.
+ * Upcoming is tentative (not History) and only fills remaining Planned room.
  */
 export function buildMonthBudgetProgress(input: {
   plannedNeeds: number
@@ -325,6 +408,10 @@ export function buildMonthBudgetProgress(input: {
   guiltFreeSpent: number
   /** Needs + Wants per-line estimate overspend (excludes unplanned). */
   overspendTotal?: number
+  /** Upcoming Needs that still fit on Planned lines. */
+  needsUpcoming?: number
+  /** Upcoming Wants that still fit on Planned lines. */
+  wantsUpcoming?: number
 }): MonthBudgetProgress {
   const plannedNeeds = Math.max(0, Math.round(input.plannedNeeds))
   const needsUsed = Math.max(0, Math.round(input.needsUsed))
@@ -334,6 +421,16 @@ export function buildMonthBudgetProgress(input: {
   const guiltFree = Math.max(0, Math.round(input.guiltFree))
   const bufferSpent = Math.max(0, Math.round(input.bufferSpent))
   const gfSpent = Math.max(0, Math.round(input.guiltFreeSpent))
+  const needsUpcoming = capUpcomingToRoom(
+    input.needsUpcoming ?? 0,
+    plannedNeeds,
+    needsUsed,
+  )
+  const wantsUpcoming = capUpcomingToRoom(
+    input.wantsUpcoming ?? 0,
+    plannedWants,
+    wantsUsed,
+  )
 
   const bufferOverEfLoan = Math.max(0, bufferSpent - buffer)
   const guiltFreeOverEfLoan = Math.max(0, gfSpent - guiltFree)
@@ -349,6 +446,7 @@ export function buildMonthBudgetProgress(input: {
       allowance: plannedNeeds,
       used: needsUsed,
       remaining: Math.max(0, plannedNeeds - needsUsed),
+      upcoming: needsUpcoming,
       emphasize: false,
       barClass: 'bg-rose-500',
     },
@@ -357,6 +455,7 @@ export function buildMonthBudgetProgress(input: {
       allowance: buffer,
       used: bufferSpent,
       remaining: Math.max(0, buffer - bufferSpent),
+      upcoming: 0,
       emphasize: true,
       barClass: 'bg-amber-500',
     },
@@ -365,6 +464,7 @@ export function buildMonthBudgetProgress(input: {
       allowance: plannedWants,
       used: wantsUsed,
       remaining: Math.max(0, plannedWants - wantsUsed),
+      upcoming: wantsUpcoming,
       emphasize: false,
       barClass: 'bg-sky-500',
     },
@@ -373,6 +473,7 @@ export function buildMonthBudgetProgress(input: {
       allowance: guiltFree,
       used: gfSpent,
       remaining: Math.max(0, guiltFree - gfSpent),
+      upcoming: 0,
       emphasize: true,
       barClass: 'bg-emerald-500',
     },

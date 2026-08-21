@@ -8,9 +8,11 @@ import {
   buildMonthBudgetProgress,
   checkingBucketIdSet,
   computeMonthBudgetSpend,
+  computeMonthBudgetUpcoming,
   estimateExpenseCoverageKeys,
   type MonthBudgetProgress,
 } from '../lib/freeGuiltyProgress'
+import { todayIso } from '../lib/format'
 import {
   budgetGroupOfEstimate,
   isPlannedNeedsSchedule,
@@ -49,6 +51,7 @@ export function useFreeGuiltyProgress(
     string,
     import('../lib/recurringBillsApi').RecurringBillLog
   >
+  dueBillIdByTxId: Map<string, string>
   overrideByBillId: Map<string, import('../lib/recurringBillsApi').RecurringBillMonthOverride>
   categoriesById: Map<string, Category>
   bucketsById: ReturnType<typeof useBuckets>['byId']
@@ -65,6 +68,7 @@ export function useFreeGuiltyProgress(
   const {
     bills,
     logByOccurrenceKey,
+    dueBillIdByTxId,
     overrideByBillId,
     skippedOccurrenceKeys,
     loading: billsLoading,
@@ -153,6 +157,7 @@ export function useFreeGuiltyProgress(
       yearMonth,
       transactions,
       checkingBucketIds: checkingBucketIdSet(buckets),
+      dueBillIdByTxId,
     })
   }, [
     billsAvailable,
@@ -163,6 +168,8 @@ export function useFreeGuiltyProgress(
     bucketsById,
     yearMonth,
     transactions,
+    buckets,
+    dueBillIdByTxId,
   ])
 
   const progress = useMemo(() => {
@@ -177,6 +184,17 @@ export function useFreeGuiltyProgress(
       transactions,
       estimateCoverageKeys,
       checkingBucketIds: checkingBucketIdSet(buckets),
+      dueBillIdByTxId,
+    })
+    const upcoming = computeMonthBudgetUpcoming({
+      estimateRows,
+      bills,
+      overridesByBillId: overrideByBillId,
+      skippedOccurrenceKeys,
+      logByOccurrenceKey,
+      categoriesById,
+      yearMonth,
+      today: todayIso(),
     })
     return buildMonthBudgetProgress({
       plannedNeeds: allocation.plannedNeeds,
@@ -188,15 +206,22 @@ export function useFreeGuiltyProgress(
       bufferSpent: spend.bufferSpent,
       guiltFreeSpent: spend.guiltFreeSpent,
       overspendTotal: spend.needsOverspend + spend.wantsOverspend,
+      needsUpcoming: upcoming.needsUpcoming,
+      wantsUpcoming: upcoming.wantsUpcoming,
     })
   }, [
     allocation,
     estimateRows,
     bills,
+    overrideByBillId,
+    skippedOccurrenceKeys,
+    logByOccurrenceKey,
     categoriesById,
     bucketsById,
     buckets,
     transactions,
+    dueBillIdByTxId,
+    yearMonth,
   ])
 
   const loading =
@@ -209,6 +234,7 @@ export function useFreeGuiltyProgress(
     skippedOccurrenceKeys,
     bills,
     logByOccurrenceKey,
+    dueBillIdByTxId,
     overrideByBillId,
     categoriesById,
     bucketsById,

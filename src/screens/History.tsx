@@ -189,6 +189,7 @@ export function History() {
   const {
     bills,
     logByOccurrenceKey,
+    dueBillIdByTxId,
     overrideByBillId,
     skippedOccurrenceKeys,
     currentMonthDoneByBillId,
@@ -469,6 +470,7 @@ export function History() {
       estimateCoverageKeys: coverageKeys,
       bufferAllowance: allocation.buffer,
       guiltFreeAllowance: allocation.guiltFree,
+      dueBillIdByTxId,
     })
   }, [
     allocation,
@@ -480,6 +482,7 @@ export function History() {
     buckets,
     yearMonth,
     transactions,
+    dueBillIdByTxId,
   ])
 
   function groupByDate(items: TransactionWithCategory[]) {

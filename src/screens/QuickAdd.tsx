@@ -130,6 +130,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     categoriesById: expenseCatsById,
     bucketsById,
     buckets: allBuckets,
+    dueBillIdByTxId,
   } = useFreeGuiltyProgress(yearMonth, monthTransactions)
 
   const amountRef = useRef<HTMLInputElement | null>(null)
@@ -717,6 +718,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
           yearMonth: policy.yearMonth,
           bufferAllowance: allocation.buffer,
           guiltFreeAllowance: allocation.guiltFree,
+          dueBillIdByTxId,
         })
         if (evalResult.borrowAmount > 0 && evalResult.source) {
           setEfConfirm({

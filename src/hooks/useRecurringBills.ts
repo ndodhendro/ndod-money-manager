@@ -10,6 +10,7 @@ import {
   isEstimateActiveInMonth,
   occurrenceLogKey,
   occurrencesInMonth,
+  dueBillIdByTxIdFromLogs,
   type RecurringBill,
   type RecurringBillLog,
   type RecurringBillMonthOverride,
@@ -89,6 +90,11 @@ export function useRecurringBills(yearMonth: string) {
     }
     return map
   }, [logs])
+
+  const dueBillIdByTxId = useMemo(
+    () => dueBillIdByTxIdFromLogs(logs),
+    [logs],
+  )
 
   /** @deprecated Prefer logByOccurrenceKey — last log wins per bill. */
   const logByBillId = useMemo(() => {
@@ -201,6 +207,7 @@ export function useRecurringBills(yearMonth: string) {
     logs,
     logByBillId,
     logByOccurrenceKey,
+    dueBillIdByTxId,
     overrideByBillId,
     skippedOccurrenceKeys,
     currentMonthDoneByBillId,

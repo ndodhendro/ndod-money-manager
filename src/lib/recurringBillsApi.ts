@@ -215,6 +215,18 @@ export interface RecurringBillLog {
   completed_at: string
 }
 
+/** Due-item tx → bill, including checks that never wrote recurring_bill_id. */
+export function dueBillIdByTxIdFromLogs(
+  logs: Iterable<Pick<RecurringBillLog, 'bill_id' | 'transaction_id'>>,
+): Map<string, string> {
+  const map = new Map<string, string>()
+  for (const log of logs) {
+    if (!log.transaction_id) continue
+    map.set(log.transaction_id, log.bill_id)
+  }
+  return map
+}
+
 /** Per-month amount / due_day / skip override (null field = use template). */
 export interface RecurringBillMonthOverride {
   id: string
@@ -261,6 +273,22 @@ export function effectiveAmount(
 ): number {
   if (override?.amount != null && override.amount > 0) return override.amount
   return bill.amount
+}
+
+/**
+ * Planned amount for a date that is still upcoming.
+ * Weekly / biweekly keep the estimate template so an underspend on an earlier
+ * date this month does not rewrite remaining dates. Monthly (one date) still
+ * uses the this-month override.
+ */
+export function plannedAmountForUpcomingOccurrence(
+  bill: RecurringBill,
+  override?: RecurringBillMonthOverride | null,
+): number {
+  if (bill.is_recurring && bill.interval_unit === 'week') {
+    return bill.amount
+  }
+  return effectiveAmount(bill, override)
 }
 
 export function effectiveDueDay(

@@ -22,6 +22,8 @@ import {
   markBillPaid,
   occurrenceLogKey,
   occurrencesInMonth,
+  plannedAmountForUpcomingOccurrence,
+  dueBillIdByTxIdFromLogs,
   setRecurringBillOccurrenceSkipped,
   unmarkBillPaid,
   upsertRecurringBillMonthOverride,
@@ -286,6 +288,10 @@ export function DueThisMonthChecklist({
       ),
     [logByOccurrenceKeyProp, logByBillId, bills, yearMonth, overrideByBillId],
   )
+  const dueBillIdByTxId = useMemo(
+    () => dueBillIdByTxIdFromLogs(baseLogByOccurrenceKey.values()),
+    [baseLogByOccurrenceKey],
+  )
   const { byId } = useCategories(undefined, { includeInactive: true })
   const { buckets, movements, loading: bucketsLoading } = useBuckets()
   const bucketsById = useMemo(
@@ -335,6 +341,18 @@ export function DueThisMonthChecklist({
 
   function isAutoAmount(bill: RecurringBill) {
     return isPyfAutoAmountTransfer(bill, bucketsById)
+  }
+
+  /** Unchecked weekly dates keep the estimate; monthly can use this-month override. */
+  function planAmountForOccurrence(
+    bill: RecurringBill,
+    override: RecurringBillMonthOverride | null | undefined,
+  ) {
+    if (isAutoAmount(bill)) return resolvedAmount(bill, override)
+    if (bill.is_recurring && bill.interval_unit === 'week') {
+      return plannedAmountForUpcomingOccurrence(bill, override)
+    }
+    return resolvedAmount(bill, override)
   }
 
   // Drop optimistic entries once props match (silent reload finished).
@@ -441,11 +459,12 @@ export function DueThisMonthChecklist({
         byId,
         bucketsById,
       )
-      const amount = resolveEstimateAmount(
-        item.bill,
-        overrideByBillId.get(item.bill.id),
-        amountCtx,
-      )
+      const amount = effectiveLogByOccurrenceKey.has(item.key)
+        ? resolvedAmount(item.bill, overrideByBillId.get(item.bill.id))
+        : planAmountForOccurrence(
+            item.bill,
+            overrideByBillId.get(item.bill.id),
+          )
       let statusLabel: string | null = null
       if (isSkipped(item.bill.id, item.occurredOn)) statusLabel = 'skipped'
       else if (effectiveLogByOccurrenceKey.has(item.key)) statusLabel = 'checked'
@@ -685,7 +704,7 @@ export function DueThisMonthChecklist({
         const amount =
           amountOverride != null && amountOverride > 0 && !isAutoAmount(bill)
             ? amountOverride
-            : resolvedAmount(bill, override)
+            : planAmountForOccurrence(bill, override)
         if (amount <= 0) {
           showAppToast(
             isAutoAmount(bill)
@@ -793,6 +812,7 @@ export function DueThisMonthChecklist({
             yearMonth: policy.yearMonth,
             bufferAllowance: allocation.buffer,
             guiltFreeAllowance: allocation.guiltFree,
+            dueBillIdByTxId,
           })
           if (evalResult.borrowAmount > 0 && evalResult.source) {
             setPendingDone((prev) => {
@@ -923,14 +943,18 @@ export function DueThisMonthChecklist({
       : input.amount
     setSavingOverride(true)
     try {
-      await upsertRecurringBillMonthOverride({
-        billId: bill.id,
-        yearMonth,
-        amount,
-        dueDay: input.dueDay,
-        templateAmount: bill.amount,
-        templateDueDay: bill.due_day,
-      })
+      // Checking this date at a custom amount must not rewrite remaining
+      // weekly/biweekly dates this month (those stay on the estimate).
+      if (!shouldCheck) {
+        await upsertRecurringBillMonthOverride({
+          billId: bill.id,
+          yearMonth,
+          amount,
+          dueDay: input.dueDay,
+          templateAmount: bill.amount,
+          templateDueDay: bill.due_day,
+        })
+      }
       setEditingBill(null)
       setEditingOccurredOn(null)
       setAutoFocusAmount(false)
@@ -1123,6 +1147,17 @@ export function DueThisMonthChecklist({
   const editingOverride = editingBill
     ? overrideByBillId.get(editingBill.id)
     : undefined
+  const editingOccurrenceDone =
+    editingBill != null &&
+    editingOccurredOn != null &&
+    effectiveLogByOccurrenceKey.has(
+      occurrenceLogKey(editingBill.id, editingOccurredOn),
+    )
+  const editingInitialAmount = editingBill
+    ? editingOccurrenceDone
+      ? resolvedAmount(editingBill, editingOverride)
+      : planAmountForOccurrence(editingBill, editingOverride)
+    : 0
 
   function renderStatusSections() {
     return statusSections.map((section) => {
@@ -1149,7 +1184,9 @@ export function DueThisMonthChecklist({
                     !skipped && effectiveLogByOccurrenceKey.has(key)
                   const busy = busyKey === key
                   const override = overrideByBillId.get(bill.id)
-                  const amount = resolvedAmount(bill, override)
+                  const amount = done
+                    ? resolvedAmount(bill, override)
+                    : planAmountForOccurrence(bill, override)
                   const dueDay = effectiveDueDay(bill, override)
                   const dueOrOverdue =
                     (section.status === 'due' ||
@@ -1376,9 +1413,7 @@ export function DueThisMonthChecklist({
         open={editingBill != null}
         bill={editingBill}
         cursor={cursor}
-        initialAmount={
-          editingBill ? resolvedAmount(editingBill, editingOverride) : 0
-        }
+        initialAmount={editingInitialAmount}
         initialDueDay={
           editingBill ? effectiveDueDay(editingBill, editingOverride) : 1
         }
@@ -1474,7 +1509,7 @@ export function DueThisMonthChecklist({
         message={
           pendingAmountConfirm
             ? `Is ${formatRupiah(
-                resolvedAmount(
+                planAmountForOccurrence(
                   pendingAmountConfirm.bill,
                   overrideByBillId.get(pendingAmountConfirm.bill.id),
                 ),

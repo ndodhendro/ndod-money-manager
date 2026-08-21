@@ -3,7 +3,7 @@ export const PLAN_PROGRESS_SECTIONS = [
     to: '/rencana/payday',
     icon: '💵',
     title: 'Payday Allocation',
-    subtitle: 'Month Budget, Sinking, and Bonus Allocation',
+    subtitle: 'Sinking and Bonus Allocation',
   },
   {
     to: '/rencana/close-month',

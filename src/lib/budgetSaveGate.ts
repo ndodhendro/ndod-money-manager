@@ -138,6 +138,7 @@ export function evaluateExpenseEfLoan(input: {
   yearMonth: string
   bufferAllowance: number
   guiltFreeAllowance: number
+  dueBillIdByTxId?: Map<string, string>
 }): EfLoanEvaluation {
   const draft = input.draft
   if (
@@ -178,6 +179,7 @@ export function evaluateExpenseEfLoan(input: {
   const spendInput = {
     estimateCoverageKeys,
     checkingBucketIds: checkingIds,
+    dueBillIdByTxId: input.dueBillIdByTxId,
   }
 
   const before = computeMonthBudgetSpend({
@@ -190,6 +192,7 @@ export function evaluateExpenseEfLoan(input: {
       yearMonth: input.yearMonth,
       transactions: baseTxs,
       checkingBucketIds: checkingIds,
+      dueBillIdByTxId: input.dueBillIdByTxId,
     }),
     transactions: baseTxs,
     ...spendInput,
@@ -205,6 +208,7 @@ export function evaluateExpenseEfLoan(input: {
       yearMonth: input.yearMonth,
       transactions: afterTxs,
       checkingBucketIds: checkingIds,
+      dueBillIdByTxId: input.dueBillIdByTxId,
     }),
     transactions: afterTxs,
     ...spendInput,

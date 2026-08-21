@@ -8,7 +8,12 @@ import { budgetGroupOfTx } from './moneyPlan'
 import {
   estimateOccurrenceCount,
   estimatePlannedOccurrenceCount,
+  isOccurrenceSkipped,
+  occurrenceLogKey,
+  occurrencesInMonth,
+  plannedAmountForUpcomingOccurrence,
   type RecurringBill,
+  type RecurringBillLog,
   type RecurringBillMonthOverride,
 } from './recurringBillsApi'
 import type {
@@ -81,6 +86,15 @@ type EstimateBillMatchOptions = {
   checkingBucketIds?: Set<string>
   /** Skip txs already assigned to another estimate line (dedupe). */
   excludeTxIds?: Set<string>
+  /** Due-item tx → bill from recurring_bill_logs (covers missing FK). */
+  dueBillIdByTxId?: Map<string, string>
+}
+
+function effectiveDueBillId(
+  tx: TransactionWithCategory,
+  dueBillIdByTxId?: Map<string, string>,
+): string | null {
+  return tx.recurring_bill_id ?? dueBillIdByTxId?.get(tx.id) ?? null
 }
 
 function isMainOrCheckingExpenseTx(
@@ -103,6 +117,7 @@ function transactionsForEstimateBill(
   const billGroup = budgetGroupOfEstimate(bill, categoriesById, bucketsById)
   const checkingIds = options?.checkingBucketIds
   const exclude = options?.excludeTxIds
+  const dueBillIdByTxId = options?.dueBillIdByTxId
   if (bill.type === 'expense' && bill.category_id) {
     const ids = categoryIdsMatchingEstimate(bill.category_id, categoriesById)
     for (const tx of transactions) {
@@ -115,17 +130,27 @@ function transactionsForEstimateBill(
       ) {
         continue
       }
-      // Exact match: transaction was created from this specific due-item check.
-      if (tx.recurring_bill_id != null) {
-        if (tx.recurring_bill_id === bill.id) matched.push(tx)
+      // Due-item check: FK, or checklist log when FK was never written.
+      const dueBillId = effectiveDueBillId(tx, dueBillIdByTxId)
+      if (dueBillId != null) {
+        if (dueBillId === bill.id) matched.push(tx)
         continue
       }
-      // Fallback: manual Quick Add (no recurring_bill_id) — same category
-      // and, when the estimate has a note, the same note (bill.name).
-      // Otherwise every Gifts spend would pile onto one named line.
+      // Legacy due-item (is_recurring, no FK/log): match recurring estimate
+      // by subcategory + note so sibling lines stay distinct.
+      if (tx.is_recurring) {
+        if (!bill.is_recurring) continue
+        if (!tx.category_id || !ids.has(tx.category_id)) continue
+        if (budgetGroupOfTx(tx) !== billGroup) continue
+        if (!notesMatchEstimate(bill.name, tx.description)) continue
+        matched.push(tx)
+        continue
+      }
+      // Quick Add never fills a recurring estimate — that spend is Buffer / Guilt-Free.
+      if (bill.is_recurring) continue
+      // Non-recurring estimate: pool Quick Add by subcategory (and children).
       if (!tx.category_id || !ids.has(tx.category_id)) continue
       if (budgetGroupOfTx(tx) !== billGroup) continue
-      if (!notesMatchEstimate(bill.name, tx.description)) continue
       matched.push(tx)
     }
     return matched
@@ -134,11 +159,19 @@ function transactionsForEstimateBill(
     for (const tx of transactions) {
       if (tx.type !== 'transfer' || tx.complete_later) continue
       if (exclude?.has(tx.id)) continue
-      // Exact match via recurring_bill_id for transfer due-items.
-      if (tx.recurring_bill_id != null) {
-        if (tx.recurring_bill_id === bill.id) matched.push(tx)
+      const dueBillId = effectiveDueBillId(tx, dueBillIdByTxId)
+      if (dueBillId != null) {
+        if (dueBillId === bill.id) matched.push(tx)
         continue
       }
+      if (tx.is_recurring) {
+        if (!bill.is_recurring) continue
+        if (tx.to_bucket_id !== bill.to_bucket_id) continue
+        if (!notesMatchEstimate(bill.name, tx.description)) continue
+        matched.push(tx)
+        continue
+      }
+      if (bill.is_recurring) continue
       if (tx.to_bucket_id !== bill.to_bucket_id) continue
       if (!notesMatchEstimate(bill.name, tx.description)) continue
       matched.push(tx)
@@ -239,9 +272,10 @@ export function buildEstimateProgressRows(input: {
   bucketsById: Map<string, EstimateBucketRef>
   yearMonth: string
   transactions: TransactionWithCategory[]
+  dueBillIdByTxId?: Map<string, string>
 }): EstimateProgressRow[] {
-  // Deduplicate manual (non-recurring_bill_id) transactions across estimate rows
-  // so the same Quick Add tx is not counted in multiple bills sharing a category.
+  // Deduplicate Quick Add txs across non-recurring estimate rows so the same
+  // spend is not counted in multiple bills sharing a subcategory.
   const assignedManualTxIds = new Set<string>()
   const rows: EstimateProgressRow[] = []
 
@@ -290,11 +324,16 @@ export function buildEstimateProgressRows(input: {
       input.transactions,
       input.categoriesById,
       input.bucketsById,
-      { excludeTxIds: assignedManualTxIds },
+      {
+        excludeTxIds: assignedManualTxIds,
+        dueBillIdByTxId: input.dueBillIdByTxId,
+      },
     )
-    // Track manual tx ids so they are not double-counted in another bill.
+    // Track Quick Add ids so they are not double-counted in another bill.
     for (const tx of matched) {
-      if (tx.recurring_bill_id == null) assignedManualTxIds.add(tx.id)
+      if (effectiveDueBillId(tx, input.dueBillIdByTxId) == null) {
+        assignedManualTxIds.add(tx.id)
+      }
     }
     const byOwner = emptyActualByOwner()
     for (const tx of matched) byOwner[tx.owner] += tx.amount
@@ -364,12 +403,14 @@ export function buildMonthBudgetEstimateRows(input: {
   yearMonth: string
   transactions: TransactionWithCategory[]
   checkingBucketIds: Set<string>
+  dueBillIdByTxId?: Map<string, string>
 }): EstimateProgressRow[] {
   const assignedTxIds = new Set<string>()
   const rows: EstimateProgressRow[] = []
   const matchOpts = {
     mainCheckingOnly: true as const,
     checkingBucketIds: input.checkingBucketIds,
+    dueBillIdByTxId: input.dueBillIdByTxId,
   }
 
   for (const { bill, group } of monthBudgetExpenseCandidates(
@@ -456,6 +497,7 @@ export function monthBudgetFlexibleTrackDemandByTxId(input: {
   yearMonth: string
   transactions: TransactionWithCategory[]
   checkingBucketIds: Set<string>
+  dueBillIdByTxId?: Map<string, string>
 }): {
   bufferByTxId: Map<string, number>
   guiltFreeByTxId: Map<string, number>
@@ -466,6 +508,7 @@ export function monthBudgetFlexibleTrackDemandByTxId(input: {
   const matchOpts = {
     mainCheckingOnly: true as const,
     checkingBucketIds: input.checkingBucketIds,
+    dueBillIdByTxId: input.dueBillIdByTxId,
   }
 
   for (const { bill, group } of monthBudgetExpenseCandidates(
@@ -570,6 +613,7 @@ export function monthBudgetOverspendTransactionIds(input: {
   yearMonth: string
   transactions: TransactionWithCategory[]
   checkingBucketIds: Set<string>
+  dueBillIdByTxId?: Map<string, string>
 }): Set<string> {
   const { bufferByTxId, guiltFreeByTxId } =
     monthBudgetFlexibleTrackDemandByTxId(input)
@@ -592,6 +636,7 @@ export function overspendTransactionIds(input: {
   bucketsById: Map<string, EstimateBucketRef>
   yearMonth: string
   transactions: TransactionWithCategory[]
+  dueBillIdByTxId?: Map<string, string>
 }): Set<string> {
   const ids = new Set<string>()
 
@@ -634,6 +679,7 @@ export function overspendTransactionIds(input: {
       input.transactions,
       input.categoriesById,
       input.bucketsById,
+      { dueBillIdByTxId: input.dueBillIdByTxId },
     )
     const actual = matched.reduce((sum, tx) => sum + tx.amount, 0)
     if (actual <= planned) continue
@@ -666,6 +712,77 @@ export function sumCappedEstimateActual(
   for (const row of rows) {
     if (row.group !== group) continue
     sum += Math.min(row.actual, row.planned)
+  }
+  return sum
+}
+
+/**
+ * Unchecked future occurrences (Upcoming) per Month Budget expense line.
+ * Uses the estimate for weekly/biweekly remaining dates (not a this-month
+ * override from an earlier underspend). Monthly uses override, else template.
+ * Skipped / checked / due dates are omitted.
+ */
+export function upcomingExpenseAmountByBillId(input: {
+  bills: RecurringBill[]
+  overridesByBillId: Map<string, RecurringBillMonthOverride>
+  skippedOccurrenceKeys?: Set<string>
+  logByOccurrenceKey: Map<string, RecurringBillLog>
+  categoriesById: Map<string, Category>
+  yearMonth: string
+  today: string
+}): Map<string, number> {
+  const byBillId = new Map<string, number>()
+  for (const { bill } of monthBudgetExpenseCandidates(
+    input.bills,
+    input.categoriesById,
+  )) {
+    const override = input.overridesByBillId.get(bill.id)
+    const unit = plannedAmountForUpcomingOccurrence(bill, override)
+    let upcoming = 0
+    for (const occurredOn of occurrencesInMonth(
+      bill,
+      input.yearMonth,
+      override,
+    )) {
+      if (occurredOn <= input.today) continue
+      if (
+        isOccurrenceSkipped(
+          bill.id,
+          occurredOn,
+          input.skippedOccurrenceKeys,
+          override,
+        )
+      ) {
+        continue
+      }
+      if (
+        input.logByOccurrenceKey.has(occurrenceLogKey(bill.id, occurredOn))
+      ) {
+        continue
+      }
+      upcoming += unit
+    }
+    if (upcoming > 0) byBillId.set(bill.id, upcoming)
+  }
+  return byBillId
+}
+
+/**
+ * Upcoming that still fits on each estimate line (does not treat tentative
+ * amounts as overspend). Extra beyond remaining room is ignored.
+ */
+export function sumCappedUpcomingOnRows(
+  rows: EstimateProgressRow[],
+  upcomingByBillId: Map<string, number>,
+  group: BudgetGroup,
+): number {
+  let sum = 0
+  for (const row of rows) {
+    if (row.group !== group) continue
+    const upcoming = upcomingByBillId.get(row.billId) ?? 0
+    if (upcoming <= 0) continue
+    const room = Math.max(0, row.planned - row.actual)
+    sum += Math.min(upcoming, room)
   }
   return sum
 }

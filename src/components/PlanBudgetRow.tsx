@@ -49,6 +49,7 @@ export function PlanBudgetRow({
   ceilingStatusPlacement = 'below-bar',
   floorStatusPlacement = 'below-bar',
   detailStack = null,
+  upcoming = 0,
 }: {
   bucket: MoneyPlanBucket
   hint?: ReactNode
@@ -87,13 +88,34 @@ export function PlanBudgetRow({
    * When set, replaces the single hint line under the title.
    */
   detailStack?: PlanBudgetDetailStack | null
+  /**
+   * Tentative upcoming amount on a ceiling track (Month Budget Planned
+   * Needs/Wants). Recorded used / “X left” stay actual; the lighter bar
+   * segment and a second leftover line show the projection.
+   */
+  upcoming?: number
 }) {
+  const upcomingSafe = Math.max(0, Math.round(upcoming))
+  const projectedRemaining = Math.max(
+    0,
+    bucket.target - bucket.actual - upcomingSafe,
+  )
   const rawPct =
     bucket.target > 0
       ? Math.round(bucket.ratio * 100)
       : bucket.actual > 0
         ? 100
         : 0
+  const actualPct =
+    bucket.target > 0
+      ? Math.min(100, Math.max(0, (bucket.actual / bucket.target) * 100))
+      : bucket.actual > 0
+        ? 100
+        : 0
+  const upcomingPct =
+    bucket.target > 0 && upcomingSafe > 0
+      ? Math.min(100 - actualPct, (upcomingSafe / bucket.target) * 100)
+      : 0
   /** Bar width always 0–100; % label shows actual used/progress (may exceed 100). */
   const barPct = Math.min(100, Math.max(0, rawPct))
   const displayPct = Math.max(0, rawPct)
@@ -118,6 +140,17 @@ export function PlanBudgetRow({
         ? `Over by ${formatRupiah(bucket.actual - bucket.target)}`
         : `${formatRupiah(Math.max(0, bucket.remaining))} left`
       : null
+  const projectedStatusText =
+    mode === 'ceiling' &&
+    upcomingSafe > 0 &&
+    bucket.target > 0 &&
+    !ceilingOver
+      ? `${formatRupiah(projectedRemaining)} left after upcoming`
+      : null
+  const primaryCeilingStatusText = projectedStatusText ?? ceilingStatusText
+  const secondaryCeilingStatusText = projectedStatusText
+    ? ceilingStatusText
+    : null
   const overTarget = Math.max(0, Math.round(bucket.actual - bucket.target))
   const toGo = Math.max(0, Math.round(bucket.target - bucket.actual))
   const floorStatusText =
@@ -145,9 +178,7 @@ export function PlanBudgetRow({
     ceilingStatusPlacement === 'under-title' &&
     ceilingStatusText != null
   const hintUnderTitle =
-    !useDetailStack && showMetrics && hint && !ceilingStatusUnderTitle
-      ? hint
-      : null
+    !useDetailStack && showMetrics && hint ? hint : null
   const showUnderTitleRow =
     ceilingStatusUnderTitle ||
     hintUnderTitle != null ||
@@ -288,37 +319,50 @@ export function PlanBudgetRow({
               {amountNode}
             </div>
             {showUnderTitleRow ? (
-              <div
-                className={`mt-0.5 flex items-baseline gap-2 ${
-                  hintUnderTitle &&
-                  (ceilingStatusUnderTitle || floorStatusUnderTitle)
-                    ? 'justify-between'
-                    : ceilingStatusUnderTitle || floorStatusUnderTitle
-                      ? 'justify-end'
-                      : ''
-                }`}
-              >
-                {hintUnderTitle ? (
-                  <div className="min-w-0 text-[11px] text-neutral-400">
-                    {hintUnderTitle}
-                  </div>
-                ) : null}
-                {ceilingStatusUnderTitle ? (
+              <div className="mt-0.5 space-y-0.5">
+                <div
+                  className={`flex items-baseline gap-2 ${
+                    hintUnderTitle &&
+                    (ceilingStatusUnderTitle || floorStatusUnderTitle)
+                      ? 'justify-between'
+                      : ceilingStatusUnderTitle || floorStatusUnderTitle
+                        ? 'justify-end'
+                        : ''
+                  }`}
+                >
+                  {hintUnderTitle ? (
+                    <div className="min-w-0 text-[11px] text-neutral-400">
+                      {hintUnderTitle}
+                    </div>
+                  ) : null}
+                  {ceilingStatusUnderTitle ? (
+                    <p
+                      className={`shrink-0 text-right tabular-nums ${
+                        projectedStatusText
+                          ? 'text-[11px] text-neutral-400'
+                          : `text-xs font-semibold ${ceilingStatusColor}`
+                      }`}
+                    >
+                      {primaryCeilingStatusText}
+                    </p>
+                  ) : null}
+                  {floorStatusUnderTitle ? (
+                    <p
+                      className={`shrink-0 text-right text-[11px] tabular-nums ${
+                        floorOver
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : 'text-neutral-400'
+                      }`}
+                    >
+                      {floorStatusText}
+                    </p>
+                  ) : null}
+                </div>
+                {ceilingStatusUnderTitle && secondaryCeilingStatusText ? (
                   <p
-                    className={`shrink-0 text-right text-xs font-semibold tabular-nums ${ceilingStatusColor}`}
+                    className={`text-right text-[11px] font-semibold tabular-nums ${ceilingStatusColor}`}
                   >
-                    {ceilingStatusText}
-                  </p>
-                ) : null}
-                {floorStatusUnderTitle ? (
-                  <p
-                    className={`shrink-0 text-right text-[11px] tabular-nums ${
-                      floorOver
-                        ? 'text-emerald-600 dark:text-emerald-400'
-                        : 'text-neutral-400'
-                    }`}
-                  >
-                    {floorStatusText}
+                    {secondaryCeilingStatusText}
                   </p>
                 ) : null}
               </div>
@@ -335,18 +379,46 @@ export function PlanBudgetRow({
       {showMetrics && bucket.target > 0 ? (
         <div className="mt-2">
           {showCeilingBelowBar ? (
-            <p
-              className={`mb-0.5 text-right text-xs font-semibold tabular-nums ${ceilingStatusColor}`}
-            >
-              {ceilingStatusText}
-            </p>
+            <div className="mb-0.5 space-y-0.5">
+              <p
+                className={`text-right tabular-nums ${
+                  projectedStatusText
+                    ? 'text-[11px] text-neutral-400'
+                    : `text-xs font-semibold ${ceilingStatusColor}`
+                }`}
+              >
+                {primaryCeilingStatusText}
+              </p>
+              {secondaryCeilingStatusText ? (
+                <p
+                  className={`text-right text-[11px] font-semibold tabular-nums ${ceilingStatusColor}`}
+                >
+                  {secondaryCeilingStatusText}
+                </p>
+              ) : null}
+            </div>
           ) : null}
           <div className="flex items-center gap-2">
             <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-neutral-100 dark:bg-neutral-700">
-              <div
-                className={`h-full rounded-full ${fillClass}`}
-                style={{ width: `${barPct}%` }}
-              />
+              {upcomingPct > 0 ? (
+                <div className="flex h-full w-full">
+                  {actualPct > 0 ? (
+                    <div
+                      className={`h-full shrink-0 ${fillClass}`}
+                      style={{ width: `${actualPct}%` }}
+                    />
+                  ) : null}
+                  <div
+                    className={`h-full shrink-0 ${fillClass} opacity-40`}
+                    style={{ width: `${upcomingPct}%` }}
+                  />
+                </div>
+              ) : (
+                <div
+                  className={`h-full rounded-full ${fillClass}`}
+                  style={{ width: `${barPct}%` }}
+                />
+              )}
             </div>
             <span
               className={`shrink-0 text-[11px] font-semibold tabular-nums ${pctLabelClass}`}

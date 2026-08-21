@@ -3,13 +3,13 @@ import type {
   BudgetTrackProgress,
   MonthBudgetProgress,
 } from '../lib/freeGuiltyProgress'
-import { formatRupiah } from '../lib/format'
 import { makeMoneyPlanBucket } from '../lib/moneyPlan'
 
 const INSET_SURFACE = 'ml-3 bg-white shadow-sm dark:bg-neutral-800'
 
 function BudgetTrackRow({ track }: { track: BudgetTrackProgress }) {
   const upcoming = track.upcoming > 0 ? track.upcoming : 0
+  const unscheduled = track.unscheduled > 0 ? track.unscheduled : 0
   return (
     <PlanBudgetRow
       bucket={makeMoneyPlanBucket(
@@ -23,7 +23,7 @@ function BudgetTrackRow({ track }: { track: BudgetTrackProgress }) {
       ceilingStatusPlacement="under-title"
       surfaceClassName={track.emphasize ? INSET_SURFACE : undefined}
       upcoming={upcoming}
-      hint={upcoming > 0 ? `Upcoming ${formatRupiah(upcoming)}` : undefined}
+      unscheduled={unscheduled}
     />
   )
 }

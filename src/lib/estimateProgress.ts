@@ -787,6 +787,26 @@ export function sumCappedUpcomingOnRows(
   return sum
 }
 
+/**
+ * Remaining room on non-recurring (unscheduled) Month Budget estimate lines.
+ * Recurring dated Upcoming is counted separately.
+ */
+export function sumUnscheduledEstimateRemaining(
+  rows: EstimateProgressRow[],
+  bills: RecurringBill[],
+  group: BudgetGroup,
+): number {
+  const byId = new Map(bills.map((bill) => [bill.id, bill] as const))
+  let sum = 0
+  for (const row of rows) {
+    if (row.group !== group) continue
+    const bill = byId.get(row.billId)
+    if (!bill || bill.is_recurring) continue
+    sum += Math.max(0, row.planned - row.actual)
+  }
+  return sum
+}
+
 /** Sum of per-line overspend (actual − planned when positive). */
 export function sumEstimateOverspend(
   rows: EstimateProgressRow[],

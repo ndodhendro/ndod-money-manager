@@ -208,6 +208,8 @@ export function useFreeGuiltyProgress(
       overspendTotal: spend.needsOverspend + spend.wantsOverspend,
       needsUpcoming: upcoming.needsUpcoming,
       wantsUpcoming: upcoming.wantsUpcoming,
+      needsUnscheduled: upcoming.needsUnscheduled,
+      wantsUnscheduled: upcoming.wantsUnscheduled,
     })
   }, [
     allocation,

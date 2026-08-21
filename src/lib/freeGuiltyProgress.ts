@@ -4,6 +4,7 @@ import {
   sumCappedEstimateActual,
   sumCappedUpcomingOnRows,
   sumEstimateOverspend,
+  sumUnscheduledEstimateRemaining,
   upcomingExpenseAmountByBillId,
   type EstimateBucketRef,
   type EstimateProgressRow,
@@ -278,6 +279,11 @@ export interface BudgetTrackProgress {
    * room on each Planned line. 0 on Buffer / Guilt-Free.
    */
   upcoming: number
+  /**
+   * Remaining room on non-recurring Monthly Estimate lines (no checklist
+   * date). 0 on Buffer / Guilt-Free.
+   */
+  unscheduled: number
   /** Inset + lighter gray surface (Buffer, Guilt-Free Fund). */
   emphasize: boolean
   barClass: string
@@ -348,13 +354,24 @@ export function computeMonthBudgetSpend(input: {
   }
 }
 
-function emptyTrackUpcoming(): { needsUpcoming: number; wantsUpcoming: number } {
-  return { needsUpcoming: 0, wantsUpcoming: 0 }
+function emptyTrackUpcoming(): {
+  needsUpcoming: number
+  wantsUpcoming: number
+  needsUnscheduled: number
+  wantsUnscheduled: number
+} {
+  return {
+    needsUpcoming: 0,
+    wantsUpcoming: 0,
+    needsUnscheduled: 0,
+    wantsUnscheduled: 0,
+  }
 }
 
 /**
- * Upcoming expense amounts that still fit on Planned Needs / Planned Wants
- * lines. Due, skipped, and already-checked occurrences are excluded.
+ * Dated Upcoming plus remaining unscheduled (non-recurring) estimate room
+ * on Planned Needs / Planned Wants. Due, skipped, and checked dates are
+ * excluded from Upcoming.
  */
 export function computeMonthBudgetUpcoming(input: {
   estimateRows: EstimateProgressRow[]
@@ -365,10 +382,14 @@ export function computeMonthBudgetUpcoming(input: {
   categoriesById: Map<string, Category>
   yearMonth: string
   today: string
-}): { needsUpcoming: number; wantsUpcoming: number } {
+}): {
+  needsUpcoming: number
+  wantsUpcoming: number
+  needsUnscheduled: number
+  wantsUnscheduled: number
+} {
   if (input.estimateRows.length === 0) return emptyTrackUpcoming()
   const upcomingByBillId = upcomingExpenseAmountByBillId(input)
-  if (upcomingByBillId.size === 0) return emptyTrackUpcoming()
   return {
     needsUpcoming: sumCappedUpcomingOnRows(
       input.estimateRows,
@@ -378,6 +399,16 @@ export function computeMonthBudgetUpcoming(input: {
     wantsUpcoming: sumCappedUpcomingOnRows(
       input.estimateRows,
       upcomingByBillId,
+      'wants',
+    ),
+    needsUnscheduled: sumUnscheduledEstimateRemaining(
+      input.estimateRows,
+      input.bills,
+      'needs',
+    ),
+    wantsUnscheduled: sumUnscheduledEstimateRemaining(
+      input.estimateRows,
+      input.bills,
       'wants',
     ),
   }
@@ -412,6 +443,10 @@ export function buildMonthBudgetProgress(input: {
   needsUpcoming?: number
   /** Upcoming Wants that still fit on Planned lines. */
   wantsUpcoming?: number
+  /** Remaining non-recurring Needs estimate room. */
+  needsUnscheduled?: number
+  /** Remaining non-recurring Wants estimate room. */
+  wantsUnscheduled?: number
 }): MonthBudgetProgress {
   const plannedNeeds = Math.max(0, Math.round(input.plannedNeeds))
   const needsUsed = Math.max(0, Math.round(input.needsUsed))
@@ -431,6 +466,16 @@ export function buildMonthBudgetProgress(input: {
     plannedWants,
     wantsUsed,
   )
+  const needsUnscheduled = capUpcomingToRoom(
+    input.needsUnscheduled ?? 0,
+    plannedNeeds,
+    needsUsed + needsUpcoming,
+  )
+  const wantsUnscheduled = capUpcomingToRoom(
+    input.wantsUnscheduled ?? 0,
+    plannedWants,
+    wantsUsed + wantsUpcoming,
+  )
 
   const bufferOverEfLoan = Math.max(0, bufferSpent - buffer)
   const guiltFreeOverEfLoan = Math.max(0, gfSpent - guiltFree)
@@ -447,6 +492,7 @@ export function buildMonthBudgetProgress(input: {
       used: needsUsed,
       remaining: Math.max(0, plannedNeeds - needsUsed),
       upcoming: needsUpcoming,
+      unscheduled: needsUnscheduled,
       emphasize: false,
       barClass: 'bg-rose-500',
     },
@@ -456,6 +502,7 @@ export function buildMonthBudgetProgress(input: {
       used: bufferSpent,
       remaining: Math.max(0, buffer - bufferSpent),
       upcoming: 0,
+      unscheduled: 0,
       emphasize: true,
       barClass: 'bg-amber-500',
     },
@@ -465,6 +512,7 @@ export function buildMonthBudgetProgress(input: {
       used: wantsUsed,
       remaining: Math.max(0, plannedWants - wantsUsed),
       upcoming: wantsUpcoming,
+      unscheduled: wantsUnscheduled,
       emphasize: false,
       barClass: 'bg-sky-500',
     },
@@ -474,6 +522,7 @@ export function buildMonthBudgetProgress(input: {
       used: gfSpent,
       remaining: Math.max(0, guiltFree - gfSpent),
       upcoming: 0,
+      unscheduled: 0,
       emphasize: true,
       barClass: 'bg-emerald-500',
     },

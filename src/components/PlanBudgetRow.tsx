@@ -50,6 +50,7 @@ export function PlanBudgetRow({
   floorStatusPlacement = 'below-bar',
   detailStack = null,
   upcoming = 0,
+  unscheduled = 0,
 }: {
   bucket: MoneyPlanBucket
   hint?: ReactNode
@@ -94,11 +95,15 @@ export function PlanBudgetRow({
    * segment and a second leftover line show the projection.
    */
   upcoming?: number
+  /** Remaining room on non-recurring Monthly Estimate lines. */
+  unscheduled?: number
 }) {
   const upcomingSafe = Math.max(0, Math.round(upcoming))
+  const unscheduledSafe = Math.max(0, Math.round(unscheduled))
+  const projectedAdd = upcomingSafe + unscheduledSafe
   const projectedRemaining = Math.max(
     0,
-    bucket.target - bucket.actual - upcomingSafe,
+    bucket.target - bucket.actual - projectedAdd,
   )
   const rawPct =
     bucket.target > 0
@@ -116,6 +121,14 @@ export function PlanBudgetRow({
     bucket.target > 0 && upcomingSafe > 0
       ? Math.min(100 - actualPct, (upcomingSafe / bucket.target) * 100)
       : 0
+  const unscheduledPct =
+    bucket.target > 0 && unscheduledSafe > 0
+      ? Math.min(
+          100 - actualPct - upcomingPct,
+          (unscheduledSafe / bucket.target) * 100,
+        )
+      : 0
+  const hasProjectedFill = upcomingPct > 0 || unscheduledPct > 0
   /** Bar width always 0–100; % label shows actual used/progress (may exceed 100). */
   const barPct = Math.min(100, Math.max(0, rawPct))
   const displayPct = Math.max(0, rawPct)
@@ -140,12 +153,18 @@ export function PlanBudgetRow({
         ? `Over by ${formatRupiah(bucket.actual - bucket.target)}`
         : `${formatRupiah(Math.max(0, bucket.remaining))} left`
       : null
+  const projectedAfterLabel =
+    upcomingSafe > 0 && unscheduledSafe > 0
+      ? 'expected'
+      : upcomingSafe > 0
+        ? 'upcoming'
+        : 'unscheduled'
   const projectedStatusText =
     mode === 'ceiling' &&
-    upcomingSafe > 0 &&
+    projectedAdd > 0 &&
     bucket.target > 0 &&
     !ceilingOver
-      ? `${formatRupiah(projectedRemaining)} left after upcoming`
+      ? `${formatRupiah(projectedRemaining)} left after ${projectedAfterLabel}`
       : null
   const primaryCeilingStatusText = projectedStatusText ?? ceilingStatusText
   const secondaryCeilingStatusText = projectedStatusText
@@ -177,8 +196,20 @@ export function PlanBudgetRow({
     mode === 'ceiling' &&
     ceilingStatusPlacement === 'under-title' &&
     ceilingStatusText != null
+  const upcomingLabel =
+    upcomingSafe > 0 ? `Upcoming ${formatRupiah(upcomingSafe)}` : null
+  const unscheduledLabel =
+    unscheduledSafe > 0
+      ? `Unscheduled ${formatRupiah(unscheduledSafe)}`
+      : null
+  const splitProjectionRows = upcomingLabel != null && unscheduledLabel != null
   const hintUnderTitle =
-    !useDetailStack && showMetrics && hint ? hint : null
+    !useDetailStack &&
+    showMetrics &&
+    !splitProjectionRows &&
+    (hint || upcomingLabel || unscheduledLabel)
+      ? (hint ?? upcomingLabel ?? unscheduledLabel)
+      : null
   const showUnderTitleRow =
     ceilingStatusUnderTitle ||
     hintUnderTitle != null ||
@@ -318,7 +349,32 @@ export function PlanBudgetRow({
               </div>
               {amountNode}
             </div>
-            {showUnderTitleRow ? (
+            {splitProjectionRows && ceilingStatusUnderTitle ? (
+              <div className="mt-0.5 space-y-0.5">
+                <div className="flex items-baseline justify-between gap-2">
+                  <p className="min-w-0 text-[11px] text-neutral-400">
+                    {upcomingLabel}
+                  </p>
+                  {ceilingOver ? (
+                    <p
+                      className={`shrink-0 text-right text-[11px] font-semibold tabular-nums ${ceilingStatusColor}`}
+                    >
+                      {ceilingStatusText}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="flex items-baseline justify-between gap-2">
+                  <p className="min-w-0 text-[11px] text-neutral-400">
+                    {unscheduledLabel}
+                  </p>
+                  {projectedStatusText ? (
+                    <p className="shrink-0 text-right text-[11px] tabular-nums text-neutral-400">
+                      {projectedStatusText}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            ) : showUnderTitleRow ? (
               <div className="mt-0.5 space-y-0.5">
                 <div
                   className={`flex items-baseline gap-2 ${
@@ -358,7 +414,9 @@ export function PlanBudgetRow({
                     </p>
                   ) : null}
                 </div>
-                {ceilingStatusUnderTitle && secondaryCeilingStatusText ? (
+                {ceilingStatusUnderTitle &&
+                secondaryCeilingStatusText &&
+                !projectedStatusText ? (
                   <p
                     className={`text-right text-[11px] font-semibold tabular-nums ${ceilingStatusColor}`}
                   >
@@ -389,7 +447,7 @@ export function PlanBudgetRow({
               >
                 {primaryCeilingStatusText}
               </p>
-              {secondaryCeilingStatusText ? (
+              {secondaryCeilingStatusText && !projectedStatusText ? (
                 <p
                   className={`text-right text-[11px] font-semibold tabular-nums ${ceilingStatusColor}`}
                 >
@@ -400,7 +458,7 @@ export function PlanBudgetRow({
           ) : null}
           <div className="flex items-center gap-2">
             <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-neutral-100 dark:bg-neutral-700">
-              {upcomingPct > 0 ? (
+              {hasProjectedFill ? (
                 <div className="flex h-full w-full">
                   {actualPct > 0 ? (
                     <div
@@ -408,10 +466,18 @@ export function PlanBudgetRow({
                       style={{ width: `${actualPct}%` }}
                     />
                   ) : null}
-                  <div
-                    className={`h-full shrink-0 ${fillClass} opacity-40`}
-                    style={{ width: `${upcomingPct}%` }}
-                  />
+                  {upcomingPct > 0 ? (
+                    <div
+                      className={`h-full shrink-0 ${fillClass} opacity-40`}
+                      style={{ width: `${upcomingPct}%` }}
+                    />
+                  ) : null}
+                  {unscheduledPct > 0 ? (
+                    <div
+                      className={`h-full shrink-0 ${fillClass} opacity-25`}
+                      style={{ width: `${unscheduledPct}%` }}
+                    />
+                  ) : null}
                 </div>
               ) : (
                 <div

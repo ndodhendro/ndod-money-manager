@@ -49,6 +49,15 @@ const KIND_BAR: Record<BucketKind, string> = {
   sinking: 'bg-violet-500',
 }
 
+/** Hide sinking PYF rows with no monthly target unless already funded or in arrears. */
+function pyfSinkingVisibleThisMonth(input: {
+  monthTarget: number
+  monthInflow: number
+  missed: number
+}): boolean {
+  return input.monthTarget > 0 || input.monthInflow > 0 || input.missed > 0
+}
+
 function monthInflowByBucketId(
   transactions: Array<{
     type: string
@@ -76,15 +85,15 @@ function rowForBucket(
   if (monthly && totalIncome > 0 && monthlyPct != null) {
     return {
       bucket: { ...monthly, label: b.name },
-      hint: `${monthlyPct}% of income · via Transfer · bal ${formatRupiah(b.balance)}`,
+      hint: `${monthlyPct}% of income · via Transfer · ${formatRupiah(b.balance)}`,
     }
   }
   return {
     bucket: makeMoneyPlanBucket(b.name, 0, monthInflow, 'floor'),
     hint:
       monthInflow > 0
-        ? `Funded this month · bal ${formatRupiah(b.balance)}`
-        : `bal ${formatRupiah(b.balance)}`,
+        ? `Funded this month ·  ${formatRupiah(b.balance)}`
+        : `${formatRupiah(b.balance)}`,
   }
 }
 
@@ -268,6 +277,29 @@ export function PlanPayYourselfFirst() {
     return map
   }, [buckets, bills, movements, viewYm])
 
+  function sinkingMonthActivity(bucketId: string) {
+    return {
+      monthTarget: sinkingMonthTransferTarget({
+        destinationIds: [bucketId],
+        bills,
+        yearMonth: viewYm,
+      }),
+      monthInflow: inflowsByBucket.get(bucketId) ?? 0,
+      missed: missedByBucketId.get(bucketId) ?? 0,
+    }
+  }
+
+  function isSinkingDueThisMonth(bucketId: string) {
+    return pyfSinkingVisibleThisMonth(sinkingMonthActivity(bucketId))
+  }
+
+  function sinkingNodeVisible(node: BucketTreeNode) {
+    if (node.children.length > 0) {
+      return node.children.some((child) => isSinkingDueThisMonth(child.id))
+    }
+    return isSinkingDueThisMonth(node.bucket.id)
+  }
+
   function inflowForNode(
     bucket: BucketWithBalance,
     children: BucketWithBalance[],
@@ -283,15 +315,47 @@ export function PlanPayYourselfFirst() {
   }
 
   function renderSinkingNode(node: BucketTreeNode, kind: BucketKind) {
-    const hasChildren = node.children.length > 0
+    const visibleChildren = node.children.filter((child) =>
+      isSinkingDueThisMonth(child.id),
+    )
+    const hasChildren = visibleChildren.length > 0
+    if (!hasChildren) {
+      const { monthTarget, monthInflow, missed } = sinkingMonthActivity(
+        node.bucket.id,
+      )
+      if (!pyfSinkingVisibleThisMonth({ monthTarget, monthInflow, missed })) {
+        return null
+      }
+      const hint =
+        monthInflow > 0
+          ? `Funded this month · ${formatRupiah(monthInflow)}`
+          : undefined
+      return (
+        <div key={node.bucket.id} className="space-y-2">
+          <PlanBudgetRow
+            icon={node.bucket.icon}
+            bucket={makeMoneyPlanBucket(
+              node.bucket.name,
+              monthTarget,
+              monthInflow,
+              'floor',
+            )}
+            hint={hint}
+            alertHint={missedTransferHint(missed)}
+            barClass={KIND_BAR[kind]}
+            mode="floor"
+            floorStatusPlacement="under-title"
+          />
+        </div>
+      )
+    }
+
     const expanded = expandedParentIds.has(node.bucket.id)
-    const parentInflow = inflowForNode(node.bucket, node.children)
-    const parentMissed = hasChildren
-      ? node.children.reduce(
-          (sum, child) => sum + (missedByBucketId.get(child.id) ?? 0),
-          0,
-        )
-      : (missedByBucketId.get(node.bucket.id) ?? 0)
+    const parentInflow = inflowForNode(node.bucket, visibleChildren)
+    const parentMissed = visibleChildren.reduce(
+      (sum, child) => sum + (missedByBucketId.get(child.id) ?? 0),
+      0,
+    )
     const { bucket: parentRow, hint: parentHint } = rowForBucket(
       node.bucket,
       null,
@@ -303,62 +367,48 @@ export function PlanPayYourselfFirst() {
       <div key={node.bucket.id} className="space-y-2">
         <PlanBudgetRow
           icon={node.bucket.icon}
-          bucket={
-            hasChildren
-              ? {
-                  ...parentRow,
-                  label: `${node.bucket.name} (${node.children.length})`,
-                }
-              : parentRow
-          }
+          bucket={{
+            ...parentRow,
+            label: `${node.bucket.name} (${visibleChildren.length})`,
+          }}
           hint={parentHint}
           alertHint={missedTransferHint(parentMissed)}
           barClass={KIND_BAR[kind]}
           mode="floor"
           floorStatusPlacement="under-title"
           leading={
-            hasChildren ? (
-              <button
-                type="button"
-                onClick={() => toggleParentExpanded(node.bucket.id)}
-                className="-ml-1 shrink-0 rounded-lg p-1 text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-700"
-                aria-label={expanded ? 'Collapse' : 'Expand'}
-                aria-expanded={expanded}
-              >
-                <CollapseChevron expanded={expanded} />
-              </button>
-            ) : undefined
+            <button
+              type="button"
+              onClick={() => toggleParentExpanded(node.bucket.id)}
+              className="-ml-1 shrink-0 rounded-lg p-1 text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-700"
+              aria-label={expanded ? 'Collapse' : 'Expand'}
+              aria-expanded={expanded}
+            >
+              <CollapseChevron expanded={expanded} />
+            </button>
           }
         />
-        {hasChildren && expanded
-          ? node.children.map((child) => {
-              const monthInflow = inflowsByBucket.get(child.id) ?? 0
-              const monthTarget = sinkingMonthTransferTarget({
-                destinationIds: [child.id],
-                bills,
-                yearMonth: viewYm,
-              })
-              const bucket = makeMoneyPlanBucket(
-                child.name,
-                monthTarget,
-                monthInflow,
-                'floor',
+        {expanded
+          ? visibleChildren.map((child) => {
+              const { monthTarget, monthInflow, missed } = sinkingMonthActivity(
+                child.id,
               )
               const hint =
                 monthInflow > 0
                   ? `Funded this month · ${formatRupiah(monthInflow)}`
-                  : monthTarget > 0
-                    ? undefined
-                    : 'No transfer scheduled this month'
+                  : undefined
               return (
                 <div key={child.id} className="pl-5">
                   <PlanBudgetRow
                     icon={child.icon}
-                    bucket={bucket}
-                    hint={hint}
-                    alertHint={missedTransferHint(
-                      missedByBucketId.get(child.id) ?? 0,
+                    bucket={makeMoneyPlanBucket(
+                      child.name,
+                      monthTarget,
+                      monthInflow,
+                      'floor',
                     )}
+                    hint={hint}
+                    alertHint={missedTransferHint(missed)}
                     barClass={KIND_BAR[kind]}
                     mode="floor"
                     floorStatusPlacement="under-title"
@@ -428,6 +478,7 @@ export function PlanPayYourselfFirst() {
               <div className="space-y-5">
                 {groupedBuckets.map(([kind, items]) =>
                   kind === 'sinking' ? (
+                    items.some(sinkingNodeVisible) ? (
                     <div key={kind}>
                       <button
                         type="button"
@@ -452,9 +503,12 @@ export function PlanPayYourselfFirst() {
                         </p>
                       </button>
                       <div className="space-y-2">
-                        {items.map((node) => renderSinkingNode(node, kind))}
+                        {items.filter(sinkingNodeVisible).map((node) =>
+                          renderSinkingNode(node, kind),
+                        )}
                       </div>
                     </div>
+                    ) : null
                   ) : (
                     <div key={kind}>
                       <p className="mb-2 text-xs font-semibold tracking-wide text-neutral-400">

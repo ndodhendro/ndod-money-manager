@@ -32,9 +32,12 @@ import { ActionEmoji } from '../lib/actionEmoji'
 import { sinkingLinkedCategoryIds } from '../lib/bucketsApi'
 import {
   addCategory,
+  categoryHasAttachments,
   deleteCategory,
+  fetchCategoryUsage,
   renameCategory,
   reorderCategories,
+  type CategoryUsage,
 } from '../lib/categoriesApi'
 import {
   type BudgetGroup,
@@ -71,7 +74,7 @@ export function CategoryManagePanel({
   routeWantForm,
 }: CategoryManagePanelProps) {
   const { tree, parents, reload } = useCategories(type)
-  const { buckets } = useBuckets()
+  const { buckets, reload: reloadBuckets } = useBuckets()
   const sinkingCategoryIds = useMemo(
     () => sinkingLinkedCategoryIds(buckets),
     [buckets],
@@ -96,6 +99,9 @@ export function CategoryManagePanel({
   const [editingIsSubcategory, setEditingIsSubcategory] = useState(false)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set())
   const [deleteTarget, setDeleteTarget] = useState<Category | null>(null)
+  const [deleteUsage, setDeleteUsage] = useState<CategoryUsage | null>(null)
+  const [usageLoading, setUsageLoading] = useState(false)
+  const [reassignToId, setReassignToId] = useState('')
   const [deleting, setDeleting] = useState(false)
   const [view, setView] = useState<'list' | 'form'>(() =>
     routeWantForm ? 'form' : 'list',
@@ -122,6 +128,71 @@ export function CategoryManagePanel({
       setExpandedIds((prev) => new Set(prev).add(parent.id))
     }
   }, [editingId, orderedTree])
+
+  useEffect(() => {
+    if (!deleteTarget?.parent_id) {
+      setDeleteUsage(null)
+      setReassignToId('')
+      setUsageLoading(false)
+      return
+    }
+    let cancelled = false
+    setUsageLoading(true)
+    setReassignToId('')
+    setDeleteUsage(null)
+    void fetchCategoryUsage(deleteTarget.id)
+      .then((usage) => {
+        if (!cancelled) setDeleteUsage(usage)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDeleteUsage({
+            transactionCount: 0,
+            recurringBillCount: 0,
+            hasSinkingFund: false,
+          })
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setUsageLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [deleteTarget])
+
+  const reassignGroups = useMemo(() => {
+    if (!deleteTarget?.parent_id) return []
+    return orderedTree
+      .map((parent) => ({
+        parent,
+        children: parent.children.filter(
+          (child) => child.id !== deleteTarget.id,
+        ),
+      }))
+      .filter((group) => group.children.length > 0)
+  }, [deleteTarget, orderedTree])
+
+  const showReassignPicker =
+    Boolean(deleteTarget?.parent_id) &&
+    !usageLoading &&
+    deleteUsage != null &&
+    categoryHasAttachments(deleteUsage)
+
+  const deleteTitle = deleteTarget?.parent_id
+    ? 'Delete Subcategory?'
+    : 'Delete Category?'
+
+  const deleteMessage = (() => {
+    if (!deleteTarget) return ''
+    if (deleteTarget.parent_id) {
+      if (showReassignPicker) {
+        return `“${deleteTarget.name}” will be removed from pickers. You can move attached transactions and recurring bills to another subcategory, or delete without moving. A sinking fund moves only if the destination does not already have one.`
+      }
+      return `“${deleteTarget.name}” will be removed from pickers.`
+    }
+    return `“${deleteTarget.name}” will be removed from pickers. Past transactions keep this category.`
+  })()
 
   // Only notify on view change — not when parent callback identity changes.
   useEffect(() => {
@@ -194,7 +265,7 @@ export function CategoryManagePanel({
   }
 
   async function refresh() {
-    await reload()
+    await Promise.all([reload(), reloadBuckets()])
     onChanged()
   }
 
@@ -267,10 +338,12 @@ export function CategoryManagePanel({
     if (!deleteTarget) return
     setDeleting(true)
     try {
-      await deleteCategory(deleteTarget.id)
+      await deleteCategory(deleteTarget.id, {
+        reassignToId: reassignToId || null,
+      })
       setDeleteTarget(null)
       if (editingId === deleteTarget.id) setEditingId(null)
-      showAppToast('Deleted')
+      showAppToast(reassignToId ? 'Moved and deleted' : 'Deleted')
       await refresh()
     } catch (err) {
       showAppToast(err instanceof Error ? err.message : 'Failed to delete')
@@ -567,21 +640,54 @@ export function CategoryManagePanel({
 
       <ConfirmDialog
         open={Boolean(deleteTarget)}
-        title="Delete category?"
-        message={
-          deleteTarget
-            ? `“${deleteTarget.name}” will be removed from pickers. Past transactions keep this category.`
-            : ''
-        }
-        confirmLabel="Delete"
+        title={deleteTitle}
+        message={deleteMessage}
+        confirmLabel={reassignToId ? 'Move & Delete' : 'Delete'}
+        busyLabel={reassignToId ? 'Moving…' : undefined}
         cancelLabel="Cancel"
         busy={deleting}
+        confirmDisabled={Boolean(deleteTarget?.parent_id) && usageLoading}
         onCancel={() => {
           if (deleting) return
           setDeleteTarget(null)
         }}
         onConfirm={() => void confirmDelete()}
-      />
+      >
+        {deleteTarget?.parent_id && usageLoading ? (
+          <p className="mt-3 text-sm text-neutral-400">
+            Checking attached items…
+          </p>
+        ) : null}
+        {showReassignPicker ? (
+          <div className="mt-3 space-y-1.5">
+            <label
+              htmlFor="reassign-subcategory"
+              className="block text-xs font-medium text-neutral-500 dark:text-neutral-400"
+            >
+              Move To
+            </label>
+            <select
+              id="reassign-subcategory"
+              value={reassignToId}
+              disabled={deleting}
+              onChange={(e) => setReassignToId(e.target.value)}
+              className="w-full rounded-lg bg-neutral-100 px-2 py-2 text-sm dark:bg-neutral-800 dark:text-neutral-100"
+              aria-label="Move to subcategory"
+            >
+              <option value="">Don't Move</option>
+              {reassignGroups.map(({ parent, children }) => (
+                <optgroup key={parent.id} label={`${parent.icon} ${parent.name}`}>
+                  {children.map((child) => (
+                    <option key={child.id} value={child.id}>
+                      {child.icon} {child.name}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </div>
+        ) : null}
+      </ConfirmDialog>
     </div>
   )
 }

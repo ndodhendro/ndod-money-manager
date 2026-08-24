@@ -58,6 +58,11 @@ interface BucketManagePanelProps {
   routeEditId?: string | null
 }
 
+/** Same current/target amount styles on section headers and bucket rows. */
+const BUCKET_CURRENT_AMOUNT_CLASS =
+  'shrink-0 text-right text-sm font-semibold text-neutral-700 dark:text-neutral-200'
+const BUCKET_TARGET_AMOUNT_CLASS = 'font-normal text-neutral-400'
+
 export function BucketManagePanel({
   onChanged,
   onViewChange,
@@ -77,7 +82,6 @@ export function BucketManagePanel({
   const [categoryOpen, setCategoryOpen] = useState(false)
   const [targetDigits, setTargetDigits] = useState('')
   const [openingDigits, setOpeningDigits] = useState('')
-  const [openingTransfersDigits, setOpeningTransfersDigits] = useState('')
   const [saving, setSaving] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(
     () => routeEditId ?? null,
@@ -220,6 +224,8 @@ export function BucketManagePanel({
     if (!editingId) return false
     return buckets.some((b) => b.parent_id === editingId)
   }, [buckets, editingId])
+  const isSinkingForm = !editingId || editingBucket?.kind === 'sinking'
+  const showOpeningBalance = !isSinkingForm && !editingHasChildren
 
   const isCategoryLinkedSinking =
     editingBucket?.kind === 'sinking' && Boolean(editingBucket.category_id)
@@ -376,7 +382,6 @@ export function BucketManagePanel({
     setCategoryOpen(false)
     setTargetDigits('')
     setOpeningDigits('')
-    setOpeningTransfersDigits('')
     setEditingId(null)
     hydratedEditIdRef.current = null
   }
@@ -398,11 +403,8 @@ export function BucketManagePanel({
       )
     }
     setOpeningDigits(
-      b.opening_balance > 0 ? String(Math.round(b.opening_balance)) : '',
-    )
-    setOpeningTransfersDigits(
-      b.opening_transfers > 0
-        ? String(Math.round(b.opening_transfers))
+      b.kind !== 'sinking' && b.opening_balance > 0
+        ? String(Math.round(b.opening_balance))
         : '',
     )
     setOpenSwipeId(null)
@@ -458,10 +460,7 @@ export function BucketManagePanel({
       const created = await createSinkingBucketFromCategory({
         category_id: categoryId,
         target_amount: target,
-        opening_balance: openingDigits ? Number(openingDigits) : 0,
-        opening_transfers: openingTransfersDigits
-          ? Number(openingTransfersDigits)
-          : 0,
+        opening_balance: 0,
       })
       resetForm()
       setKindGroupsExpanded(true)
@@ -513,18 +512,11 @@ export function BucketManagePanel({
             ? { target_amount: Number(targetDigits) }
             : {}
           : { target_amount: Number(targetDigits) }),
-        ...(editingHasChildren
-          ? {}
-          : {
+        ...(current?.kind !== 'sinking' && !editingHasChildren
+          ? {
               opening_balance: openingDigits ? Number(openingDigits) : 0,
-              ...(current?.kind === 'sinking'
-                ? {
-                    opening_transfers: openingTransfersDigits
-                      ? Number(openingTransfersDigits)
-                      : 0,
-                  }
-                : {}),
-            }),
+            }
+          : {}),
       })
       resetForm()
       setKindGroupsExpanded(true)
@@ -569,7 +561,7 @@ export function BucketManagePanel({
   function handleTargetKeyDown(e: KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'Enter') {
       e.preventDefault()
-      if (!editingHasChildren) {
+      if (showOpeningBalance) {
         openingRef.current?.focus()
       } else {
         void (editingId ? handleUpdate() : handleAdd())
@@ -615,8 +607,14 @@ export function BucketManagePanel({
             }}
           >
             <div className="space-y-5">
-              {displayGroups.map(([kind, nodes]) =>
-                kind === 'sinking' ? (
+              {displayGroups.map(([kind, nodes]) => {
+                const sinkingCurrentTotal =
+                  kind === 'sinking' ? sinkingSectionCurrent(nodes) : 0
+                const sinkingTargetTotal =
+                  kind === 'sinking' ? sinkingSectionTarget(nodes) : 0
+                const showSinkingHeaderAmounts =
+                  sinkingCurrentTotal > 0 || sinkingTargetTotal > 0
+                return kind === 'sinking' ? (
                   <div key={kind}>
                     <button
                       type="button"
@@ -639,6 +637,20 @@ export function BucketManagePanel({
                       <p className="min-w-0 flex-1 text-xs font-semibold tracking-wide text-neutral-400">
                         {BUCKET_KIND_LABELS[kind]}
                       </p>
+                      {showSinkingHeaderAmounts ? (
+                        <p
+                          className={BUCKET_CURRENT_AMOUNT_CLASS}
+                          aria-label={`Current ${formatRupiah(sinkingCurrentTotal)} of target ${formatRupiah(sinkingTargetTotal)}`}
+                        >
+                          {formatRupiah(sinkingCurrentTotal)}
+                          {sinkingTargetTotal > 0 ? (
+                            <span className={BUCKET_TARGET_AMOUNT_CLASS}>
+                              {' '}
+                              / {formatRupiah(sinkingTargetTotal)}
+                            </span>
+                          ) : null}
+                        </p>
+                      ) : null}
                     </button>
                     <div className="space-y-2">
                       <div className="flex items-center justify-end">
@@ -714,8 +726,8 @@ export function BucketManagePanel({
                       ))}
                     </div>
                   </div>
-                ),
-              )}
+                )
+              })}
             </div>
           </GroupedListFrame>
         </div>
@@ -856,7 +868,7 @@ export function BucketManagePanel({
                 </span>
                 <FormattedAmountInput
                   ref={targetRef}
-                  enterKeyHint="next"
+                  enterKeyHint={showOpeningBalance ? 'next' : 'done'}
                   placeholder="0"
                   digits={targetDigits}
                   onDigitsChange={setTargetDigits}
@@ -866,49 +878,22 @@ export function BucketManagePanel({
               </label>
             ) : null}
 
-            {!editingHasChildren ? (
-              <div className="space-y-2">
-                <label className="block">
-                  <span className="mb-1 block text-xs text-neutral-500">
-                    Opening balance (optional)
-                  </span>
-                  <FormattedAmountInput
-                    ref={openingRef}
-                    enterKeyHint="next"
-                    placeholder="0"
-                    digits={openingDigits}
-                    onDigitsChange={setOpeningDigits}
-                    onKeyDown={handleOpeningKeyDown}
-                    className="w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
-                  />
-                </label>
-
-                {!editingId || editingBucket?.kind === 'sinking' ? (
-                  <label className="block">
-                    <span className="mb-1 block text-xs text-neutral-500">
-                      Opening transfers (optional)
-                    </span>
-                    <FormattedAmountInput
-                      enterKeyHint="done"
-                      placeholder="0"
-                      digits={openingTransfersDigits}
-                      onDigitsChange={setOpeningTransfersDigits}
-                      onKeyDown={handleOpeningKeyDown}
-                      className="w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
-                    />
-                    <span className="mt-1 block text-[11px] text-neutral-400">
-                      Used for pacing when you enter balances mid-plan.
-                    </span>
-                  </label>
-                ) : null}
-
-              </div>
-            ) : (
-              <p className="text-[11px] text-neutral-400">
-                Opening balance lives on children. Parent balance is the sum
-                of child balances.
-              </p>
-            )}
+            {showOpeningBalance ? (
+              <label className="block">
+                <span className="mb-1 block text-xs text-neutral-500">
+                  Opening balance (optional)
+                </span>
+                <FormattedAmountInput
+                  ref={openingRef}
+                  enterKeyHint="done"
+                  placeholder="0"
+                  digits={openingDigits}
+                  onDigitsChange={setOpeningDigits}
+                  onKeyDown={handleOpeningKeyDown}
+                  className="w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100"
+                />
+              </label>
+            ) : null}
 
             {editingBucket && (
               <p className="text-[11px] text-neutral-400">
@@ -1003,6 +988,11 @@ function BucketTreeRows({
         highlightId={highlightId}
         highlightRef={highlightRef}
         emergencyAutoTarget={emergencyAutoTarget}
+        displayTarget={
+          node.bucket.kind === 'sinking' && hasChildren
+            ? sumSinkingTargets(node.children)
+            : undefined
+        }
         expandable={hasChildren}
         expanded={expanded}
         onToggleExpand={hasChildren ? onToggleExpand : undefined}
@@ -1040,6 +1030,7 @@ function BucketListRow({
   highlightId,
   highlightRef,
   emergencyAutoTarget,
+  displayTarget: displayTargetOverride,
   expandable = false,
   expanded = false,
   onToggleExpand,
@@ -1054,6 +1045,7 @@ function BucketListRow({
   highlightId: string | null
   highlightRef: MutableRefObject<HTMLDivElement | null>
   emergencyAutoTarget: number
+  displayTarget?: number
   expandable?: boolean
   expanded?: boolean
   onToggleExpand?: () => void
@@ -1073,7 +1065,8 @@ function BucketListRow({
       expanded={expanded}
       onToggleExpand={onToggleExpand}
       displayTarget={
-        bucket.kind === 'emergency' ? emergencyAutoTarget : undefined
+        displayTargetOverride ??
+        (bucket.kind === 'emergency' ? emergencyAutoTarget : undefined)
       }
     />
   )
@@ -1158,6 +1151,19 @@ function BucketRowContent({
         : bucket.target_amount != null
           ? bucket.target_amount
           : null
+  const showHeaderTarget =
+    (bucket.kind === 'sinking' || bucket.kind === 'emergency') &&
+    target != null &&
+    target > 0
+  const isSinkingParent = bucket.kind === 'sinking' && childCount > 0
+  const leftoverTarget = !showHeaderTarget && target != null && target > 0
+  const showKindLabel =
+    bucket.kind !== 'sinking' &&
+    bucket.kind !== 'emergency' &&
+    bucket.kind !== 'investment'
+  const showMetaLine =
+    !isSinkingParent &&
+    (showKindLabel || Boolean(group) || bucket.is_system || leftoverTarget)
   return (
     <>
       {expandable && onToggleExpand ? (
@@ -1187,19 +1193,54 @@ function BucketRowContent({
               </span>
             ) : null}
           </p>
-          <p className="shrink-0 text-sm font-semibold text-neutral-700 dark:text-neutral-200">
+          <p className={BUCKET_CURRENT_AMOUNT_CLASS}>
             {formatRupiah(bucket.balance)}
+            {showHeaderTarget && target != null ? (
+              <span className={BUCKET_TARGET_AMOUNT_CLASS}>
+                {' '}
+                / {formatRupiah(target)}
+              </span>
+            ) : null}
           </p>
         </div>
-        <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-neutral-400">
-          <span>{BUCKET_KIND_LABELS[bucket.kind]}</span>
-          {group ? <BudgetGroupBadge group={group} /> : null}
-          {bucket.is_system ? <span>· system</span> : null}
-          {target != null && target > 0 ? (
-            <span>· target {formatRupiah(target)}</span>
-          ) : null}
-        </p>
+        {showMetaLine ? (
+          <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-neutral-400">
+            {showKindLabel ? (
+              <span>{BUCKET_KIND_LABELS[bucket.kind]}</span>
+            ) : null}
+            {group ? <BudgetGroupBadge group={group} /> : null}
+            {bucket.is_system ? <span>· system</span> : null}
+            {leftoverTarget ? (
+              <span>· target {formatRupiah(target)}</span>
+            ) : null}
+          </p>
+        ) : null}
       </div>
     </>
+  )
+}
+
+function sumSinkingTargets(
+  buckets: Array<Pick<BucketWithBalance, 'target_amount'>>,
+): number {
+  return buckets.reduce(
+    (sum, b) => sum + Math.max(0, b.target_amount ?? 0),
+    0,
+  )
+}
+
+function sinkingTreeTarget(node: BucketTreeNode): number {
+  if (node.children.length > 0) return sumSinkingTargets(node.children)
+  return Math.max(0, node.bucket.target_amount ?? 0)
+}
+
+function sinkingSectionTarget(nodes: BucketTreeNode[]): number {
+  return nodes.reduce((sum, node) => sum + sinkingTreeTarget(node), 0)
+}
+
+function sinkingSectionCurrent(nodes: BucketTreeNode[]): number {
+  return nodes.reduce(
+    (sum, node) => sum + Math.max(0, node.bucket.balance),
+    0,
   )
 }

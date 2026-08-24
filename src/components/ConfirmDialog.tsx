@@ -1,11 +1,15 @@
+import type { ReactNode } from 'react'
 import { useOverlayBack } from '../hooks/useBackButton'
 
 interface ConfirmDialogProps {
   open: boolean
   title: string
   message: string
+  children?: ReactNode
   confirmLabel?: string
   cancelLabel?: string
+  /** Extra disable on confirm besides `busy` (e.g. while a check is loading). */
+  confirmDisabled?: boolean
   /**
    * Optional left-button action distinct from dismiss (backdrop / Back).
    * When set, left button calls onAlternate; backdrop still calls onCancel.
@@ -27,6 +31,7 @@ export function ConfirmDialog({
   open,
   title,
   message,
+  children,
   confirmLabel = 'Delete',
   cancelLabel = 'Cancel',
   alternateLabel,
@@ -34,6 +39,7 @@ export function ConfirmDialog({
   busyLabel,
   danger = true,
   busy = false,
+  confirmDisabled = false,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -80,6 +86,7 @@ export function ConfirmDialog({
         >
           {message}
         </p>
+        {children}
         <div className="mt-5 grid grid-cols-2 gap-2">
           <button
             type="button"
@@ -91,7 +98,7 @@ export function ConfirmDialog({
           </button>
           <button
             type="button"
-            disabled={busy}
+            disabled={busy || confirmDisabled}
             onClick={onConfirm}
             className={`rounded-xl py-3 text-sm font-semibold disabled:opacity-60 ${
               danger

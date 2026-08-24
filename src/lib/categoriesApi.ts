@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { notifyRecurringBillsChanged } from './recurringBillsEvents'
 import type { BudgetGroup, Category, CategoryType } from './types'
 
 export interface AddCategoryInput {
@@ -163,8 +164,212 @@ export async function addCategory(input: AddCategoryInput): Promise<void> {
   }
 }
 
+export interface CategoryUsage {
+  transactionCount: number
+  recurringBillCount: number
+  hasSinkingFund: boolean
+}
+
+export function categoryHasAttachments(usage: CategoryUsage): boolean {
+  return (
+    usage.transactionCount > 0 ||
+    usage.recurringBillCount > 0 ||
+    usage.hasSinkingFund
+  )
+}
+
+function isMissingRelation(message: string): boolean {
+  const lower = message.toLowerCase()
+  return (
+    lower.includes('does not exist') ||
+    lower.includes('schema cache') ||
+    lower.includes('recurring_bill')
+  )
+}
+
+async function fetchCategoryById(id: string): Promise<Category> {
+  const { data, error } = await supabase
+    .from('categories')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle()
+  if (error) throw error
+  if (!data) throw new Error('Category not found')
+  return mapCategory(data as Record<string, unknown>)
+}
+
+/** Transactions, recurring bills/estimates, and active sinking fund on a category. */
+export async function fetchCategoryUsage(
+  categoryId: string,
+): Promise<CategoryUsage> {
+  const [txResult, billResult, sinkingResult] = await Promise.all([
+    supabase
+      .from('transactions')
+      .select('id', { count: 'exact', head: true })
+      .eq('category_id', categoryId),
+    supabase
+      .from('recurring_bills')
+      .select('id', { count: 'exact', head: true })
+      .eq('category_id', categoryId),
+    supabase
+      .from('buckets')
+      .select('id')
+      .eq('kind', 'sinking')
+      .eq('is_active', true)
+      .eq('category_id', categoryId)
+      .limit(1),
+  ])
+
+  if (txResult.error) throw txResult.error
+
+  let recurringBillCount = 0
+  if (billResult.error) {
+    if (!isMissingRelation(billResult.error.message)) throw billResult.error
+  } else {
+    recurringBillCount = billResult.count ?? 0
+  }
+
+  let hasSinkingFund = false
+  if (sinkingResult.error) {
+    if (!isMissingRelation(sinkingResult.error.message)) throw sinkingResult.error
+  } else {
+    hasSinkingFund = (sinkingResult.data?.length ?? 0) > 0
+  }
+
+  return {
+    transactionCount: txResult.count ?? 0,
+    recurringBillCount,
+    hasSinkingFund,
+  }
+}
+
+async function throwUnlessMissingRelation(
+  error: { message: string } | null,
+): Promise<void> {
+  if (!error) return
+  if (isMissingRelation(error.message)) return
+  throw new Error(error.message)
+}
+
+/** Point transfer estimates and history at another sinking fund. */
+async function retargetSinkingFundRefs(
+  fromBucketId: string,
+  toBucketId: string,
+): Promise<boolean> {
+  if (fromBucketId === toBucketId) return false
+
+  const billTo = await supabase
+    .from('recurring_bills')
+    .update({ to_bucket_id: toBucketId })
+    .eq('type', 'transfer')
+    .eq('to_bucket_id', fromBucketId)
+    .eq('is_active', true)
+  await throwUnlessMissingRelation(billTo.error)
+
+  const billFrom = await supabase
+    .from('recurring_bills')
+    .update({ from_bucket_id: toBucketId })
+    .eq('type', 'transfer')
+    .eq('from_bucket_id', fromBucketId)
+    .eq('is_active', true)
+  await throwUnlessMissingRelation(billFrom.error)
+
+  const txTo = await supabase
+    .from('transactions')
+    .update({ to_bucket_id: toBucketId })
+    .eq('type', 'transfer')
+    .eq('to_bucket_id', fromBucketId)
+  if (txTo.error) throw new Error(txTo.error.message)
+
+  const txFrom = await supabase
+    .from('transactions')
+    .update({ from_bucket_id: toBucketId })
+    .eq('type', 'transfer')
+    .eq('from_bucket_id', fromBucketId)
+  if (txFrom.error) throw new Error(txFrom.error.message)
+
+  return !billTo.error && !billFrom.error
+}
+
+/**
+ * Move transactions and recurring bills/estimates to another active
+ * subcategory of the same type. Relink the source sinking fund only when
+ * the destination does not already have one. If it does, transfer estimates
+ * that funded the source fund are retargeted to the destination fund,
+ * including transfer rows in History.
+ */
+export async function reassignCategoryUsage(
+  fromId: string,
+  toId: string,
+): Promise<void> {
+  if (fromId === toId) {
+    throw new Error('Pick a different subcategory')
+  }
+
+  const [fromCat, toCat] = await Promise.all([
+    fetchCategoryById(fromId),
+    fetchCategoryById(toId),
+  ])
+  if (!fromCat.parent_id) {
+    throw new Error('Only subcategories can be reassigned')
+  }
+  if (!toCat.parent_id) {
+    throw new Error('Pick a subcategory, not a main category')
+  }
+  if (!toCat.is_active) {
+    throw new Error('Selected subcategory is inactive')
+  }
+  if (toCat.type !== fromCat.type) {
+    throw new Error('Pick a subcategory of the same type')
+  }
+
+  const { error: txError } = await supabase
+    .from('transactions')
+    .update({ category_id: toId })
+    .eq('category_id', fromId)
+  if (txError) throw new Error(txError.message)
+
+  const { error: billError } = await supabase
+    .from('recurring_bills')
+    .update({ category_id: toId })
+    .eq('category_id', fromId)
+    .neq('type', 'transfer')
+  await throwUnlessMissingRelation(billError)
+
+  const {
+    fetchBuckets,
+    findActiveBucketForCategory,
+    relinkSinkingBucketToSubcategory,
+  } = await import('./bucketsApi')
+  const buckets = await fetchBuckets()
+  const sourceBucket = findActiveBucketForCategory(buckets, fromId)
+  const destBucket = findActiveBucketForCategory(buckets, toId)
+
+  let retargetedTransfers = false
+  if (sourceBucket && destBucket) {
+    retargetedTransfers = await retargetSinkingFundRefs(
+      sourceBucket.id,
+      destBucket.id,
+    )
+  } else if (sourceBucket) {
+    await relinkSinkingBucketToSubcategory(sourceBucket.id, toId)
+  }
+
+  if (!billError || retargetedTransfers) {
+    notifyRecurringBillsChanged()
+  }
+}
+
 /** Soft delete — row stays for history mapping. */
-export async function deleteCategory(id: string): Promise<void> {
+export async function deleteCategory(
+  id: string,
+  options?: { reassignToId?: string | null },
+): Promise<void> {
+  const reassignToId = options?.reassignToId?.trim()
+  if (reassignToId) {
+    await reassignCategoryUsage(id, reassignToId)
+  }
+
   const { data: current, error: currentError } = await supabase
     .from('categories')
     .select('parent_id')

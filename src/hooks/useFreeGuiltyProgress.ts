@@ -67,6 +67,7 @@ export function useFreeGuiltyProgress(
   } = usePyfSettings()
   const {
     bills,
+    allActiveBills,
     logByOccurrenceKey,
     dueBillIdByTxId,
     overrideByBillId,
@@ -121,7 +122,7 @@ export function useFreeGuiltyProgress(
     return buildPaydayAllocation({
       income: incomeParts.regular,
       bonusIncome: incomeParts.bonus,
-      bills,
+      bills: allActiveBills,
       overridesByBillId: overrideByBillId,
       skippedOccurrenceKeys,
       categoriesById,
@@ -137,7 +138,7 @@ export function useFreeGuiltyProgress(
     settings,
     billsAvailable,
     incomeParts,
-    bills,
+    allActiveBills,
     overrideByBillId,
     skippedOccurrenceKeys,
     categoriesById,

@@ -1,7 +1,7 @@
 import {
   budgetGroupOfTransferTo,
-  sumCommittedWants,
-  sumPlannedNeeds,
+  plannedNeedsCeiling,
+  plannedWantsCeiling,
 } from './freeWants'
 import {
   resolveEstimateAmount,
@@ -99,7 +99,7 @@ export interface BuildPaydayAllocationInput {
   yearMonth: string
   emergencyPct: number
   investmentPct: number
-  /** Buffer as % of unskipped Planned Needs (default 10). */
+  /** Buffer as % of Planned Needs (default 10). */
   bufferPct?: number
   /** Opening Buffer carry from prior month close (default 0). */
   openingBufferCarry?: number
@@ -126,8 +126,12 @@ function isSavingsTransferDestination(
 function isPlannedNeedsOrWantsSinkingTransfer(
   bill: RecurringBill,
   bucketsById: Map<string, PaydayBucketRef>,
+  categoriesById: Map<string, Category>,
 ): boolean {
-  return budgetGroupOfTransferTo(bill.to_bucket_id, bucketsById) != null
+  return (
+    budgetGroupOfTransferTo(bill.to_bucket_id, bucketsById, categoriesById) !=
+    null
+  )
 }
 
 function normalizeName(value: string): string {
@@ -308,11 +312,11 @@ export function buildBonusAllocation(input: {
  * so legacy rows do not affect the pool).
  * `income` must be regular monthly income (no THR / Performance Bonus).
  *
- * Planned Needs/Wants ceilings shrink when occurrences are skipped.
- * Buffer = round(unskipped Needs × bufferPct / 100) + skipped Needs amount
- *   + opening Buffer carry.
- * Guilt-Free = income − effective Needs − buffer − effective Wants − sinking
- *   + opening Guilt-Free carry (Wants skips raise residual; do not double-add).
+ * Planned Needs/Wants ceilings ignore skips so Close Month leftover stays
+ * on those tracks (skipped due items are operational, not a smaller plan).
+ * Buffer = round(Planned Needs × bufferPct / 100) + opening Buffer carry.
+ * Guilt-Free = income − Needs − buffer − Wants − sinking
+ *   + opening Guilt-Free carry.
  * Sinking = EF / Inv / untagged sinking only (Needs/Wants sinking is in Planned).
  */
 export function computeGuiltFreePools(input: BuildPaydayAllocationInput): {
@@ -323,8 +327,6 @@ export function computeGuiltFreePools(input: BuildPaydayAllocationInput): {
   bufferPct: number
   sinkingTotal: number
   guiltFree: number
-  /** Needs amount freed by skips (added into Buffer). */
-  skippedNeeds: number
 } {
   const income = Math.max(0, input.income)
   const bufferPct = Math.max(0, input.bufferPct ?? 10)
@@ -334,31 +336,18 @@ export function computeGuiltFreePools(input: BuildPaydayAllocationInput): {
     Math.round(input.openingGuiltFreeCarry ?? 0),
   )
 
-  const needsUnskipped = sumPlannedNeeds(
-    input.bills,
-    input.overridesByBillId,
-    input.categoriesById,
-    input.yearMonth,
-    undefined,
-    input.bucketsById,
-  )
-  const plannedNeeds = sumPlannedNeeds(
-    input.bills,
-    input.overridesByBillId,
-    input.categoriesById,
-    input.yearMonth,
-    input.skippedOccurrenceKeys ?? new Set(),
-    input.bucketsById,
-  )
-  const plannedWants = sumCommittedWants(
-    input.bills,
-    input.overridesByBillId,
-    input.categoriesById,
-    input.yearMonth,
-    input.skippedOccurrenceKeys ?? new Set(),
-    input.bucketsById,
-  )
-  const skippedNeeds = Math.max(0, needsUnskipped - plannedNeeds)
+  const plannedNeeds = plannedNeedsCeiling({
+    bills: input.bills,
+    categoriesById: input.categoriesById,
+    bucketsById: input.bucketsById,
+    yearMonth: input.yearMonth,
+  })
+  const plannedWants = plannedWantsCeiling({
+    bills: input.bills,
+    categoriesById: input.categoriesById,
+    bucketsById: input.bucketsById,
+    yearMonth: input.yearMonth,
+  })
 
   const amountCtx: ResolveEstimateAmountCtx = {
     monthIncome: income,
@@ -371,7 +360,14 @@ export function computeGuiltFreePools(input: BuildPaydayAllocationInput): {
   for (const bill of input.bills) {
     if (!bill.is_active) continue
     if (!isSavingsTransferDestination(bill, input.bucketsById)) continue
-    if (isPlannedNeedsOrWantsSinkingTransfer(bill, input.bucketsById)) continue
+    if (
+      isPlannedNeedsOrWantsSinkingTransfer(
+        bill,
+        input.bucketsById,
+        input.categoriesById,
+      )
+    )
+      continue
     const override = input.overridesByBillId.get(bill.id)
     const count = estimateOccurrenceCount(
       bill,
@@ -384,8 +380,8 @@ export function computeGuiltFreePools(input: BuildPaydayAllocationInput): {
     sinkingTotal += unit * count
   }
 
-  const baseBuffer = Math.round((needsUnskipped * bufferPct) / 100)
-  const buffer = baseBuffer + skippedNeeds + openingBufferCarry
+  const baseBuffer = Math.round((plannedNeeds * bufferPct) / 100)
+  const buffer = baseBuffer + openingBufferCarry
   const guiltFree =
     Math.max(
       0,
@@ -399,7 +395,6 @@ export function computeGuiltFreePools(input: BuildPaydayAllocationInput): {
     bufferPct,
     sinkingTotal,
     guiltFree,
-    skippedNeeds,
   }
 }
 
@@ -443,7 +438,14 @@ export function buildPaydayAllocation(
   for (const bill of input.bills) {
     if (!bill.is_active) continue
     if (!isSavingsTransferDestination(bill, input.bucketsById)) continue
-    if (isPlannedNeedsOrWantsSinkingTransfer(bill, input.bucketsById)) continue
+    if (
+      isPlannedNeedsOrWantsSinkingTransfer(
+        bill,
+        input.bucketsById,
+        input.categoriesById,
+      )
+    )
+      continue
     const override = input.overridesByBillId.get(bill.id)
     const count = estimateOccurrenceCount(
       bill,

@@ -155,11 +155,12 @@ export function sumGuiltFreeSpent(input: {
 export const sumFreeGuiltySpent = sumGuiltFreeSpent
 
 /**
- * History "Overspend" badge: only txs that chronologically push Buffer
- * (Needs flexible demand) or Guilt-Free (Wants flexible demand) past their
- * payday plafond. Flexible demand = estimate-line overage + unplanned.
+ * History "Overspend" badge (Buffer / Guilt-Free): txs that chronologically
+ * push Buffer (Needs flexible demand) or Guilt-Free (Wants flexible demand)
+ * past their payday plafond. Flexible demand = estimate-line overage + unplanned.
+ * Sinking-fund overspend is unioned separately in History.
  */
-export function monthBudgetCeilingOverspendTransactionIds(input: {
+export function monthBudgetTrackDemandByTxId(input: {
   bills: RecurringBill[]
   overridesByBillId: Map<string, RecurringBillMonthOverride>
   skippedOccurrenceKeys?: Set<string>
@@ -169,10 +170,11 @@ export function monthBudgetCeilingOverspendTransactionIds(input: {
   transactions: TransactionWithCategory[]
   checkingBucketIds: Set<string>
   estimateCoverageKeys: Set<string>
-  bufferAllowance: number
-  guiltFreeAllowance: number
   dueBillIdByTxId?: Map<string, string>
-}): Set<string> {
+}): {
+  bufferByTxId: Map<string, number>
+  guiltFreeByTxId: Map<string, number>
+} {
   const { bufferByTxId, guiltFreeByTxId } = monthBudgetFlexibleTrackDemandByTxId(
     {
       bills: input.bills,
@@ -212,6 +214,27 @@ export function monthBudgetCeilingOverspendTransactionIds(input: {
     guiltFreeByTxId.set(id, (guiltFreeByTxId.get(id) ?? 0) + tx.amount)
   }
 
+  return { bufferByTxId, guiltFreeByTxId }
+}
+
+export function monthBudgetCeilingOverspendTransactionIds(input: {
+  bills: RecurringBill[]
+  overridesByBillId: Map<string, RecurringBillMonthOverride>
+  skippedOccurrenceKeys?: Set<string>
+  categoriesById: Map<string, Category>
+  bucketsById: Map<string, EstimateBucketRef>
+  yearMonth: string
+  transactions: TransactionWithCategory[]
+  checkingBucketIds: Set<string>
+  estimateCoverageKeys: Set<string>
+  bufferAllowance: number
+  guiltFreeAllowance: number
+  dueBillIdByTxId?: Map<string, string>
+}): Set<string> {
+  const { bufferByTxId, guiltFreeByTxId } = monthBudgetTrackDemandByTxId(input)
+  const txsById = new Map(
+    input.transactions.map((tx) => [tx.id, tx] as const),
+  )
   const ids = new Set<string>()
   for (const id of idsExceedingTrackAllowance({
     demandByTxId: bufferByTxId,

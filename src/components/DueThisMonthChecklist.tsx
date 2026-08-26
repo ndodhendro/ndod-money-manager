@@ -42,7 +42,6 @@ import {
   evaluateSinkingFundEfLoan,
   resolveMonthWritePolicy,
 } from '../lib/budgetSaveGate'
-import { upsertEfLoanForTransaction } from '../lib/efLoansApi'
 import { useBuckets } from '../hooks/useBuckets'
 import { useCategories } from '../hooks/useCategories'
 import { useFreeGuiltyProgress } from '../hooks/useFreeGuiltyProgress'
@@ -473,6 +472,7 @@ export function DueThisMonthChecklist({
 
       return matchesRecurringBillSearch(searchQuery, item.bill, display, {
         amount,
+        planTag: estimatePlanTag(item.bill, byId, bucketsById),
         occurredOn: item.occurredOn,
         statusLabel,
       })
@@ -867,8 +867,7 @@ export function DueThisMonthChecklist({
 
   async function confirmEfBorrow() {
     if (!pendingEfConfirm) return
-    const { bill, occurredOn, draft, borrowAmount, source, yearMonth: loanYm } =
-      pendingEfConfirm
+    const { bill, occurredOn, draft } = pendingEfConfirm
     const key = occurrenceLogKey(bill.id, occurredOn)
     setPendingEfConfirm(null)
     setBusyKey(key)
@@ -879,12 +878,6 @@ export function DueThisMonthChecklist({
     })
     try {
       const txId = await createTransaction(draft)
-      await upsertEfLoanForTransaction({
-        transactionId: txId,
-        yearMonth: loanYm,
-        amount: borrowAmount,
-        source,
-      })
       await markBillPaid({
         billId: bill.id,
         yearMonth,

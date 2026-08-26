@@ -25,23 +25,48 @@ import {
 } from './types'
 
 /** Minimal bucket fields for Needs/Wants transfer classification + sort. */
-export type BucketBudgetRef = Pick<Bucket, 'kind' | 'budget_group' | 'name'>
+export type BucketBudgetRef = Pick<
+  Bucket,
+  'kind' | 'budget_group' | 'name' | 'is_active' | 'category_id'
+>
 
 /**
  * Needs/Wants for a transfer into a sinking fund.
+ * Prefers the linked subcategory (and its parent) so Plan progress follows a
+ * category move without waiting on a stale bucket stamp.
  * Emergency/investment (and unset sinking) return null.
  */
 export function budgetGroupOfTransferTo(
   toBucketId: string | null,
   bucketsById: Map<string, BucketBudgetRef>,
+  categoriesById?: Map<string, Category>,
 ): 'needs' | 'wants' | null {
   if (!toBucketId) return null
   const bucket = bucketsById.get(toBucketId)
   if (!bucket || bucket.kind !== 'sinking') return null
+  if (categoriesById && bucket.category_id) {
+    const live = budgetGroupOfCategory(bucket.category_id, categoriesById)
+    if (live === 'needs' || live === 'wants') return live
+  }
   if (bucket.budget_group === 'needs' || bucket.budget_group === 'wants') {
     return bucket.budget_group
   }
   return null
+}
+
+/**
+ * Payday / Settings ceilings / Estimate Progress ignore estimates into
+ * inactive (hidden) sinking funds — same rule as Settings bucket list.
+ */
+export function budgetGroupOfActiveSinkingTransfer(
+  toBucketId: string | null,
+  bucketsById: Map<string, BucketBudgetRef>,
+  categoriesById?: Map<string, Category>,
+): 'needs' | 'wants' | null {
+  if (!toBucketId) return null
+  const bucket = bucketsById.get(toBucketId)
+  if (!bucket || bucket.is_active === false) return null
+  return budgetGroupOfTransferTo(toBucketId, bucketsById, categoriesById)
 }
 
 /**
@@ -151,11 +176,17 @@ export function budgetGroupOfEstimate(
   bucketsById?: Map<string, BucketBudgetRef>,
 ): BudgetGroup | null {
   if (bill.type === 'expense') {
+    const fromCat = budgetGroupOfCategory(bill.category_id, categoriesById)
+    if (fromCat) return fromCat
     if (isBudgetGroup(bill.budget_group)) return bill.budget_group
-    return budgetGroupOfCategory(bill.category_id, categoriesById)
+    return null
   }
   if (bill.type === 'transfer' && bucketsById) {
-    return budgetGroupOfTransferTo(bill.to_bucket_id, bucketsById)
+    return budgetGroupOfTransferTo(
+      bill.to_bucket_id,
+      bucketsById,
+      categoriesById,
+    )
   }
   return null
 }
@@ -204,9 +235,11 @@ export function estimatePlanTag(
     if (bucket.kind === 'emergency') return 'emergency'
     if (bucket.kind === 'investment') return 'investment'
     if (bucket.kind === 'sinking') {
-      if (bucket.budget_group === 'needs' || bucket.budget_group === 'wants') {
-        return bucket.budget_group
-      }
+      return budgetGroupOfTransferTo(
+        bill.to_bucket_id,
+        bucketsById,
+        categoriesById,
+      )
     }
     return null
   }
@@ -223,9 +256,8 @@ export function estimatePlanTag(
  * - Wants transfer into a sinking fund tagged Wants (any schedule), when
  *   bucketsById is provided — matches History transfer used on the trackbar
  *
- * Ceiling uses template amount × occurrences. When `skippedOccurrenceKeys` is
- * passed, skips shrink the ceiling (freed residual flows to Guilt-Free).
- * Pass `undefined` to ignore skips (baseline for comparisons).
+ * Ceiling uses template amount × occurrences. Skips do not shrink Month
+ * Budget leftover; pass `undefined` to ignore skips.
  * Multi-month recurring Wants expenses (every 2+ months) are excluded.
  */
 export function sumCommittedWants(
@@ -245,7 +277,11 @@ export function sumCommittedWants(
       matches = budgetGroupOfEstimate(bill, categoriesById) === 'wants'
     } else if (bill.type === 'transfer' && bucketsById) {
       matches =
-        budgetGroupOfTransferTo(bill.to_bucket_id, bucketsById) === 'wants'
+        budgetGroupOfActiveSinkingTransfer(
+          bill.to_bucket_id,
+          bucketsById,
+          categoriesById,
+        ) === 'wants'
     }
     if (!matches) continue
     const override = overridesByBillId.get(bill.id)
@@ -270,9 +306,10 @@ export function sumCommittedWants(
  * - Needs transfer into a sinking fund tagged Needs (any schedule), when
  *   bucketsById is provided — matches History transfer used on the trackbar
  *
- * Ceiling uses template amount × occurrences. When `skippedOccurrenceKeys` is
- * passed, skips shrink the ceiling (skipped amount is added to Buffer in
- * payday pools). Pass `undefined` to ignore skips (buffer % baseline).
+ * Ceiling uses template amount × occurrences. Skips do not shrink this
+ * total (Month Budget leftover stays on Planned Needs). Pass
+ * `skippedOccurrenceKeys` only if a caller still needs a skip-shrunk
+ * operational sum. Pass `undefined` to ignore skips (payday / Settings).
  * Multi-month recurring Needs expenses (every 2+ months) are excluded.
  * Income, Wants, and PYF (emergency/investment) transfers are excluded.
  */
@@ -293,7 +330,11 @@ export function sumPlannedNeeds(
       matches = budgetGroupOfEstimate(bill, categoriesById) === 'needs'
     } else if (bill.type === 'transfer' && bucketsById) {
       matches =
-        budgetGroupOfTransferTo(bill.to_bucket_id, bucketsById) === 'needs'
+        budgetGroupOfActiveSinkingTransfer(
+          bill.to_bucket_id,
+          bucketsById,
+          categoriesById,
+        ) === 'needs'
     }
     if (!matches) continue
     const override = overridesByBillId.get(bill.id)
@@ -312,16 +353,60 @@ export function sumPlannedNeeds(
   return sum
 }
 
+const EMPTY_MONTH_OVERRIDES = new Map<string, RecurringBillMonthOverride>()
+
+export type PlannedCeilingInput = {
+  bills: RecurringBill[]
+  categoriesById: Map<string, Category>
+  bucketsById: Map<string, BucketBudgetRef>
+  yearMonth: string
+}
+
+/**
+ * Planned Needs plafond for a month.
+ * Settings → Money Plan and Plan → Month Budget must both call this.
+ * Template amount × occurrences; skips and month overrides are ignored.
+ */
+export function plannedNeedsCeiling(input: PlannedCeilingInput): number {
+  return sumPlannedNeeds(
+    input.bills,
+    EMPTY_MONTH_OVERRIDES,
+    input.categoriesById,
+    input.yearMonth,
+    undefined,
+    input.bucketsById,
+  )
+}
+
+/**
+ * Planned Wants plafond for a month.
+ * Same contract as plannedNeedsCeiling (Payday / Month Budget).
+ */
+export function plannedWantsCeiling(input: PlannedCeilingInput): number {
+  return sumCommittedWants(
+    input.bills,
+    EMPTY_MONTH_OVERRIDES,
+    input.categoriesById,
+    input.yearMonth,
+    undefined,
+    input.bucketsById,
+  )
+}
+
 /** Actual transfers into sinking funds tagged Needs or Wants. */
 export function sumTransferActualsByBudgetGroup(
   transactions: TransactionWithCategory[],
   bucketsById: Map<string, BucketBudgetRef>,
   group: 'needs' | 'wants',
+  categoriesById?: Map<string, Category>,
 ): number {
   let sum = 0
   for (const tx of transactions) {
     if (tx.type !== 'transfer' || tx.complete_later) continue
-    if (budgetGroupOfTransferTo(tx.to_bucket_id, bucketsById) !== group) {
+    if (
+      budgetGroupOfTransferTo(tx.to_bucket_id, bucketsById, categoriesById) !==
+      group
+    ) {
       continue
     }
     sum += tx.amount

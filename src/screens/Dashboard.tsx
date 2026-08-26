@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { CircleFilterChips } from '../components/CircleFilterChips'
 import { MonthPager } from '../components/MonthPager'
 import { PageTitle } from '../components/PageTitle'
@@ -11,10 +11,8 @@ import {
 } from '../components/SimpleCharts'
 import { useMonthCursor } from '../hooks/useMonthCursor'
 import { useTransactions } from '../hooks/useTransactions'
-import {
-  fetchOpenEfLoans,
-  sumEfLoansBySource,
-} from '../lib/efLoansApi'
+import { useEfOwed } from '../hooks/useEfOwed'
+import { useBuckets } from '../hooks/useBuckets'
 import {
   AMOUNT_IN_CLASS,
   AMOUNT_OUT_CLASS,
@@ -40,26 +38,9 @@ export function Dashboard() {
     handleTouchEnd,
   } = useMonthCursor()
   const { transactions, loading, error } = useTransactions(range)
+  const { owed: efOwed } = useEfOwed()
+  const { emergency } = useBuckets()
   const [circleFilter, setCircleFilter] = useState<Circle | 'semua'>('semua')
-  const [efOwed, setEfOwed] = useState({
-    buffer: 0,
-    guiltFree: 0,
-    sinkingFund: 0,
-    total: 0,
-  })
-
-  const reloadEfOwed = useCallback(async () => {
-    try {
-      const loans = await fetchOpenEfLoans()
-      setEfOwed(sumEfLoansBySource(loans))
-    } catch {
-      setEfOwed({ buffer: 0, guiltFree: 0, sinkingFund: 0, total: 0 })
-    }
-  }, [])
-
-  useEffect(() => {
-    void reloadEfOwed()
-  }, [reloadEfOwed, transactions])
 
   const filtered = useMemo(
     () =>
@@ -195,6 +176,16 @@ export function Dashboard() {
                 {efOwed.sinkingFund > 0
                   ? ` · Sinking ${formatRupiah(efOwed.sinkingFund)}`
                   : ''}
+              </p>
+              <p className="mt-2 text-xs text-amber-800 dark:text-amber-200">
+                Available{' '}
+                {formatRupiah(
+                  Math.max(
+                    0,
+                    Math.round(emergency?.balance ?? 0) - efOwed.total,
+                  ),
+                )}{' '}
+                of Emergency Fund cash
               </p>
             </section>
           )}

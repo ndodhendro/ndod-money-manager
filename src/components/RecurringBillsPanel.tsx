@@ -38,7 +38,9 @@ import {
 } from '../lib/moneyPlan'
 import {
   createRecurringBill,
+  countDueItemsNotOnTarget,
   deleteRecurringBill,
+  fetchLinkedDueItemTransactions,
   fetchRecurringBillLogs,
   fetchRecurringBills,
   formatIntervalLabel,
@@ -47,6 +49,7 @@ import {
   isMissingRecurringSchema,
   RECURRING_EVERY_OPTIONS,
   recurringEveryKey,
+  retargetDueItemTransactions,
   updateRecurringBill,
   type RecurringBill,
   type RecurringIntervalUnit,
@@ -57,7 +60,7 @@ import {
   estimatePlanTag,
   sumEstimateTotalsByType,
 } from '../lib/freeWants'
-import { sinkingLinkedCategoryIds } from '../lib/bucketsApi'
+import { resolveExpenseFromBucketId, sinkingLinkedCategoryIds } from '../lib/bucketsApi'
 import {
   TRANSFER_TYPE_ICON,
   isBudgetGroup,
@@ -210,6 +213,10 @@ export function RecurringBillsPanel({
   const [openSwipeId, setOpenSwipeId] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<RecurringBill | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [moveHistoryPrompt, setMoveHistoryPrompt] = useState<{
+    count: number
+    patch: Parameters<typeof updateRecurringBill>[1]
+  } | null>(null)
   // Seed from route so remount on /recurring/:id does not report view=list
   // while the URL still wants the form (that caused list?edit redirect loops).
   const [editingId, setEditingId] = useState<string | null>(
@@ -223,6 +230,13 @@ export function RecurringBillsPanel({
   const [highlightId, setHighlightId] = useState<string | null>(null)
   const highlightRef = useRef<HTMLDivElement | null>(null)
   const hydratedEditIdRef = useRef<string | null>(null)
+  const editBaselineRef = useRef<{
+    type: TransactionType
+    category_id: string | null
+    from_bucket_id: string | null
+    to_bucket_id: string | null
+    name: string
+  } | null>(null)
   const onViewChangeRef = useRef(onViewChange)
   onViewChangeRef.current = onViewChange
 
@@ -633,6 +647,7 @@ export function RecurringBillsPanel({
     setIsRecurring(true)
     setEditingId(null)
     hydratedEditIdRef.current = null
+    editBaselineRef.current = null
     closePickers()
   }
 
@@ -658,6 +673,13 @@ export function RecurringBillsPanel({
     setIsRecurring(bill.is_recurring !== false)
     setOpenSwipeId(null)
     closePickers()
+    editBaselineRef.current = {
+      type: bill.type,
+      category_id: bill.category_id,
+      from_bucket_id: bill.from_bucket_id,
+      to_bucket_id: bill.to_bucket_id,
+      name: bill.name,
+    }
 
     if (bill.type === 'transfer') {
       setCategoryId(null)
@@ -913,30 +935,101 @@ export function RecurringBillsPanel({
     const resolvedCircle = type === 'income' ? 'hd_family' : circle!
     const updatedId = editingId
     const intervalFields = buildIntervalFields()
+    const patch: Parameters<typeof updateRecurringBill>[1] = {
+      name: note.trim(),
+      amount,
+      type,
+      category_id: type === 'transfer' ? null : categoryId,
+      from_bucket_id: type === 'transfer' ? (fromBucket ?? null) : null,
+      to_bucket_id: type === 'transfer' ? (toBucket ?? null) : null,
+      budget_group: type === 'expense' ? (budgetGroup ?? 'needs') : null,
+      circle: resolvedCircle,
+      owner,
+      icon: resolveIcon(),
+      ...intervalFields,
+    }
+    const baseline = editBaselineRef.current
+    const destChanged =
+      baseline != null &&
+      baseline.type === type &&
+      (type === 'transfer'
+        ? baseline.from_bucket_id !== (fromBucket ?? null) ||
+          baseline.to_bucket_id !== (toBucket ?? null)
+        : baseline.category_id !== categoryId)
+
     setSaving(true)
     try {
-      await updateRecurringBill(updatedId, {
-        name: note.trim(),
-        amount,
-        type,
-        category_id: type === 'transfer' ? null : categoryId,
-        from_bucket_id: type === 'transfer' ? (fromBucket ?? null) : null,
-        to_bucket_id: type === 'transfer' ? (toBucket ?? null) : null,
-        budget_group:
-          type === 'expense' ? (budgetGroup ?? 'needs') : null,
-        circle: resolvedCircle,
-        owner,
-        icon: resolveIcon(),
-        ...intervalFields,
-      })
-      if (type !== 'income') setStoredCircle(resolvedCircle)
-      resetForm()
-      setDayGroupsExpanded(true)
-      setDayGroupsVersion((v) => v + 1)
-      showAppToast(`Updated ${ActionEmoji.edit}`)
-      setView('list')
-      await reloadBills()
-      setHighlightId(updatedId)
+      if (destChanged) {
+        const linked = await fetchLinkedDueItemTransactions(updatedId, {
+          name: note.trim() || baseline?.name || '',
+          type,
+        })
+        const count = countDueItemsNotOnTarget(linked, {
+          type,
+          category_id: patch.category_id ?? null,
+          from_bucket_id: patch.from_bucket_id ?? null,
+          to_bucket_id: patch.to_bucket_id ?? null,
+        })
+        const hasCheckedThisMonth = currentMonthDoneByBillId.has(updatedId)
+        if (count > 0 || (hasCheckedThisMonth && linked.length === 0)) {
+          setMoveHistoryPrompt({
+            count: count > 0 ? count : 1,
+            patch,
+          })
+          return
+        }
+      }
+      await applyEstimateUpdate(updatedId, patch, false)
+    } catch (err) {
+      showAppToast(err instanceof Error ? err.message : 'Failed to update')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function applyEstimateUpdate(
+    updatedId: string,
+    patch: Parameters<typeof updateRecurringBill>[1],
+    moveHistory: boolean,
+  ) {
+    if (moveHistory) {
+      const nextType = patch.type ?? type
+      await retargetDueItemTransactions(
+        updatedId,
+        {
+          type: nextType,
+          category_id: patch.category_id ?? null,
+          from_bucket_id:
+            nextType === 'transfer'
+              ? (patch.from_bucket_id ?? null)
+              : resolveExpenseFromBucketId(patch.category_id ?? null, buckets),
+          to_bucket_id: patch.to_bucket_id ?? null,
+          budget_group: patch.budget_group ?? null,
+        },
+        { name: patch.name?.trim() || note.trim(), type: nextType },
+      )
+    }
+    await updateRecurringBill(updatedId, patch)
+    if (patch.type !== 'income' && patch.circle) setStoredCircle(patch.circle)
+    resetForm()
+    setMoveHistoryPrompt(null)
+    setDayGroupsExpanded(true)
+    setDayGroupsVersion((v) => v + 1)
+    showAppToast(
+      moveHistory ? `Moved and updated ${ActionEmoji.edit}` : `Updated ${ActionEmoji.edit}`,
+    )
+    setView('list')
+    await reloadBills()
+    setHighlightId(updatedId)
+  }
+
+  async function confirmMoveHistorySave(moveHistory: boolean) {
+    if (!editingId || !moveHistoryPrompt) return
+    const updatedId = editingId
+    const patch = moveHistoryPrompt.patch
+    setSaving(true)
+    try {
+      await applyEstimateUpdate(updatedId, patch, moveHistory)
     } catch (err) {
       showAppToast(err instanceof Error ? err.message : 'Failed to update')
     } finally {
@@ -1095,7 +1188,7 @@ export function RecurringBillsPanel({
             <SearchField
               value={searchQuery}
               onChange={setSearchQuery}
-              placeholder="Search estimates"
+              placeholder="Search estimates…"
               aria-label="Search monthly estimates"
               className="min-w-0 flex-1"
             />
@@ -1703,7 +1796,7 @@ export function RecurringBillsPanel({
           disabled={saving}
           className="w-full rounded-xl bg-emerald-500 py-3.5 text-base font-semibold text-white shadow-md active:bg-emerald-600 disabled:opacity-60"
         >
-          {saving ? 'Saving' : editingId ? 'Update' : 'Save'}
+          {saving ? 'Saving…' : editingId ? 'Update' : 'Save'}
         </button>
         {editingId ? (
           <button
@@ -1722,9 +1815,37 @@ export function RecurringBillsPanel({
       )}
 
       <ConfirmDialog
+        open={Boolean(moveHistoryPrompt)}
+        title="Move Linked History?"
+        message={
+          moveHistoryPrompt
+            ? `${moveHistoryPrompt.count} checked History ${
+                moveHistoryPrompt.count === 1 ? 'row' : 'rows'
+              } still ${
+                moveHistoryPrompt.count === 1 ? 'uses' : 'use'
+              } the previous ${
+                type === 'transfer' ? 'buckets' : 'subcategory'
+              }. Move ${
+                moveHistoryPrompt.count === 1 ? 'it' : 'them'
+              } to the new one, or keep History as logged.`
+            : ''
+        }
+        confirmLabel="Move & Save"
+        alternateLabel="Save Only"
+        cancelLabel="Cancel"
+        busy={saving}
+        danger={false}
+        onConfirm={() => void confirmMoveHistorySave(true)}
+        onAlternate={() => void confirmMoveHistorySave(false)}
+        onCancel={() => {
+          if (saving) return
+          setMoveHistoryPrompt(null)
+        }}
+      />
+      <ConfirmDialog
         open={Boolean(deleteTarget)}
         title="Delete estimate?"
-        message={`${deleteLabel} will be removed from Monthly Estimates. Past checklist logs stay linked.`}
+        message={`“${deleteLabel}” will be removed from Monthly Estimates. Past checklist logs stay linked.`}
         confirmLabel="Delete"
         cancelLabel="Cancel"
         busy={deleting}

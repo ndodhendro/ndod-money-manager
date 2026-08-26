@@ -23,11 +23,12 @@ import {
   getCollapseOpen,
   setCollapseOpen,
 } from '../lib/collapseState'
-import { sumPlannedNeeds } from '../lib/freeWants'
+import { plannedNeedsCeiling } from '../lib/freeWants'
 import { FormattedAmountInput } from './FormattedAmountInput'
-import { formatNumber, formatRupiah } from '../lib/format'
+import { formatNumber } from '../lib/format'
 import { emergencyFundTarget } from '../lib/moneyPlan'
 import { currentMonthCursor, monthCursorKey } from '../lib/monthCursor'
+import { isBlankSearch, matchesBucketSearch } from '../lib/listSearch'
 import {
   fetchRecurringBills,
   isMissingRecurringSchema,
@@ -44,6 +45,7 @@ import { CategoryPicker } from './CategoryPicker'
 import { CollapseChevron } from './CollapseChevron'
 import { ConfirmDialog } from './ConfirmDialog'
 import { GroupedListFrame } from './GroupedListFrame'
+import { SearchField } from './SearchField'
 import { SwipeDeleteRow } from './SwipeDeleteRow'
 
 interface BucketManagePanelProps {
@@ -57,11 +59,6 @@ interface BucketManagePanelProps {
   routeWantForm?: boolean
   routeEditId?: string | null
 }
-
-/** Same current/target amount styles on section headers and bucket rows. */
-const BUCKET_CURRENT_AMOUNT_CLASS =
-  'shrink-0 text-right text-sm font-semibold text-neutral-700 dark:text-neutral-200'
-const BUCKET_TARGET_AMOUNT_CLASS = 'font-normal text-neutral-400'
 
 export function BucketManagePanel({
   onChanged,
@@ -100,6 +97,7 @@ export function BucketManagePanel({
     () => new Set(),
   )
   const [highlightId, setHighlightId] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
   const [bills, setBills] = useState<RecurringBill[]>([])
   const highlightRef = useRef<HTMLDivElement | null>(null)
   const hydratedEditIdRef = useRef<string | null>(null)
@@ -130,6 +128,33 @@ export function BucketManagePanel({
       (a, b) => order.indexOf(a[0]) - order.indexOf(b[0]),
     )
   }, [groupedTree])
+
+  const searchActive = !isBlankSearch(searchQuery)
+  const filteredDisplayGroups = useMemo(() => {
+    if (!searchActive) return displayGroups
+    return displayGroups
+      .map(([kind, nodes]) => {
+        const filtered = nodes
+          .map((node) => {
+            const parentMatch = matchesBucketSearch(searchQuery, node.bucket)
+            const children = node.children.filter(
+              (child) =>
+                parentMatch ||
+                matchesBucketSearch(searchQuery, child, {
+                  parentName: node.bucket.name,
+                }),
+            )
+            return { ...node, children }
+          })
+          .filter(
+            (node) =>
+              matchesBucketSearch(searchQuery, node.bucket) ||
+              node.children.length > 0,
+          )
+        return [kind, filtered] as const
+      })
+      .filter(([, nodes]) => nodes.length > 0)
+  }, [displayGroups, searchActive, searchQuery])
 
   const expandableSinkingParentIds = useMemo(() => {
     const sinking = displayGroups.find(([kind]) => kind === 'sinking')
@@ -199,14 +224,12 @@ export function BucketManagePanel({
   const viewYm = monthCursorKey(currentMonthCursor())
   const plannedNeeds = useMemo(
     () =>
-      sumPlannedNeeds(
+      plannedNeedsCeiling({
         bills,
-        new Map(),
         categoriesById,
-        viewYm,
-        undefined,
         bucketsById,
-      ),
+        yearMonth: viewYm,
+      }),
     [bills, categoriesById, bucketsById, viewYm],
   )
   const efMultiplier = pyfSettings?.emergency_fund_target_multiplier ?? 3
@@ -592,28 +615,33 @@ export function BucketManagePanel({
 
       {view === 'list' ? (
         <div className="space-y-3">
+          <SearchField
+            value={searchQuery}
+            onChange={setSearchQuery}
+            placeholder="Search buckets…"
+            aria-label="Search buckets"
+          />
           {!loading && buckets.length === 0 ? (
             <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
               No buckets yet. Add a sinking fund under Sinking Fund below.
             </p>
           ) : null}
 
+          {searchActive && filteredDisplayGroups.length === 0 ? (
+            <p className="rounded-xl bg-white p-3 text-center text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
+              No matches.
+            </p>
+          ) : (
           <GroupedListFrame
             label="Buckets List"
-            expanded={kindGroupsExpanded}
+            expanded={searchActive ? true : kindGroupsExpanded}
             onToggle={(expanded) => {
               setKindGroupsExpanded(expanded)
               setAllSinkingCatsExpanded(expanded)
             }}
           >
             <div className="space-y-5">
-              {displayGroups.map(([kind, nodes]) => {
-                const sinkingCurrentTotal =
-                  kind === 'sinking' ? sinkingSectionCurrent(nodes) : 0
-                const sinkingTargetTotal =
-                  kind === 'sinking' ? sinkingSectionTarget(nodes) : 0
-                const showSinkingHeaderAmounts =
-                  sinkingCurrentTotal > 0 || sinkingTargetTotal > 0
+              {filteredDisplayGroups.map(([kind, nodes]) => {
                 return kind === 'sinking' ? (
                   <div key={kind}>
                     <button
@@ -637,20 +665,6 @@ export function BucketManagePanel({
                       <p className="min-w-0 flex-1 text-xs font-semibold tracking-wide text-neutral-400">
                         {BUCKET_KIND_LABELS[kind]}
                       </p>
-                      {showSinkingHeaderAmounts ? (
-                        <p
-                          className={BUCKET_CURRENT_AMOUNT_CLASS}
-                          aria-label={`Current ${formatRupiah(sinkingCurrentTotal)} of target ${formatRupiah(sinkingTargetTotal)}`}
-                        >
-                          {formatRupiah(sinkingCurrentTotal)}
-                          {sinkingTargetTotal > 0 ? (
-                            <span className={BUCKET_TARGET_AMOUNT_CLASS}>
-                              {' '}
-                              / {formatRupiah(sinkingTargetTotal)}
-                            </span>
-                          ) : null}
-                        </p>
-                      ) : null}
                     </button>
                     <div className="space-y-2">
                       <div className="flex items-center justify-end">
@@ -676,8 +690,11 @@ export function BucketManagePanel({
                           setOpenSwipeId={setOpenSwipeId}
                           highlightId={highlightId}
                           highlightRef={highlightRef}
-                          emergencyAutoTarget={emergencyAutoTarget}
-                          expanded={expandedParentIds.has(node.bucket.id)}
+                          expanded={
+                            searchActive
+                              ? true
+                              : expandedParentIds.has(node.bucket.id)
+                          }
                           onToggleExpand={() =>
                             toggleParentExpanded(node.bucket.id)
                           }
@@ -711,8 +728,11 @@ export function BucketManagePanel({
                           setOpenSwipeId={setOpenSwipeId}
                           highlightId={highlightId}
                           highlightRef={highlightRef}
-                          emergencyAutoTarget={emergencyAutoTarget}
-                          expanded={expandedParentIds.has(node.bucket.id)}
+                          expanded={
+                            searchActive
+                              ? true
+                              : expandedParentIds.has(node.bucket.id)
+                          }
                           onToggleExpand={() =>
                             toggleParentExpanded(node.bucket.id)
                           }
@@ -730,6 +750,7 @@ export function BucketManagePanel({
               })}
             </div>
           </GroupedListFrame>
+          )}
         </div>
       ) : (
         <div className="space-y-3">
@@ -899,8 +920,6 @@ export function BucketManagePanel({
               <p className="text-[11px] text-neutral-400">
                 {BUCKET_KIND_LABELS[editingBucket.kind]}
                 {editingBucket.is_system ? ' · system' : ''}
-                {' · '}
-                Balance {formatRupiah(editingBucket.balance)}
               </p>
             )}
           </div>
@@ -956,7 +975,6 @@ function BucketTreeRows({
   setOpenSwipeId,
   highlightId,
   highlightRef,
-  emergencyAutoTarget,
   expanded,
   onToggleExpand,
   onEdit,
@@ -968,7 +986,6 @@ function BucketTreeRows({
   setOpenSwipeId: (id: string | null) => void
   highlightId: string | null
   highlightRef: MutableRefObject<HTMLDivElement | null>
-  emergencyAutoTarget: number
   expanded: boolean
   onToggleExpand: () => void
   onEdit: (b: BucketWithBalance) => void
@@ -987,12 +1004,6 @@ function BucketTreeRows({
         setOpenSwipeId={setOpenSwipeId}
         highlightId={highlightId}
         highlightRef={highlightRef}
-        emergencyAutoTarget={emergencyAutoTarget}
-        displayTarget={
-          node.bucket.kind === 'sinking' && hasChildren
-            ? sumSinkingTargets(node.children)
-            : undefined
-        }
         expandable={hasChildren}
         expanded={expanded}
         onToggleExpand={hasChildren ? onToggleExpand : undefined}
@@ -1010,7 +1021,6 @@ function BucketTreeRows({
                 setOpenSwipeId={setOpenSwipeId}
                 highlightId={highlightId}
                 highlightRef={highlightRef}
-                emergencyAutoTarget={emergencyAutoTarget}
                 onEdit={onEdit}
                 onDelete={onDelete}
               />
@@ -1029,8 +1039,6 @@ function BucketListRow({
   setOpenSwipeId,
   highlightId,
   highlightRef,
-  emergencyAutoTarget,
-  displayTarget: displayTargetOverride,
   expandable = false,
   expanded = false,
   onToggleExpand,
@@ -1044,8 +1052,6 @@ function BucketListRow({
   setOpenSwipeId: (id: string | null) => void
   highlightId: string | null
   highlightRef: MutableRefObject<HTMLDivElement | null>
-  emergencyAutoTarget: number
-  displayTarget?: number
   expandable?: boolean
   expanded?: boolean
   onToggleExpand?: () => void
@@ -1064,10 +1070,6 @@ function BucketListRow({
       expandable={expandable}
       expanded={expanded}
       onToggleExpand={onToggleExpand}
-      displayTarget={
-        displayTargetOverride ??
-        (bucket.kind === 'emergency' ? emergencyAutoTarget : undefined)
-      }
     />
   )
 
@@ -1125,45 +1127,17 @@ function BucketListRow({
 
 function BucketRowContent({
   bucket,
-  displayTarget,
   childCount = 0,
   expandable = false,
   expanded = false,
   onToggleExpand,
 }: {
   bucket: BucketWithBalance
-  displayTarget?: number
   childCount?: number
   expandable?: boolean
   expanded?: boolean
   onToggleExpand?: () => void
 }) {
-  const group =
-    bucket.kind === 'sinking' &&
-    (bucket.budget_group === 'needs' || bucket.budget_group === 'wants')
-      ? bucket.budget_group
-      : null
-  const target =
-    bucket.kind === 'investment' || bucket.kind === 'checking'
-      ? null
-      : displayTarget != null
-        ? displayTarget
-        : bucket.target_amount != null
-          ? bucket.target_amount
-          : null
-  const showHeaderTarget =
-    (bucket.kind === 'sinking' || bucket.kind === 'emergency') &&
-    target != null &&
-    target > 0
-  const isSinkingParent = bucket.kind === 'sinking' && childCount > 0
-  const leftoverTarget = !showHeaderTarget && target != null && target > 0
-  const showKindLabel =
-    bucket.kind !== 'sinking' &&
-    bucket.kind !== 'emergency' &&
-    bucket.kind !== 'investment'
-  const showMetaLine =
-    !isSinkingParent &&
-    (showKindLabel || Boolean(group) || bucket.is_system || leftoverTarget)
   return (
     <>
       {expandable && onToggleExpand ? (
@@ -1184,63 +1158,21 @@ function BucketRowContent({
         {bucket.icon}
       </span>
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <p className="min-w-0 flex-1 truncate text-sm font-medium text-neutral-800 dark:text-neutral-100">
-            {bucket.name}
-            {childCount > 0 ? (
-              <span className="ml-1 font-normal text-neutral-400">
-                ({childCount})
-              </span>
-            ) : null}
-          </p>
-          <p className={BUCKET_CURRENT_AMOUNT_CLASS}>
-            {formatRupiah(bucket.balance)}
-            {showHeaderTarget && target != null ? (
-              <span className={BUCKET_TARGET_AMOUNT_CLASS}>
-                {' '}
-                / {formatRupiah(target)}
-              </span>
-            ) : null}
-          </p>
-        </div>
-        {showMetaLine ? (
-          <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-neutral-400">
-            {showKindLabel ? (
-              <span>{BUCKET_KIND_LABELS[bucket.kind]}</span>
-            ) : null}
-            {group ? <BudgetGroupBadge group={group} /> : null}
-            {bucket.is_system ? <span>· system</span> : null}
-            {leftoverTarget ? (
-              <span>· target {formatRupiah(target)}</span>
-            ) : null}
+        <p className="truncate text-sm font-medium text-neutral-800 dark:text-neutral-100">
+          {bucket.name}
+          {childCount > 0 ? (
+            <span className="ml-1 font-normal text-neutral-400">
+              ({childCount})
+            </span>
+          ) : null}
+        </p>
+        {bucket.kind === 'sinking' &&
+        (bucket.budget_group === 'needs' || bucket.budget_group === 'wants') ? (
+          <p className="mt-0.5">
+            <BudgetGroupBadge group={bucket.budget_group} />
           </p>
         ) : null}
       </div>
     </>
-  )
-}
-
-function sumSinkingTargets(
-  buckets: Array<Pick<BucketWithBalance, 'target_amount'>>,
-): number {
-  return buckets.reduce(
-    (sum, b) => sum + Math.max(0, b.target_amount ?? 0),
-    0,
-  )
-}
-
-function sinkingTreeTarget(node: BucketTreeNode): number {
-  if (node.children.length > 0) return sumSinkingTargets(node.children)
-  return Math.max(0, node.bucket.target_amount ?? 0)
-}
-
-function sinkingSectionTarget(nodes: BucketTreeNode[]): number {
-  return nodes.reduce((sum, node) => sum + sinkingTreeTarget(node), 0)
-}
-
-function sinkingSectionCurrent(nodes: BucketTreeNode[]): number {
-  return nodes.reduce(
-    (sum, node) => sum + Math.max(0, node.bucket.balance),
-    0,
   )
 }

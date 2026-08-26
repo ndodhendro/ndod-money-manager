@@ -44,10 +44,12 @@ import {
   type Category,
   type CategoryType,
 } from '../lib/types'
+import { isBlankSearch, matchesCategorySearch } from '../lib/listSearch'
 import { BudgetGroupBadge } from './BudgetGroupBadge'
 import { CollapseChevron } from './CollapseChevron'
 import { ConfirmDialog } from './ConfirmDialog'
 import { GroupedListFrame } from './GroupedListFrame'
+import { SearchField } from './SearchField'
 import { SinkingFundLabel } from './SinkingFundLabel'
 
 interface CategoryManagePanelProps {
@@ -103,6 +105,7 @@ export function CategoryManagePanel({
   const [usageLoading, setUsageLoading] = useState(false)
   const [reassignToId, setReassignToId] = useState('')
   const [deleting, setDeleting] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
   const [view, setView] = useState<'list' | 'form'>(() =>
     routeWantForm ? 'form' : 'list',
   )
@@ -236,9 +239,29 @@ export function CategoryManagePanel({
     }),
   )
 
+  const searchActive = !isBlankSearch(searchQuery)
+  const displayTree = useMemo(() => {
+    if (!searchActive) return orderedTree
+    return orderedTree
+      .map((parent) => {
+        const parentMatch = matchesCategorySearch(searchQuery, parent)
+        const children = parent.children.filter(
+          (child) =>
+            parentMatch ||
+            matchesCategorySearch(searchQuery, child, parent.budget_group),
+        )
+        return { ...parent, children }
+      })
+      .filter(
+        (parent) =>
+          matchesCategorySearch(searchQuery, parent) ||
+          parent.children.length > 0,
+      )
+  }, [orderedTree, searchActive, searchQuery])
+
   const parentIds = useMemo(
-    () => orderedTree.map((c) => c.id),
-    [orderedTree],
+    () => displayTree.map((c) => c.id),
+    [displayTree],
   )
 
   const expandableParentIds = useMemo(
@@ -410,6 +433,7 @@ export function CategoryManagePanel({
   }
 
   async function handleParentDragEnd(event: DragEndEvent) {
+    if (searchActive) return
     const { active, over } = event
     if (!over || active.id === over.id) return
 
@@ -429,6 +453,7 @@ export function CategoryManagePanel({
   }
 
   async function handleChildDragEnd(parentIdValue: string, event: DragEndEvent) {
+    if (searchActive) return
     const { active, over } = event
     if (!over || active.id === over.id) return
 
@@ -458,11 +483,18 @@ export function CategoryManagePanel({
     <div className={compact ? 'space-y-3 p-3' : 'space-y-4'}>
       {view === 'list' ? (
         <div className="space-y-3">
-          <div className="flex items-center justify-end">
+          <div className="flex items-center gap-2">
+            <SearchField
+              value={searchQuery}
+              onChange={setSearchQuery}
+              placeholder="Search categories…"
+              aria-label="Search categories"
+              className="min-w-0 flex-1"
+            />
             <button
               type="button"
               onClick={openAddForm}
-              className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white active:bg-emerald-600"
+              className="shrink-0 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white active:bg-emerald-600"
             >
               {ActionEmoji.add} Add New
             </button>
@@ -490,18 +522,24 @@ export function CategoryManagePanel({
             </div>
           )}
 
-          <p className="text-[11px] text-neutral-400">
-            Hold & drag {ActionEmoji.drag} to reorder.
-          </p>
+          {!searchActive ? (
+            <p className="text-[11px] text-neutral-400">
+              Hold & drag {ActionEmoji.drag} to reorder.
+            </p>
+          ) : null}
 
           {orderedTree.length === 0 ? (
             <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
               No categories yet. Tap Add New to create one.
             </p>
+          ) : displayTree.length === 0 ? (
+            <p className="rounded-xl bg-white p-3 text-center text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
+              No matches.
+            </p>
           ) : (
             <GroupedListFrame
               label="Categories List"
-              expanded={allSubsExpanded}
+              expanded={searchActive ? true : allSubsExpanded}
               onToggle={setAllSubsExpanded}
             >
               <DndContext
@@ -514,12 +552,14 @@ export function CategoryManagePanel({
                   strategy={verticalListSortingStrategy}
                 >
                   <div className="space-y-2">
-                    {orderedTree.map((cat) => (
+                    {displayTree.map((cat) => (
                       <SortableParentRow
                         key={cat.id}
                         cat={cat}
                         categoryType={type}
-                        expanded={expandedIds.has(cat.id)}
+                        expanded={
+                          searchActive ? true : expandedIds.has(cat.id)
+                        }
                         editingId={editingId}
                         editIcon={editIcon}
                         editName={editName}
@@ -529,13 +569,37 @@ export function CategoryManagePanel({
                         parentOptions={parentOptions}
                         editLeaf={cat.children.length === 0}
                         saving={saving}
+                        reorderEnabled={!searchActive}
                         onToggleExpand={() => toggleExpand(cat.id)}
                         onStartEdit={startEdit}
                         onDelete={(cat) => setDeleteTarget(cat)}
                         onEditIconChange={setEditIcon}
                         onEditNameChange={setEditName}
                         onEditBudgetGroupChange={setEditBudgetGroup}
-                        onEditParentChange={setEditParentId}
+                        onEditParentChange={(parentId) => {
+                          setEditParentId(parentId)
+                          const parent = orderedTree.find((p) => p.id === parentId)
+                          if (
+                            parent?.budget_group === 'needs' ||
+                            parent?.budget_group === 'wants'
+                          ) {
+                            setEditBudgetGroup(parent.budget_group)
+                            return
+                          }
+                          const siblingGroups = (parent?.children ?? [])
+                            .filter((child) => child.id !== editingId)
+                            .map((child) => child.budget_group)
+                            .filter(
+                              (group): group is BudgetGroup =>
+                                group === 'needs' || group === 'wants',
+                            )
+                          if (
+                            siblingGroups.length > 0 &&
+                            siblingGroups.every((group) => group === siblingGroups[0])
+                          ) {
+                            setEditBudgetGroup(siblingGroups[0])
+                          }
+                        }}
                         onSaveEdit={saveEdit}
                         onCancelEdit={cancelEdit}
                         onChildDragEnd={(event) =>
@@ -705,6 +769,7 @@ function SortableParentRow({
   parentOptions,
   editLeaf,
   saving,
+  reorderEnabled,
   onToggleExpand,
   onStartEdit,
   onDelete,
@@ -729,6 +794,7 @@ function SortableParentRow({
   parentOptions: Category[]
   editLeaf: boolean
   saving: boolean
+  reorderEnabled: boolean
   onToggleExpand: () => void
   onStartEdit: (cat: Category) => void
   onDelete: (cat: Category) => void
@@ -791,16 +857,18 @@ function SortableParentRow({
         />
       ) : (
         <div className="flex items-center gap-1">
-          <button
-            type="button"
-            className="touch-none rounded-lg px-1 py-1 text-base leading-none text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-700"
-            aria-label="Drag to reorder"
-            title="Drag"
-            {...attributes}
-            {...listeners}
-          >
-            {ActionEmoji.drag}
-          </button>
+          {reorderEnabled ? (
+            <button
+              type="button"
+              className="touch-none rounded-lg px-1 py-1 text-base leading-none text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-700"
+              aria-label="Drag to reorder"
+              title="Drag"
+              {...attributes}
+              {...listeners}
+            >
+              {ActionEmoji.drag}
+            </button>
+          ) : null}
           {cat.children.length > 0 ? (
             <button
               type="button"
@@ -891,6 +959,7 @@ function SortableParentRow({
                     key={child.id}
                     child={child}
                     linkedToSinkingFund={sinkingCategoryIds.has(child.id)}
+                    reorderEnabled={reorderEnabled}
                     onStartEdit={onStartEdit}
                     onDelete={onDelete}
                   />
@@ -907,11 +976,13 @@ function SortableParentRow({
 function SortableChildRow({
   child,
   linkedToSinkingFund = false,
+  reorderEnabled,
   onStartEdit,
   onDelete,
 }: {
   child: Category
   linkedToSinkingFund?: boolean
+  reorderEnabled: boolean
   onStartEdit: (cat: Category) => void
   onDelete: (cat: Category) => void
 }) {
@@ -939,16 +1010,18 @@ function SortableChildRow({
       }`}
     >
       <div className="flex min-w-0 flex-1 items-center gap-1">
-        <button
-          type="button"
-          className="touch-none shrink-0 rounded-lg px-1 py-1 text-base leading-none text-neutral-400"
-          aria-label="Drag to reorder"
-          title="Drag"
-          {...attributes}
-          {...listeners}
-        >
-          {ActionEmoji.drag}
-        </button>
+        {reorderEnabled ? (
+          <button
+            type="button"
+            className="touch-none shrink-0 rounded-lg px-1 py-1 text-base leading-none text-neutral-400"
+            aria-label="Drag to reorder"
+            title="Drag"
+            {...attributes}
+            {...listeners}
+          >
+            {ActionEmoji.drag}
+          </button>
+        ) : null}
         <span className="flex min-w-0 items-center gap-1 truncate">
           <span className="truncate">
             {child.icon} {child.name}

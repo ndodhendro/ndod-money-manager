@@ -1,12 +1,12 @@
 import {
+  budgetGroupOfActiveSinkingTransfer,
   budgetGroupOfEstimate,
-  budgetGroupOfTransferTo,
   isPlannedNeedsSchedule,
   type BucketBudgetRef,
 } from './freeWants'
 import { budgetGroupOfTx } from './moneyPlan'
 import {
-  estimateOccurrenceCount,
+  effectiveAmount,
   estimatePlannedOccurrenceCount,
   isOccurrenceSkipped,
   occurrenceLogKey,
@@ -106,7 +106,7 @@ function isMainOrCheckingExpenseTx(
   return from == null || checkingBucketIds.has(from)
 }
 
-function transactionsForEstimateBill(
+export function transactionsForEstimateBill(
   bill: RecurringBill,
   transactions: TransactionWithCategory[],
   categoriesById: Map<string, Category>,
@@ -238,7 +238,13 @@ function billMatchesPlannedNeeds(
     return budgetGroupOfEstimate(bill, categoriesById) === 'needs'
   }
   if (bill.type === 'transfer') {
-    return budgetGroupOfTransferTo(bill.to_bucket_id, bucketsById) === 'needs'
+    return (
+      budgetGroupOfActiveSinkingTransfer(
+        bill.to_bucket_id,
+        bucketsById,
+        categoriesById,
+      ) === 'needs'
+    )
   }
   return false
 }
@@ -253,7 +259,13 @@ function billMatchesCommittedWants(
     return budgetGroupOfEstimate(bill, categoriesById) === 'wants'
   }
   if (bill.type === 'transfer') {
-    return budgetGroupOfTransferTo(bill.to_bucket_id, bucketsById) === 'wants'
+    return (
+      budgetGroupOfActiveSinkingTransfer(
+        bill.to_bucket_id,
+        bucketsById,
+        categoriesById,
+      ) === 'wants'
+    )
   }
   return false
 }
@@ -261,8 +273,8 @@ function billMatchesCommittedWants(
 /**
  * Per Monthly Estimate line: planned vs actual for Needs/Wants this month.
  * Same inclusion rules as sumPlannedNeeds / sumCommittedWants.
- * Planned = template × occurrences (skips shrink ceiling when keys passed);
- * actual = History transactions.
+ * Planned = this-month amount (override or template) × occurrences
+ * (skips do not shrink the ceiling); actual = History transactions.
  */
 export function buildEstimateProgressRows(input: {
   bills: RecurringBill[]
@@ -303,22 +315,14 @@ export function buildEstimateProgressRows(input: {
     if (!group) continue
 
     const override = input.overridesByBillId.get(bill.id)
-    const count =
-      input.skippedOccurrenceKeys === undefined
-        ? estimatePlannedOccurrenceCount(
-            bill,
-            input.yearMonth,
-            override,
-          )
-        : estimateOccurrenceCount(
-            bill,
-            input.yearMonth,
-            override,
-            input.skippedOccurrenceKeys,
-          )
+    const count = estimatePlannedOccurrenceCount(
+      bill,
+      input.yearMonth,
+      override,
+    )
     if (count === 0) continue
 
-    const planned = bill.amount * count
+    const planned = effectiveAmount(bill, override) * count
     const matched = transactionsForEstimateBill(
       bill,
       input.transactions,
@@ -418,18 +422,14 @@ export function buildMonthBudgetEstimateRows(input: {
     input.categoriesById,
   )) {
     const override = input.overridesByBillId.get(bill.id)
-    const count =
-      input.skippedOccurrenceKeys === undefined
-        ? estimatePlannedOccurrenceCount(bill, input.yearMonth, override)
-        : estimateOccurrenceCount(
-            bill,
-            input.yearMonth,
-            override,
-            input.skippedOccurrenceKeys,
-          )
+    const count = estimatePlannedOccurrenceCount(
+      bill,
+      input.yearMonth,
+      override,
+    )
     if (count === 0) continue
 
-    const planned = bill.amount * count
+    const planned = effectiveAmount(bill, override) * count
     const matched = transactionsForEstimateBill(
       bill,
       input.transactions,
@@ -516,22 +516,14 @@ export function monthBudgetFlexibleTrackDemandByTxId(input: {
     input.categoriesById,
   )) {
     const override = input.overridesByBillId.get(bill.id)
-    const count =
-      input.skippedOccurrenceKeys === undefined
-        ? estimatePlannedOccurrenceCount(bill, input.yearMonth, override)
-        : estimateOccurrenceCount(
-            bill,
-            input.yearMonth,
-            override,
-            input.skippedOccurrenceKeys,
-          )
+    const count = estimatePlannedOccurrenceCount(
+      bill,
+      input.yearMonth,
+      override,
+    )
     if (count === 0) continue
 
-    const unit =
-      override?.amount != null && override.amount > 0
-        ? override.amount
-        : bill.amount
-    const planned = unit * count
+    const planned = effectiveAmount(bill, override) * count
     const matched = transactionsForEstimateBill(
       bill,
       input.transactions,
@@ -600,6 +592,38 @@ export function idsExceedingTrackAllowance(input: {
   return ids
 }
 
+/** How much of each tx's demand is past the track plafond (chrono FIFO). */
+export function borrowAmountsExceedingTrackAllowance(input: {
+  demandByTxId: Map<string, number>
+  transactionsById: Map<string, TransactionWithCategory>
+  allowance: number
+}): Map<string, number> {
+  const borrows = new Map<string, number>()
+  const allowance = Math.max(0, Math.round(input.allowance))
+  const entries: Array<{ tx: TransactionWithCategory; amount: number }> = []
+  for (const [txId, amount] of input.demandByTxId) {
+    const tx = input.transactionsById.get(txId)
+    if (!tx || amount <= 0) continue
+    entries.push({ tx, amount: Math.round(amount) })
+  }
+  entries.sort((a, b) => compareTransactionsChrono(a.tx, b.tx))
+
+  let remaining = allowance
+  for (const { tx, amount } of entries) {
+    if (remaining <= 0) {
+      if (amount > 0) borrows.set(tx.id, amount)
+      continue
+    }
+    if (amount > remaining) {
+      borrows.set(tx.id, amount - remaining)
+      remaining = 0
+      continue
+    }
+    remaining -= amount
+  }
+  return borrows
+}
+
 /**
  * @deprecated Prefer monthBudgetCeilingOverspendTransactionIds — this only
  * lists estimate-line overage txs, not Buffer/GF plafond crossings.
@@ -658,22 +682,14 @@ export function overspendTransactionIds(input: {
     }
 
     const override = input.overridesByBillId.get(bill.id)
-    const count =
-      input.skippedOccurrenceKeys === undefined
-        ? estimatePlannedOccurrenceCount(bill, input.yearMonth, override)
-        : estimateOccurrenceCount(
-            bill,
-            input.yearMonth,
-            override,
-            input.skippedOccurrenceKeys,
-          )
+    const count = estimatePlannedOccurrenceCount(
+      bill,
+      input.yearMonth,
+      override,
+    )
     if (count === 0) continue
 
-    const unit =
-      override?.amount != null && override.amount > 0
-        ? override.amount
-        : bill.amount
-    const planned = unit * count
+    const planned = effectiveAmount(bill, override) * count
     const matched = transactionsForEstimateBill(
       bill,
       input.transactions,
@@ -717,10 +733,48 @@ export function sumCappedEstimateActual(
 }
 
 /**
+ * Unchecked occurrence amount for one recurring bill in a month.
+ * Skipped and checklist-checked dates are always omitted.
+ * By default only future dates count; pass `includeDue` to also count
+ * today/past due dates that are still unchecked (Estimate Progress shadow).
+ */
+function upcomingAmountForRecurringBill(
+  bill: RecurringBill,
+  yearMonth: string,
+  today: string,
+  override: RecurringBillMonthOverride | null | undefined,
+  skippedOccurrenceKeys: Set<string> | undefined,
+  logByOccurrenceKey: Map<string, RecurringBillLog>,
+  options?: { includeDue?: boolean },
+): number {
+  if (!bill.is_recurring) return 0
+  const unit = plannedAmountForUpcomingOccurrence(bill, override)
+  let upcoming = 0
+  for (const occurredOn of occurrencesInMonth(bill, yearMonth, override)) {
+    if (!options?.includeDue && occurredOn <= today) continue
+    if (
+      isOccurrenceSkipped(
+        bill.id,
+        occurredOn,
+        skippedOccurrenceKeys,
+        override,
+      )
+    ) {
+      continue
+    }
+    if (logByOccurrenceKey.has(occurrenceLogKey(bill.id, occurredOn))) {
+      continue
+    }
+    upcoming += unit
+  }
+  return upcoming
+}
+
+/**
  * Unchecked future occurrences (Upcoming) per Month Budget expense line.
  * Uses the estimate for weekly/biweekly remaining dates (not a this-month
  * override from an earlier underspend). Monthly uses override, else template.
- * Skipped / checked / due dates are omitted.
+ * Skipped / checked / due (today or past) dates are omitted.
  */
 export function upcomingExpenseAmountByBillId(input: {
   bills: RecurringBill[]
@@ -736,32 +790,45 @@ export function upcomingExpenseAmountByBillId(input: {
     input.bills,
     input.categoriesById,
   )) {
-    const override = input.overridesByBillId.get(bill.id)
-    const unit = plannedAmountForUpcomingOccurrence(bill, override)
-    let upcoming = 0
-    for (const occurredOn of occurrencesInMonth(
+    const upcoming = upcomingAmountForRecurringBill(
       bill,
       input.yearMonth,
-      override,
-    )) {
-      if (occurredOn <= input.today) continue
-      if (
-        isOccurrenceSkipped(
-          bill.id,
-          occurredOn,
-          input.skippedOccurrenceKeys,
-          override,
-        )
-      ) {
-        continue
-      }
-      if (
-        input.logByOccurrenceKey.has(occurrenceLogKey(bill.id, occurredOn))
-      ) {
-        continue
-      }
-      upcoming += unit
-    }
+      input.today,
+      input.overridesByBillId.get(bill.id),
+      input.skippedOccurrenceKeys,
+      input.logByOccurrenceKey,
+    )
+    if (upcoming > 0) byBillId.set(bill.id, upcoming)
+  }
+  return byBillId
+}
+
+/**
+ * Shadow amounts for Monthly Estimate Progress recurring lines (expense +
+ * transfer): every dated occurrence this month that is not skipped and not
+ * checklist-checked — including already-due dates still unpaid.
+ * Non-recurring estimates have no dated occurrences.
+ */
+export function upcomingEstimateProgressAmountByBillId(input: {
+  bills: RecurringBill[]
+  overridesByBillId: Map<string, RecurringBillMonthOverride>
+  skippedOccurrenceKeys?: Set<string>
+  logByOccurrenceKey: Map<string, RecurringBillLog>
+  yearMonth: string
+  today: string
+}): Map<string, number> {
+  const byBillId = new Map<string, number>()
+  for (const bill of input.bills) {
+    if (!bill.is_active || !bill.is_recurring) continue
+    const upcoming = upcomingAmountForRecurringBill(
+      bill,
+      input.yearMonth,
+      input.today,
+      input.overridesByBillId.get(bill.id),
+      input.skippedOccurrenceKeys,
+      input.logByOccurrenceKey,
+      { includeDue: true },
+    )
     if (upcoming > 0) byBillId.set(bill.id, upcoming)
   }
   return byBillId

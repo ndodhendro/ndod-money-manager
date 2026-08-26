@@ -19,6 +19,10 @@ import {
 } from './monthCursor'
 import { hasAnyMonthClose, isMonthClosed } from './monthClosesApi'
 import type { RecurringBill, RecurringBillMonthOverride } from './recurringBillsApi'
+import {
+  walkBucketLedger,
+  type BucketMovement,
+} from './bucketsApi'
 import type {
   Bucket,
   Category,
@@ -250,40 +254,17 @@ export function evaluateExpenseEfLoan(input: {
   return { borrowAmount: 0, source: null }
 }
 
-function ownBucketLedgerBalance(
-  bucketId: string,
-  openingBalance: number,
-  movements: Array<{
-    amount: number
-    from_bucket_id: string | null
-    to_bucket_id: string | null
-  }>,
-): number {
-  let balance = openingBalance
-  for (const m of movements) {
-    if (m.to_bucket_id === bucketId) balance += m.amount
-    if (m.from_bucket_id === bucketId) balance -= m.amount
-  }
-  return balance
-}
-
 /**
- * How much of a sinking-fund expense must be borrowed from Emergency Fund
- * when the expense exceeds the bucket ledger balance (display floors at 0).
+ * How much this sinking-fund expense increases overlay owed (before vs after).
+ * Nested later spends are included so the confirm matches derived owed.
  */
 export function evaluateSinkingFundEfLoan(input: {
   draft: NewTransactionInput
   buckets: Array<Pick<Bucket, 'id' | 'kind' | 'opening_balance'>>
-  movements: Array<{
-    amount: number
-    from_bucket_id: string | null
-    to_bucket_id: string | null
-  }>
-  /** When editing, reverse the prior expense from this bucket first. */
-  editingPrior?: {
-    from_bucket_id: string | null
-    amount: number
-  } | null
+  movements: BucketMovement[]
+  editId?: string | null
+  editSortOrder?: number
+  editCreatedAt?: string
 }): EfLoanEvaluation {
   const draft = input.draft
   if (
@@ -300,22 +281,51 @@ export function evaluateSinkingFundEfLoan(input: {
     return { borrowAmount: 0, source: null }
   }
 
-  let balance = ownBucketLedgerBalance(
-    bucket.id,
-    bucket.opening_balance,
-    input.movements,
-  )
-  const prior = input.editingPrior
-  if (prior?.from_bucket_id === bucket.id && prior.amount > 0) {
-    balance += prior.amount
+  const editId = input.editId ?? null
+  const base = input.movements.filter((m) => m.id !== editId)
+  const before = walkBucketLedger(input.buckets, base)
+  const draftMovement: BucketMovement = {
+    id: editId ?? '__draft__',
+    type: 'expense',
+    amount: Math.round(draft.amount),
+    from_bucket_id: draft.from_bucket_id,
+    to_bucket_id: null,
+    occurred_on: draft.occurred_on,
+    sort_order: input.editSortOrder ?? 999_999,
+    created_at: input.editCreatedAt ?? 'z',
   }
-
-  const available = Math.max(0, Math.round(balance))
-  const borrowAmount = Math.max(0, Math.round(draft.amount) - available)
+  const after = walkBucketLedger(input.buckets, [...base, draftMovement])
+  const borrowAmount = Math.max(
+    0,
+    after.sinkingBorrowTotal - before.sinkingBorrowTotal,
+  )
   return {
     borrowAmount,
     source: borrowAmount > 0 ? 'sinking_fund' : null,
   }
+}
+
+/**
+ * History "Overspend" for sinking-fund expenses: txs whose cash take was
+ * short of the expense amount (EF overlay).
+ */
+export function sinkingFundOverspendTransactionIds(input: {
+  buckets: Array<Pick<Bucket, 'id' | 'kind' | 'opening_balance'>>
+  movements: BucketMovement[]
+  transactions: TransactionWithCategory[]
+  yearMonth: string
+}): Set<string> {
+  const ids = new Set<string>()
+  const { sinkingBorrowByTxId } = walkBucketLedger(
+    input.buckets,
+    input.movements,
+  )
+  for (const tx of input.transactions) {
+    if (tx.complete_later) continue
+    if (String(tx.occurred_on ?? '').slice(0, 7) !== input.yearMonth) continue
+    if ((sinkingBorrowByTxId.get(tx.id) ?? 0) > 0) ids.add(tx.id)
+  }
+  return ids
 }
 
 export function efLoanConfirmMessage(

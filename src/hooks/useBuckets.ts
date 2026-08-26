@@ -11,21 +11,34 @@ import {
   childrenByParentId,
   compareBucketsWithinKind,
 } from '../lib/bucketsGroup'
-import { sumOpenEfLoanOutstanding } from '../lib/efLoansApi'
 import type { Bucket, BucketWithBalance } from '../lib/types'
+
+function isMissingBucketsSchema(message: string): boolean {
+  const lower = message.toLowerCase()
+  return (
+    lower.includes('buckets') ||
+    lower.includes('from_bucket_id') ||
+    lower.includes('to_bucket_id') ||
+    lower.includes('could not find a relationship') ||
+    lower.includes('schema cache')
+  )
+}
 
 export function useBuckets(options?: { includeInactive?: boolean }) {
   const includeInactive = options?.includeInactive ?? false
   const [buckets, setBuckets] = useState<Bucket[]>([])
   const [movements, setMovements] = useState<
     Array<{
+      id: string
+      type: 'transfer' | 'expense'
       amount: number
       from_bucket_id: string | null
       to_bucket_id: string | null
       occurred_on: string
+      sort_order: number
+      created_at: string
     }>
   >([])
-  const [efLoanOutstanding, setEfLoanOutstanding] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -34,18 +47,15 @@ export function useBuckets(options?: { includeInactive?: boolean }) {
     setError(null)
     try {
       await ensureSystemBuckets()
-      const [bucketRows, transferRows, loanSum] = await Promise.all([
+      const [bucketRows, transferRows] = await Promise.all([
         fetchBuckets({ includeInactive }),
         fetchTransferMovements(),
-        sumOpenEfLoanOutstanding().catch(() => 0),
       ])
       setBuckets(bucketRows)
       setMovements(transferRows)
-      setEfLoanOutstanding(loanSum)
     } catch (err) {
       setBuckets([])
       setMovements([])
-      setEfLoanOutstanding(0)
       const message =
         err instanceof Error ? err.message : 'Failed to load buckets'
       if (isMissingBucketsSchema(message)) {
@@ -76,12 +86,8 @@ export function useBuckets(options?: { includeInactive?: boolean }) {
 
   const withBalances: BucketWithBalance[] = useMemo(() => {
     const list = buckets.map((b) => {
-      let own = ownBalances.get(b.id) ?? b.opening_balance
-      let display = displayBalances.get(b.id) ?? b.opening_balance
-      if (b.kind === 'emergency' && efLoanOutstanding > 0) {
-        own -= efLoanOutstanding
-        display -= efLoanOutstanding
-      }
+      const own = ownBalances.get(b.id) ?? b.opening_balance
+      const display = displayBalances.get(b.id) ?? b.opening_balance
       return {
         ...b,
         own_balance: own,
@@ -94,7 +100,7 @@ export function useBuckets(options?: { includeInactive?: boolean }) {
       if (ai !== bi) return ai - bi
       return compareBucketsWithinKind(a, b)
     })
-  }, [buckets, ownBalances, displayBalances, efLoanOutstanding])
+  }, [buckets, ownBalances, displayBalances])
 
   const byId = useMemo(() => {
     const map = new Map<string, BucketWithBalance>()
@@ -112,20 +118,8 @@ export function useBuckets(options?: { includeInactive?: boolean }) {
     childrenMap,
     emergency,
     investment,
-    efLoanOutstanding,
     loading,
     error,
     reload,
   }
-}
-
-function isMissingBucketsSchema(message: string): boolean {
-  const lower = message.toLowerCase()
-  return (
-    lower.includes('buckets') ||
-    lower.includes('from_bucket') ||
-    lower.includes('to_bucket') ||
-    lower.includes('schema cache') ||
-    lower.includes('does not exist')
-  )
 }

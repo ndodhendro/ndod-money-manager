@@ -21,6 +21,7 @@ import { useCategories } from '../hooks/useCategories'
 import { useBuckets } from '../hooks/useBuckets'
 import { useRecurringBills } from '../hooks/useRecurringBills'
 import { useTransactions } from '../hooks/useTransactions'
+import { sinkingFundOverspendTransactionIds } from '../lib/budgetSaveGate'
 import { showAppToast } from '../lib/appToast'
 import { ActionEmoji } from '../lib/actionEmoji'
 import { areAllCollapseOpen } from '../lib/collapseState'
@@ -150,7 +151,7 @@ export function History() {
   const { byId: categoriesById } = useCategories(undefined, {
     includeInactive: true,
   })
-  const { buckets, byId: bucketsById } = useBuckets()
+  const { buckets, byId: bucketsById, movements } = useBuckets()
   const sinkingCategoryIds = useMemo(
     () => sinkingLinkedCategoryIds(buckets),
     [buckets],
@@ -445,33 +446,46 @@ export function History() {
     subcategoryFilter === 'all'
 
   const overspendTxIds = useMemo(() => {
-    if (!allocation) return new Set<string>()
-    const checkingIds = checkingBucketIdSet(buckets)
-    const isExpenseNeedsOrWantsEstimate = (bill: (typeof bills)[number]) => {
-      if (!isPlannedNeedsSchedule(bill)) return false
-      if (bill.type !== 'expense') return false
-      const g = budgetGroupOfEstimate(bill, categoriesById)
-      return g === 'needs' || g === 'wants'
+    const ids = new Set<string>()
+    if (allocation) {
+      const checkingIds = checkingBucketIdSet(buckets)
+      const isExpenseNeedsOrWantsEstimate = (bill: (typeof bills)[number]) => {
+        if (!isPlannedNeedsSchedule(bill)) return false
+        if (bill.type !== 'expense') return false
+        const g = budgetGroupOfEstimate(bill, categoriesById)
+        return g === 'needs' || g === 'wants'
+      }
+      const coverageKeys = estimateExpenseCoverageKeys(
+        bills,
+        categoriesById,
+        isExpenseNeedsOrWantsEstimate,
+      )
+      for (const id of monthBudgetCeilingOverspendTransactionIds({
+        bills,
+        overridesByBillId: overrideByBillId,
+        skippedOccurrenceKeys,
+        categoriesById,
+        bucketsById,
+        yearMonth,
+        transactions,
+        checkingBucketIds: checkingIds,
+        estimateCoverageKeys: coverageKeys,
+        bufferAllowance: allocation.buffer,
+        guiltFreeAllowance: allocation.guiltFree,
+        dueBillIdByTxId,
+      })) {
+        ids.add(id)
+      }
     }
-    const coverageKeys = estimateExpenseCoverageKeys(
-      bills,
-      categoriesById,
-      isExpenseNeedsOrWantsEstimate,
-    )
-    return monthBudgetCeilingOverspendTransactionIds({
-      bills,
-      overridesByBillId: overrideByBillId,
-      skippedOccurrenceKeys,
-      categoriesById,
-      bucketsById,
-      yearMonth,
+    for (const id of sinkingFundOverspendTransactionIds({
+      buckets,
+      movements,
       transactions,
-      checkingBucketIds: checkingIds,
-      estimateCoverageKeys: coverageKeys,
-      bufferAllowance: allocation.buffer,
-      guiltFreeAllowance: allocation.guiltFree,
-      dueBillIdByTxId,
-    })
+      yearMonth,
+    })) {
+      ids.add(id)
+    }
+    return ids
   }, [
     allocation,
     bills,
@@ -480,6 +494,7 @@ export function History() {
     categoriesById,
     bucketsById,
     buckets,
+    movements,
     yearMonth,
     transactions,
     dueBillIdByTxId,
@@ -758,11 +773,18 @@ export function History() {
                         {amountLabel}
                       </p>
                     </div>
-                    {budgetGroup ? (
+                    {budgetGroup ||
+                    (showOverspend && overspendTxIds.has(tx.id)) ? (
                       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
-                        <p className="truncate text-left text-xs leading-none">
-                          <BudgetGroupBadge group={budgetGroup} />
-                        </p>
+                        {budgetGroup ? (
+                          <p className="truncate text-left text-xs leading-none">
+                            <BudgetGroupBadge group={budgetGroup} />
+                          </p>
+                        ) : (
+                          <span className="invisible truncate text-xs leading-none">
+                            .
+                          </span>
+                        )}
                         {showOverspend && overspendTxIds.has(tx.id) ? (
                           <p
                             className={`truncate text-xs font-medium leading-none whitespace-nowrap ${BUDGET_GROUP_TEXT_CLASS.needs}`}

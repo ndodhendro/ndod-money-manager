@@ -15,7 +15,7 @@ const txListeners = new Set<TxChangeListener>()
 let txChannel: RealtimeChannel | null = null
 let txChannelSeq = 0
 
-function subscribeTransactionChanges(listener: TxChangeListener): () => void {
+export function subscribeTransactionChanges(listener: TxChangeListener): () => void {
   txListeners.add(listener)
   if (!txChannel) {
     // Unique topic each create — avoids colliding with a channel still

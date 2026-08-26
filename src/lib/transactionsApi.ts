@@ -1,5 +1,10 @@
 import { clearBillLogsByTransactionId } from './recurringBillsApi'
 import { deleteEfLoanForTransaction } from './efLoansApi'
+import {
+  fetchBucketMovements,
+  fetchBuckets,
+  sinkingInflowDeleteBlockReason,
+} from './bucketsApi'
 import { supabase } from './supabase'
 import type {
   Bucket,
@@ -97,6 +102,7 @@ async function fetchTransactionRows(
   const result = await query
     .order('created_at', { ascending: false })
     .order('id', { ascending: false })
+    .limit(10000)
   return { data: result.data, error: result.error }
 }
 
@@ -416,6 +422,31 @@ export async function reorderTransactions(
 }
 
 export async function deleteTransaction(id: string): Promise<void> {
+  const { data: row, error: loadError } = await supabase
+    .from('transactions')
+    .select('id, type, to_bucket_id')
+    .eq('id', id)
+    .maybeSingle()
+  if (loadError) throw new Error(loadError.message)
+  if (!row) throw new Error('Transaction not found')
+
+  if (row.type === 'transfer' && row.to_bucket_id) {
+    const [buckets, movements] = await Promise.all([
+      fetchBuckets({ includeInactive: true }),
+      fetchBucketMovements(),
+    ])
+    const block = sinkingInflowDeleteBlockReason({
+      transaction: {
+        id: String(row.id),
+        type: String(row.type),
+        to_bucket_id: (row.to_bucket_id as string | null) ?? null,
+      },
+      buckets,
+      movements,
+    })
+    if (block) throw new Error(block)
+  }
+
   // Remove checklist "checked" state before the tx row goes away
   // (FK is ON DELETE SET NULL, which would leave the item checked).
   await clearBillLogsByTransactionId(id)

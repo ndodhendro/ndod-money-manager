@@ -260,10 +260,19 @@ export function buildMoneyPlan(input: MoneyPlanInput): MoneyPlan {
 }
 
 function budgetGroupOf(tx: TransactionWithCategory) {
+  const live =
+    tx.category?.budget_group === 'needs' ||
+    tx.category?.budget_group === 'wants'
+      ? tx.category.budget_group
+      : tx.category?.parent?.budget_group === 'needs' ||
+          tx.category?.parent?.budget_group === 'wants'
+        ? tx.category.parent.budget_group
+        : null
+  if (live) return live
   if (tx.budget_group === 'needs' || tx.budget_group === 'wants') {
     return tx.budget_group
   }
-  return tx.category?.budget_group ?? tx.category?.parent?.budget_group ?? null
+  return null
 }
 
 export function budgetGroupOfTx(tx: TransactionWithCategory) {

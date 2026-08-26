@@ -14,7 +14,7 @@ import {
 } from '../../lib/collapseState'
 import { FormattedAmountInput } from '../../components/FormattedAmountInput'
 import { formatRupiah } from '../../lib/format'
-import { sumPlannedNeeds } from '../../lib/freeWants'
+import { plannedNeedsCeiling } from '../../lib/freeWants'
 import {
   currentMonthCursor,
   monthCursorKey,
@@ -290,14 +290,12 @@ export function SettingsMoneyPlan() {
   const viewYm = monthCursorKey(currentMonthCursor())
   const plannedNeeds = useMemo(
     () =>
-      sumPlannedNeeds(
+      plannedNeedsCeiling({
         bills,
-        new Map(),
         categoriesById,
-        viewYm,
-        undefined,
         bucketsById,
-      ),
+        yearMonth: viewYm,
+      }),
     [bills, categoriesById, bucketsById, viewYm],
   )
 

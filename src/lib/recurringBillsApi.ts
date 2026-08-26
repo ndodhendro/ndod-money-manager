@@ -579,10 +579,10 @@ export function estimateOccurrenceCount(
 }
 
 /**
- * Occurrence count for unskipped Planned Needs / Planned Wants baseline
- * (buffer % base). Ignores skips and amount overrides; due-day override
- * still affects which dates fall in the month.
- * Prefer `estimateOccurrenceCount` when skips should shrink the ceiling.
+ * Occurrence count for Planned Needs / Planned Wants ceilings.
+ * Ignores skips and amount overrides; due-day override still affects
+ * which dates fall in the month. Prefer `estimateOccurrenceCount` for
+ * Due This Month / Upcoming (skips hide those dates).
  */
 export function estimatePlannedOccurrenceCount(
   bill: RecurringBill,
@@ -918,6 +918,16 @@ export async function fetchRecurringBillLogs(
     .eq('year_month', yearMonth)
     // Orphan rows (tx deleted with ON DELETE SET NULL) must not stay "checked".
     .not('transaction_id', 'is', null)
+  if (error) throw new Error(error.message)
+  return (data ?? []).map((row) => mapLog(row as Record<string, unknown>))
+}
+
+export async function fetchAllRecurringBillLogs(): Promise<RecurringBillLog[]> {
+  const { data, error } = await supabase
+    .from('recurring_bill_logs')
+    .select('*')
+    .not('transaction_id', 'is', null)
+    .limit(10000)
   if (error) throw new Error(error.message)
   return (data ?? []).map((row) => mapLog(row as Record<string, unknown>))
 }
@@ -1843,6 +1853,181 @@ export async function updateRecurringBill(
     throw new Error(error.message)
   }
   return mapBill(data as Record<string, unknown>)
+}
+
+export type DueItemTransactionRef = {
+  id: string
+  type: string
+  category_id: string | null
+  from_bucket_id: string | null
+  to_bucket_id: string | null
+}
+
+function dueItemMatchesTarget(
+  tx: DueItemTransactionRef,
+  target: Pick<
+    DueItemTransactionRef,
+    'type' | 'category_id' | 'from_bucket_id' | 'to_bucket_id'
+  >,
+): boolean {
+  if (tx.type !== target.type) return false
+  if (target.type === 'transfer') {
+    return (
+      tx.to_bucket_id === target.to_bucket_id &&
+      tx.from_bucket_id === target.from_bucket_id
+    )
+  }
+  return tx.category_id === target.category_id
+}
+
+/** History rows created by checking this estimate (FK and/or checklist log). */
+export async function fetchLinkedDueItemTransactions(
+  billId: string,
+  fallback?: { name: string; type: string },
+): Promise<DueItemTransactionRef[]> {
+  const byId = new Map<string, DueItemTransactionRef>()
+
+  const { data: byFk, error: fkError } = await supabase
+    .from('transactions')
+    .select('id, type, category_id, from_bucket_id, to_bucket_id')
+    .eq('recurring_bill_id', billId)
+  if (fkError) {
+    const lower = fkError.message.toLowerCase()
+    if (!lower.includes('recurring_bill_id')) {
+      throw new Error(fkError.message)
+    }
+  } else {
+    for (const row of byFk ?? []) {
+      const id = String(row.id)
+      byId.set(id, {
+        id,
+        type: String(row.type),
+        category_id: (row.category_id as string | null) ?? null,
+        from_bucket_id: (row.from_bucket_id as string | null) ?? null,
+        to_bucket_id: (row.to_bucket_id as string | null) ?? null,
+      })
+    }
+  }
+
+  const { data: logs, error: logError } = await supabase
+    .from('recurring_bill_logs')
+    .select('transaction_id')
+    .eq('bill_id', billId)
+    .not('transaction_id', 'is', null)
+  if (logError) {
+    const lower = logError.message.toLowerCase()
+    if (
+      !lower.includes('recurring_bill_logs') &&
+      !lower.includes('schema cache') &&
+      !lower.includes('does not exist')
+    ) {
+      throw new Error(logError.message)
+    }
+  }
+
+  const missingIds = [
+    ...new Set(
+      (logs ?? [])
+        .map((row) => (row.transaction_id as string | null) ?? '')
+        .filter((id) => id !== '' && !byId.has(id)),
+    ),
+  ]
+  if (missingIds.length > 0) {
+    const { data: extra, error: extraError } = await supabase
+      .from('transactions')
+      .select('id, type, category_id, from_bucket_id, to_bucket_id')
+      .in('id', missingIds)
+    if (extraError) throw new Error(extraError.message)
+    for (const row of extra ?? []) {
+      const id = String(row.id)
+      byId.set(id, {
+        id,
+        type: String(row.type),
+        category_id: (row.category_id as string | null) ?? null,
+        from_bucket_id: (row.from_bucket_id as string | null) ?? null,
+        to_bucket_id: (row.to_bucket_id as string | null) ?? null,
+      })
+    }
+  }
+
+  if (byId.size === 0 && fallback?.name.trim()) {
+    const { data: byNote, error: noteError } = await supabase
+      .from('transactions')
+      .select('id, type, category_id, from_bucket_id, to_bucket_id')
+      .eq('type', fallback.type)
+      .eq('description', fallback.name.trim())
+    if (!noteError) {
+      for (const row of byNote ?? []) {
+        const id = String(row.id)
+        byId.set(id, {
+          id,
+          type: String(row.type),
+          category_id: (row.category_id as string | null) ?? null,
+          from_bucket_id: (row.from_bucket_id as string | null) ?? null,
+          to_bucket_id: (row.to_bucket_id as string | null) ?? null,
+        })
+      }
+    }
+  }
+
+  return [...byId.values()]
+}
+
+export function countDueItemsNotOnTarget(
+  txs: DueItemTransactionRef[],
+  target: Pick<
+    DueItemTransactionRef,
+    'type' | 'category_id' | 'from_bucket_id' | 'to_bucket_id'
+  >,
+): number {
+  return txs.filter((tx) => !dueItemMatchesTarget(tx, target)).length
+}
+
+/**
+ * Move linked due-item History rows that are not yet on the estimate's
+ * new destination.
+ */
+export async function retargetDueItemTransactions(
+  billId: string,
+  next: {
+    type: TransactionType
+    category_id: string | null
+    from_bucket_id: string | null
+    to_bucket_id: string | null
+    budget_group: BudgetGroup | null
+  },
+  fallback?: { name: string; type: string },
+): Promise<number> {
+  const linked = await fetchLinkedDueItemTransactions(billId, fallback)
+  const ids = linked
+    .filter((tx) => !dueItemMatchesTarget(tx, next))
+    .map((tx) => tx.id)
+  if (ids.length === 0) return 0
+
+  const patch: Record<string, unknown> =
+    next.type === 'transfer'
+      ? {
+          from_bucket_id: next.from_bucket_id,
+          to_bucket_id: next.to_bucket_id,
+          category_id: null,
+          budget_group: null,
+        }
+      : {
+          category_id: next.category_id,
+          from_bucket_id: next.from_bucket_id,
+          to_bucket_id: null,
+          budget_group:
+            next.type === 'expense' && isBudgetGroup(next.budget_group)
+              ? next.budget_group
+              : null,
+        }
+
+  const { error } = await supabase
+    .from('transactions')
+    .update(patch)
+    .in('id', ids)
+  if (error) throw new Error(error.message)
+  return ids.length
 }
 
 export async function deleteRecurringBill(id: string): Promise<void> {

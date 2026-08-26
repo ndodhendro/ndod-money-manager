@@ -5,6 +5,7 @@ import { PlanBudgetRow } from '../../components/PlanBudgetRow'
 import { PlanSubPage } from '../../components/PlanSubPage'
 import { SinkingAllocateSheet } from '../../components/SinkingAllocateSheet'
 import { useBuckets } from '../../hooks/useBuckets'
+import { useEfOwed } from '../../hooks/useEfOwed'
 import { useCategories } from '../../hooks/useCategories'
 import { usePyfSettings } from '../../hooks/usePyfSettings'
 import { ActionEmoji } from '../../lib/actionEmoji'
@@ -14,12 +15,13 @@ import {
   getCollapseOpen,
   setCollapseOpen,
 } from '../../lib/collapseState'
-import { sumPlannedNeeds } from '../../lib/freeWants'
+import { plannedNeedsCeiling } from '../../lib/freeWants'
 import {
   emergencyFundTarget,
   makeMoneyPlanBucket,
   type MoneyPlanBucket,
 } from '../../lib/moneyPlan'
+import { formatRupiah } from '../../lib/format'
 import { currentMonthCursor, monthCursorKey } from '../../lib/monthCursor'
 import { PlanIcon, PlanTitle } from '../../lib/planSections'
 import {
@@ -50,15 +52,21 @@ function overallRowForBucket(
   emergencyId: string | null,
   efTarget: number,
   efMultiplier: number,
+  efOwedTotal: number,
 ): {
   bucket: MoneyPlanBucket
   hint: string
 } {
   const isSystemEmergency = emergencyId != null && b.id === emergencyId
   if (isSystemEmergency && efTarget > 0) {
+    const available = Math.max(0, Math.round(b.balance) - Math.max(0, efOwedTotal))
+    const base = `${efMultiplier}× planned needs`
     return {
       bucket: makeMoneyPlanBucket(b.name, efTarget, b.balance, 'floor'),
-      hint: `${efMultiplier}× planned needs`,
+      hint:
+        efOwedTotal > 0
+          ? `${base} · Available ${formatRupiah(available)}`
+          : base,
     }
   }
   if (b.kind === 'investment') {
@@ -91,6 +99,7 @@ export function PlanEmergency() {
     error: bucketsError,
     reload: reloadBuckets,
   } = useBuckets()
+  const { owed: efOwed } = useEfOwed()
   const {
     byId: categoriesById,
     loading: categoriesLoading,
@@ -130,14 +139,12 @@ export function PlanEmergency() {
 
   const plannedNeeds = useMemo(
     () =>
-      sumPlannedNeeds(
+      plannedNeedsCeiling({
         bills,
-        new Map(),
         categoriesById,
-        viewYm,
-        undefined,
         bucketsById,
-      ),
+        yearMonth: viewYm,
+      }),
     [bills, categoriesById, bucketsById, viewYm],
   )
 
@@ -303,6 +310,7 @@ export function PlanEmergency() {
                   emergency?.id ?? null,
                   efTarget,
                   efMultiplier,
+                  efOwed.total,
                 )
                 return (
                 <div key={child.id} className="pl-5">
@@ -332,6 +340,7 @@ export function PlanEmergency() {
       emergency?.id ?? null,
       efTarget,
       efMultiplier,
+      efOwed.total,
     )
     return (
       <div key={node.bucket.id} className="space-y-2">
@@ -437,6 +446,7 @@ export function PlanEmergency() {
                           emergency?.id ?? null,
                           efTarget,
                           efMultiplier,
+                          efOwed.total,
                         )
                         const isSystemEmergency =
                           emergency != null &&

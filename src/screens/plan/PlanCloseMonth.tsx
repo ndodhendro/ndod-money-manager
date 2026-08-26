@@ -7,6 +7,7 @@ import {
 } from '../../components/FourWayAllocationFields'
 import { PlanSubPage } from '../../components/PlanSubPage'
 import { useBuckets } from '../../hooks/useBuckets'
+import { useEfOwed } from '../../hooks/useEfOwed'
 import { useFreeGuiltyProgress } from '../../hooks/useFreeGuiltyProgress'
 import { useMonthCursor } from '../../hooks/useMonthCursor'
 import { useTransactions } from '../../hooks/useTransactions'
@@ -18,11 +19,6 @@ import {
   defaultWantsSideAllocation,
   ZERO_CLOSE_ALLOC,
 } from '../../lib/closeMonthDefaults'
-import {
-  applyEfLoanRepayment,
-  fetchOpenEfLoans,
-  sumEfLoansBySource,
-} from '../../lib/efLoansApi'
 import { formatRupiah, formatYearMonthLabel } from '../../lib/format'
 import {
   currentMonthCursor,
@@ -65,14 +61,9 @@ export function PlanCloseMonth() {
     error: budgetError,
   } = useFreeGuiltyProgress(closeYm, transactions)
   const { emergency, investment, reload: reloadBuckets } = useBuckets()
+  const { owed: efOwed } = useEfOwed()
 
   const [alreadyClosed, setAlreadyClosed] = useState(false)
-  const [efOwed, setEfOwed] = useState({
-    buffer: 0,
-    guiltFree: 0,
-    sinkingFund: 0,
-    total: 0,
-  })
   const [needsAlloc, setNeedsAlloc] = useState<MonthCloseAllocation>({
     ...ZERO_CLOSE_ALLOC,
   })
@@ -121,9 +112,6 @@ export function PlanCloseMonth() {
       const closed = await fetchMonthClose(closeYm)
       if (cancelled) return
       setAlreadyClosed(closed != null)
-      const loans = await fetchOpenEfLoans()
-      if (cancelled) return
-      setEfOwed(sumEfLoansBySource(loans))
     })()
     return () => {
       cancelled = true
@@ -176,7 +164,6 @@ export function PlanCloseMonth() {
           is_recurring: false,
           complete_later: false,
         })
-        await applyEfLoanRepayment(toEf)
       }
       if (toInv > 0) {
         if (!investment) throw new Error('Investment bucket missing')

@@ -179,6 +179,61 @@ export function sumEfLoansBySource(loans: EfLoan[]): {
   return { buffer, guiltFree, sinkingFund, total: buffer + guiltFree + sinkingFund }
 }
 
+/**
+ * Sinking-fund EF borrow amounts (original loan, not remaining outstanding)
+ * grouped by the expense bucket. Added back to sinking display so the EF
+ * overage is not a hidden negative hole that swallows later transfers.
+ */
+export async function fetchSinkingEfLoanAmountsByBucket(): Promise<{
+  byBucket: Map<string, number>
+  byTransactionId: Map<string, number>
+}> {
+  const empty = {
+    byBucket: new Map<string, number>(),
+    byTransactionId: new Map<string, number>(),
+  }
+  const { data: loans, error } = await supabase
+    .from('ef_loans')
+    .select('amount, source_transaction_id')
+    .eq('source', 'sinking_fund')
+
+  if (error) {
+    if (isMissingEfLoansSchema(error.message)) return empty
+    throw error
+  }
+
+  const txIds = (loans ?? [])
+    .map((row) => row.source_transaction_id as string | null)
+    .filter((id): id is string => id != null)
+  if (txIds.length === 0) return empty
+
+  const { data: txs, error: txError } = await supabase
+    .from('transactions')
+    .select('id, from_bucket_id')
+    .in('id', txIds)
+  if (txError) throw new Error(txError.message)
+
+  const bucketByTxId = new Map<string, string>()
+  for (const row of txs ?? []) {
+    const bucketId = row.from_bucket_id as string | null
+    if (bucketId) bucketByTxId.set(String(row.id), bucketId)
+  }
+
+  const byBucket = new Map<string, number>()
+  const byTransactionId = new Map<string, number>()
+  for (const loan of loans ?? []) {
+    const txId = loan.source_transaction_id as string | null
+    if (!txId) continue
+    const bucketId = bucketByTxId.get(txId)
+    if (!bucketId) continue
+    const amount = Math.max(0, Math.round(Number(loan.amount) || 0))
+    if (amount <= 0) continue
+    byTransactionId.set(txId, (byTransactionId.get(txId) ?? 0) + amount)
+    byBucket.set(bucketId, (byBucket.get(bucketId) ?? 0) + amount)
+  }
+  return { byBucket, byTransactionId }
+}
+
 /** Sinking-fund EF borrow amounts per bucket for a calendar month. */
 export async function fetchSinkingEfLoanAmountByBucketForMonth(
   yearMonth: string,

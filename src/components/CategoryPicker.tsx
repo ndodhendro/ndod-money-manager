@@ -5,9 +5,11 @@ import { useBuckets } from '../hooks/useBuckets'
 import { ActionEmoji } from '../lib/actionEmoji'
 import { sinkingLinkedCategoryIds } from '../lib/bucketsApi'
 import { budgetGroupOfCategory } from '../lib/freeWants'
+import { isBlankSearch, matchesCategorySearch } from '../lib/listSearch'
 import { type Category, type CategoryType } from '../lib/types'
 import { BudgetGroupBadge } from './BudgetGroupBadge'
 import { CategoryManagePanel } from './CategoryManagePanel'
+import { SearchField } from './SearchField'
 import { SinkingFundLabel } from './SinkingFundLabel'
 
 interface CategoryPickerProps {
@@ -55,6 +57,7 @@ export function CategoryPicker({
       : null
 
   const [activeParentId, setActiveParentId] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
   const [managing, setManaging] = useState(false)
   const [manageView, setManageView] = useState<'list' | 'form'>('list')
   const backToListRef = useRef<(() => void) | null>(null)
@@ -63,6 +66,7 @@ export function CategoryPicker({
     if (!open) {
       setManaging(false)
       setManageView('list')
+      setSearchQuery('')
     }
   }, [open])
 
@@ -73,18 +77,60 @@ export function CategoryPicker({
     }
   }, [managing])
 
+  const searchActive = !isBlankSearch(searchQuery)
+  const filteredTree = useMemo(() => {
+    if (!searchActive) return tree
+    return tree
+      .map((parent) => {
+        const parentMatch = matchesCategorySearch(searchQuery, parent)
+        const children = parent.children.filter(
+          (child) =>
+            parentMatch ||
+            matchesCategorySearch(searchQuery, child, parent.budget_group),
+        )
+        return { ...parent, children }
+      })
+      .filter(
+        (parent) =>
+          matchesCategorySearch(searchQuery, parent) ||
+          parent.children.length > 0,
+      )
+  }, [tree, searchActive, searchQuery])
+
   useEffect(() => {
     if (!open || managing) return
-    if (selected?.parent_id) {
-      setActiveParentId(selected.parent_id)
-    } else if (selected && !selected.parent_id) {
-      setActiveParentId(selected.id)
-    } else if (tree[0]) {
-      setActiveParentId(tree[0].id)
+    const selectedParentId =
+      selected?.parent_id ??
+      (selected && !selected.parent_id ? selected.id : null)
+    if (
+      !searchActive &&
+      selectedParentId &&
+      filteredTree.some((p) => p.id === selectedParentId)
+    ) {
+      setActiveParentId(selectedParentId)
+      return
     }
-  }, [open, managing, selected, tree])
+    if (activeParentId && filteredTree.some((p) => p.id === activeParentId)) {
+      return
+    }
+    if (
+      selectedParentId &&
+      filteredTree.some((p) => p.id === selectedParentId)
+    ) {
+      setActiveParentId(selectedParentId)
+      return
+    }
+    if (filteredTree[0]) setActiveParentId(filteredTree[0].id)
+  }, [
+    open,
+    managing,
+    selected,
+    filteredTree,
+    activeParentId,
+    searchActive,
+  ])
 
-  const activeParent = tree.find((p) => p.id === activeParentId) ?? null
+  const activeParent = filteredTree.find((p) => p.id === activeParentId) ?? null
   const children = activeParent?.children ?? []
 
   function handlePickLeaf(category: Category) {
@@ -240,9 +286,23 @@ export function CategoryPicker({
                 />
               </div>
             ) : (
-              <div className="flex min-h-0 flex-1">
+              <div className="flex min-h-0 flex-1 flex-col">
+                <div className="border-b border-neutral-200 px-3 py-2 dark:border-neutral-800">
+                  <SearchField
+                    value={searchQuery}
+                    onChange={setSearchQuery}
+                    placeholder="Search categories…"
+                    aria-label="Search categories"
+                  />
+                </div>
+                {filteredTree.length === 0 ? (
+                  <p className="px-4 py-6 text-center text-sm text-neutral-500 dark:text-neutral-400">
+                    No matches.
+                  </p>
+                ) : (
+                <div className="flex min-h-0 flex-1">
                 <div className="w-[42%] overflow-y-auto border-r border-neutral-200 dark:border-neutral-800">
-                  {tree.map((parent) => {
+                  {filteredTree.map((parent) => {
                     const active = parent.id === activeParentId
                     const parentGroup =
                       showBudgetGroup && parent.children.length === 0
@@ -323,6 +383,8 @@ export function CategoryPicker({
                     </div>
                   )}
                 </div>
+              </div>
+                )}
               </div>
             )}
           </div>

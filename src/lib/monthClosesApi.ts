@@ -111,6 +111,19 @@ export async function fetchMonthClose(
   return mapClose(data as Record<string, unknown>)
 }
 
+export async function fetchAllMonthCloses(): Promise<MonthClose[]> {
+  const { data, error } = await supabase
+    .from('month_closes')
+    .select('*')
+    .is('reopened_at', null)
+    .order('year_month', { ascending: true })
+  if (error) {
+    if (isMissingMonthClosesSchema(error.message)) return []
+    throw error
+  }
+  return (data ?? []).map((row) => mapClose(row as Record<string, unknown>))
+}
+
 export async function hasAnyMonthClose(): Promise<boolean> {
   const { count, error } = await supabase
     .from('month_closes')

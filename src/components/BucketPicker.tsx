@@ -1,4 +1,4 @@
-import { useId, useMemo, useRef } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useOverlayBack } from '../hooks/useBackButton'
 import {
   leafBuckets,
@@ -6,11 +6,17 @@ import {
   type CategorySortRef,
 } from '../lib/bucketsGroup'
 import {
+  isBlankSearch,
+  matchesBucketSearch,
+  matchesSearchText,
+} from '../lib/listSearch'
+import {
   CASHFLOW_LABEL,
   type BudgetGroup,
   type BucketWithBalance,
 } from '../lib/types'
 import { BudgetGroupBadge } from './BudgetGroupBadge'
+import { SearchField } from './SearchField'
 
 /** null = Main Account (checking / available money). */
 export type BucketSelection = string | null
@@ -58,10 +64,15 @@ export function BucketPicker({
 }: BucketPickerProps) {
   const listId = useId()
   const rootRef = useRef<HTMLDivElement>(null)
+  const [searchQuery, setSearchQuery] = useState('')
 
   useOverlayBack(open, () => {
     onOpenChange(false)
   })
+
+  useEffect(() => {
+    if (!open) setSearchQuery('')
+  }, [open])
 
   const byId = useMemo(() => {
     const map = new Map<string, BucketWithBalance>()
@@ -81,6 +92,20 @@ export function BucketPicker({
     const leaves = leafBuckets(buckets).filter((b) => b.id !== excludeId)
     return sortLeavesForPicker(leaves, buckets, categoriesById)
   }, [buckets, excludeId, categoriesById])
+
+  const searchActive = !isBlankSearch(searchQuery)
+  const filteredOptions = useMemo(() => {
+    if (!searchActive) return options
+    return options.filter((b) => {
+      const parent = b.parent_id ? byId.get(b.parent_id) : undefined
+      return matchesBucketSearch(searchQuery, b, {
+        parentName: parent?.name,
+      })
+    })
+  }, [options, searchActive, searchQuery, byId])
+  const cashflowVisible =
+    allowCashflow &&
+    (!searchActive || matchesSearchText(searchQuery, CASHFLOW_LABEL, 'main'))
 
   function displayLabel(): string {
     if (value === undefined) return 'Select…'
@@ -126,11 +151,20 @@ export function BucketPicker({
       </button>
 
       {open && (
-        <ul
+        <div
           id={listId}
-          className="absolute z-30 mt-1 max-h-56 w-full overflow-auto rounded-xl border border-neutral-100 bg-white py-1 shadow-lg dark:border-neutral-700 dark:bg-neutral-800"
+          className="absolute z-30 mt-1 w-full overflow-hidden rounded-xl border border-neutral-100 bg-white shadow-lg dark:border-neutral-700 dark:bg-neutral-800"
         >
-          {allowCashflow && (
+          <div className="border-b border-neutral-100 p-1.5 dark:border-neutral-700">
+            <SearchField
+              value={searchQuery}
+              onChange={setSearchQuery}
+              placeholder="Search buckets…"
+              aria-label="Search buckets"
+            />
+          </div>
+          <ul className="max-h-56 overflow-auto py-1">
+          {cashflowVisible && (
             <li>
               <button
                 type="button"
@@ -149,7 +183,7 @@ export function BucketPicker({
               </button>
             </li>
           )}
-          {options.map((b) => {
+          {filteredOptions.map((b) => {
             const optionGroup = showBudgetGroup
               ? sinkingBudgetGroup(b)
               : null
@@ -188,12 +222,15 @@ export function BucketPicker({
               </li>
             )
           })}
-          {options.length === 0 && !allowCashflow && (
+          {filteredOptions.length === 0 && !cashflowVisible && (
             <li className="px-4 py-2 text-xs text-neutral-400">
-              No buckets yet. Add one in Settings.
+              {searchActive
+                ? 'No matches.'
+                : 'No buckets yet. Add one in Settings.'}
             </li>
           )}
-        </ul>
+          </ul>
+        </div>
       )}
     </div>
   )

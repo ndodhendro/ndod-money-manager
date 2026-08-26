@@ -3,7 +3,6 @@ import { useOverlayBack } from '../hooks/useBackButton'
 import { ActionEmoji } from '../lib/actionEmoji'
 import { showAppToast } from '../lib/appToast'
 import { allocationSum } from '../lib/closeMonthDefaults'
-import { applyEfLoanRepayment } from '../lib/efLoansApi'
 import { FormattedAmountInput } from './FormattedAmountInput'
 import { formatRupiah, todayIso } from '../lib/format'
 import { getStoredProfile } from '../lib/profile'
@@ -81,7 +80,7 @@ export function SinkingAllocateSheet({
     setBusy(true)
     try {
       const owner = getStoredProfile() ?? 'suami'
-      const { toEf } = await executeSinkingAllocation({
+      await executeSinkingAllocation({
         bucketId: bucket.id,
         bucketName: bucket.name,
         allocation: alloc,
@@ -90,7 +89,6 @@ export function SinkingAllocateSheet({
         emergencyId,
         investmentId,
       })
-      if (toEf > 0) await applyEfLoanRepayment(toEf)
       showAppToast(`Allocated ${ActionEmoji.save}`)
       onSaved()
       onClose()

@@ -761,29 +761,42 @@ export async function reparentSinkingForSubcategoryMove(
   const parentBucket =
     await ensureParentSinkingBucketForCategory(nextParentCategoryId)
 
-  if (childBucket.parent_id === parentBucket.id) return
+  const cat = await fetchCategory(subcategoryId)
+  const group =
+    cat.budget_group === 'wants' || cat.budget_group === 'needs'
+      ? cat.budget_group
+      : 'needs'
 
-  const siblings = active.filter(
-    (b) =>
-      b.parent_id === parentBucket.id &&
-      b.id !== childBucket.id &&
-      b.is_active,
-  )
-  if (siblings.length === 0) {
-    const own = await fetchOwnBucketBalance(parentBucket.id)
-    if (Math.abs(own) >= 0.005) {
-      throw new Error(
-        'Transfer balance out of the destination parent bucket first',
-      )
+  const parentChanged = childBucket.parent_id !== parentBucket.id
+  if (parentChanged) {
+    const siblings = active.filter(
+      (b) =>
+        b.parent_id === parentBucket.id &&
+        b.id !== childBucket.id &&
+        b.is_active,
+    )
+    if (siblings.length === 0) {
+      const own = await fetchOwnBucketBalance(parentBucket.id)
+      if (Math.abs(own) >= 0.005) {
+        throw new Error(
+          'Transfer balance out of the destination parent bucket first',
+        )
+      }
     }
   }
 
+  if (!parentChanged && childBucket.budget_group === group) return
+
   const { error } = await supabase
     .from('buckets')
-    .update({ parent_id: parentBucket.id })
+    .update(
+      parentChanged
+        ? { parent_id: parentBucket.id, budget_group: group }
+        : { budget_group: group },
+    )
     .eq('id', childBucket.id)
   if (error) throwMappedBucketError(error.message)
-  await reorderBucketsByNameWithinKinds()
+  if (parentChanged) await reorderBucketsByNameWithinKinds()
 }
 
 /**
@@ -861,11 +874,49 @@ export async function relinkSinkingBucketToSubcategory(
   return mapBucket(data as Record<string, unknown>)
 }
 
+export type BucketMovementKind = 'transfer' | 'expense'
+
 export type BucketMovement = {
+  id: string
+  type: BucketMovementKind
   amount: number
   from_bucket_id: string | null
   to_bucket_id: string | null
   occurred_on: string
+  sort_order: number
+  created_at: string
+}
+
+export function compareBucketMovements(
+  a: Pick<BucketMovement, 'occurred_on' | 'sort_order' | 'created_at' | 'id'>,
+  b: Pick<BucketMovement, 'occurred_on' | 'sort_order' | 'created_at' | 'id'>,
+): number {
+  const aDay = String(a.occurred_on ?? '').slice(0, 10)
+  const bDay = String(b.occurred_on ?? '').slice(0, 10)
+  if (aDay !== bDay) return aDay < bDay ? -1 : 1
+  const aOrd = Number(a.sort_order ?? 0)
+  const bOrd = Number(b.sort_order ?? 0)
+  if (aOrd !== bOrd) return aOrd - bOrd
+  const aAt = String(a.created_at ?? '')
+  const bAt = String(b.created_at ?? '')
+  if (aAt !== bAt) return aAt < bAt ? -1 : 1
+  return String(a.id).localeCompare(String(b.id))
+}
+
+function mapMovementRow(
+  row: Record<string, unknown>,
+  type: BucketMovementKind,
+): BucketMovement {
+  return {
+    id: String(row.id),
+    type,
+    amount: Number(row.amount),
+    from_bucket_id: (row.from_bucket_id as string | null) ?? null,
+    to_bucket_id: (row.to_bucket_id as string | null) ?? null,
+    occurred_on: String(row.occurred_on),
+    sort_order: Number(row.sort_order ?? 0),
+    created_at: String(row.created_at ?? ''),
+  }
 }
 
 /**
@@ -873,42 +924,144 @@ export type BucketMovement = {
  * from a bucket (from_bucket_id only).
  */
 export async function fetchBucketMovements(): Promise<BucketMovement[]> {
-  const { data: transfers, error: transferError } = await supabase
-    .from('transactions')
-    .select('amount, from_bucket_id, to_bucket_id, occurred_on')
-    .eq('type', 'transfer')
-  if (transferError) throw new Error(transferError.message)
+  const withSort =
+    'id, type, amount, from_bucket_id, to_bucket_id, occurred_on, sort_order, created_at, complete_later'
+  const withoutSort =
+    'id, type, amount, from_bucket_id, to_bucket_id, occurred_on, created_at, complete_later'
 
-  const { data: expenses, error: expenseError } = await supabase
-    .from('transactions')
-    .select('amount, from_bucket_id, to_bucket_id, occurred_on, complete_later')
-    .eq('type', 'expense')
-    .not('from_bucket_id', 'is', null)
+  async function load(select: string): Promise<{
+    error: { message: string } | null
+    transfers: Array<Record<string, unknown>>
+    expenses: Array<Record<string, unknown>>
+  }> {
+    const transfers = await supabase
+      .from('transactions')
+      .select(select)
+      .eq('type', 'transfer')
+    if (transfers.error) {
+      return { error: transfers.error, transfers: [], expenses: [] }
+    }
+    const expenses = await supabase
+      .from('transactions')
+      .select(select)
+      .eq('type', 'expense')
+      .not('from_bucket_id', 'is', null)
+    return {
+      error: expenses.error,
+      transfers: (transfers.data ?? []) as unknown as Array<
+        Record<string, unknown>
+      >,
+      expenses: (expenses.data ?? []) as unknown as Array<
+        Record<string, unknown>
+      >,
+    }
+  }
 
-  const expenseRows = expenseError ? [] : (expenses ?? [])
+  let loaded = await load(withSort)
+  if (
+    loaded.error &&
+    loaded.error.message.toLowerCase().includes('sort_order')
+  ) {
+    loaded = await load(withoutSort)
+  }
+  if (loaded.error) throw new Error(loaded.error.message)
 
-  const movements: BucketMovement[] = [
-    ...(transfers ?? []).map((row) => ({
-      amount: Number(row.amount),
-      from_bucket_id: (row.from_bucket_id as string | null) ?? null,
-      to_bucket_id: (row.to_bucket_id as string | null) ?? null,
-      occurred_on: String(row.occurred_on),
-    })),
-  ]
-
-  for (const row of expenseRows) {
+  const movements: BucketMovement[] = []
+  for (const row of loaded.transfers) {
+    if (row.complete_later) continue
+    movements.push(mapMovementRow(row, 'transfer'))
+  }
+  for (const row of loaded.expenses) {
     if (row.complete_later) continue
     const fromId = (row.from_bucket_id as string | null) ?? null
     if (!fromId) continue
-    movements.push({
-      amount: Number(row.amount),
-      from_bucket_id: fromId,
-      to_bucket_id: null,
-      occurred_on: String(row.occurred_on),
-    })
+    movements.push(mapMovementRow(row, 'expense'))
   }
 
   return movements
+}
+
+export type BucketLedgerWalk = {
+  balances: Map<string, number>
+  /** Sinking expense amount not covered by cash in the jar (EF overlay). */
+  sinkingBorrowByTxId: Map<string, number>
+  sinkingBorrowTotal: number
+}
+
+/**
+ * Cash ledgers: sinking expenses take min(amount, cash on hand). Remainder
+ * is an EF overlay, not a negative hole. Transfers move the full amount.
+ */
+export function walkBucketLedger(
+  buckets: Array<Pick<Bucket, 'id' | 'kind' | 'opening_balance'>>,
+  movements: BucketMovement[],
+): BucketLedgerWalk {
+  const sinkingIds = new Set(
+    buckets.filter((b) => b.kind === 'sinking').map((b) => b.id),
+  )
+  const balances = new Map<string, number>()
+  for (const b of buckets) {
+    balances.set(b.id, Math.round(b.opening_balance))
+  }
+  const sinkingBorrowByTxId = new Map<string, number>()
+  const sorted = movements.slice().sort(compareBucketMovements)
+
+  for (const m of sorted) {
+    const amount = Math.max(0, Math.round(m.amount))
+    if (m.to_bucket_id && balances.has(m.to_bucket_id)) {
+      balances.set(
+        m.to_bucket_id,
+        (balances.get(m.to_bucket_id) ?? 0) + amount,
+      )
+    }
+    if (!m.from_bucket_id || !balances.has(m.from_bucket_id)) continue
+    const fromId = m.from_bucket_id
+    const current = balances.get(fromId) ?? 0
+    const isSinkingExpense =
+      m.type === 'expense' && sinkingIds.has(fromId)
+    if (isSinkingExpense) {
+      const available = Math.max(0, Math.round(current))
+      const take = Math.min(amount, available)
+      const borrow = amount - take
+      if (borrow > 0) sinkingBorrowByTxId.set(m.id, borrow)
+      balances.set(fromId, current - take)
+      continue
+    }
+    balances.set(fromId, current - amount)
+  }
+
+  let sinkingBorrowTotal = 0
+  for (const amount of sinkingBorrowByTxId.values()) {
+    sinkingBorrowTotal += amount
+  }
+  return { balances, sinkingBorrowByTxId, sinkingBorrowTotal }
+}
+
+/**
+ * Block deleting a transfer into a sinking fund when later *transfers out*
+ * would overdraw cash. Sinking expenses cap at cash and become EF overlay,
+ * so they do not block.
+ */
+export function sinkingInflowDeleteBlockReason(input: {
+  transaction: {
+    id: string
+    type: string
+    to_bucket_id: string | null
+  }
+  buckets: Array<Pick<Bucket, 'id' | 'kind' | 'opening_balance'>>
+  movements: BucketMovement[]
+}): string | null {
+  const tx = input.transaction
+  if (tx.type !== 'transfer' || !tx.to_bucket_id) return null
+  const dest = input.buckets.find((b) => b.id === tx.to_bucket_id)
+  if (!dest || dest.kind !== 'sinking') return null
+
+  const remaining = input.movements.filter((m) => m.id !== tx.id)
+  const { balances } = walkBucketLedger(input.buckets, remaining)
+  if ((balances.get(dest.id) ?? 0) < 0) {
+    return 'This sinking fund already spent or allocated this money. Remove those outflows first.'
+  }
+  return null
 }
 
 /** @deprecated use fetchBucketMovements */
@@ -916,28 +1069,12 @@ export async function fetchTransferMovements(): Promise<BucketMovement[]> {
   return fetchBucketMovements()
 }
 
-/** Own ledger per bucket (opening + net movements). */
+/** Own ledger per bucket (opening + net movements, sinking expenses capped). */
 export function computeBucketBalances(
   buckets: Bucket[],
-  movements: Array<{
-    amount: number
-    from_bucket_id: string | null
-    to_bucket_id: string | null
-  }>,
+  movements: BucketMovement[],
 ): Map<string, number> {
-  const map = new Map<string, number>()
-  for (const b of buckets) {
-    map.set(b.id, b.opening_balance)
-  }
-  for (const m of movements) {
-    if (m.to_bucket_id && map.has(m.to_bucket_id)) {
-      map.set(m.to_bucket_id, (map.get(m.to_bucket_id) ?? 0) + m.amount)
-    }
-    if (m.from_bucket_id && map.has(m.from_bucket_id)) {
-      map.set(m.from_bucket_id, (map.get(m.from_bucket_id) ?? 0) - m.amount)
-    }
-  }
-  return map
+  return walkBucketLedger(buckets, movements).balances
 }
 
 /** Leaves-only display balances (parent with children = sum of children). */

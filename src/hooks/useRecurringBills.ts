@@ -19,6 +19,7 @@ import { subscribeRecurringBillsChanged } from '../lib/recurringBillsEvents'
 
 export function useRecurringBills(yearMonth: string) {
   const [bills, setBills] = useState<RecurringBill[]>([])
+  const [allActiveBills, setAllActiveBills] = useState<RecurringBill[]>([])
   const [logs, setLogs] = useState<RecurringBillLog[]>([])
   const [overrides, setOverrides] = useState<RecurringBillMonthOverride[]>([])
   const [occurrenceSkips, setOccurrenceSkips] = useState<
@@ -46,6 +47,7 @@ export function useRecurringBills(yearMonth: string) {
             ? Promise.resolve(null)
             : fetchRecurringBillLogs(currentYm),
         ])
+      setAllActiveBills(billRows)
       setBills(
         billRows.filter((b) => isEstimateActiveInMonth(b, yearMonth)),
       )
@@ -60,6 +62,7 @@ export function useRecurringBills(yearMonth: string) {
       if (isMissingRecurringSchema(message)) {
         setAvailable(false)
         setBills([])
+        setAllActiveBills([])
         setLogs([])
         setOverrides([])
         setOccurrenceSkips([])
@@ -204,6 +207,7 @@ export function useRecurringBills(yearMonth: string) {
 
   return {
     bills,
+    allActiveBills,
     logs,
     logByBillId,
     logByOccurrenceKey,

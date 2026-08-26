@@ -1,5 +1,8 @@
 import { formatNumber, formatRupiah } from './format'
+import { budgetGroupOfTx } from './moneyPlan'
 import {
+  BUCKET_KIND_LABELS,
+  BUDGET_GROUP_LABELS,
   CIRCLE_LABELS,
   OWNER_LABELS,
   categoryDisplayParts,
@@ -7,6 +10,8 @@ import {
   formatTransferToLabel,
   isCircle,
   isOwner,
+  type BudgetGroup,
+  type BucketKind,
   type TransactionWithCategory,
 } from './types'
 import type { RecurringBillDisplayParts } from './recurringBillDisplay'
@@ -56,6 +61,77 @@ function amountSearchParts(amount: number): Array<string | number> {
   return [rounded, formatNumber(rounded), formatRupiah(rounded)]
 }
 
+/** Visible Needs / Wants tag plus the stored key (`needs` / `wants`). */
+export function budgetGroupSearchParts(
+  group: BudgetGroup | null | undefined,
+): string[] {
+  if (group !== 'needs' && group !== 'wants') return []
+  return [group, BUDGET_GROUP_LABELS[group]]
+}
+
+/**
+ * Expand a plan tag so typing "needs" / "wants" matches the badge users see
+ * (Emergency / Investment rows show as Needs).
+ */
+export function planTagSearchParts(
+  planTag: string | null | undefined,
+): string[] {
+  if (!planTag) return []
+  const raw = planTag.trim()
+  if (!raw) return []
+  const lower = raw.toLowerCase()
+  const parts = new Set<string>([raw, lower])
+  if (lower === 'wants') {
+    parts.add(BUDGET_GROUP_LABELS.wants)
+  } else if (lower === 'needs') {
+    parts.add(BUDGET_GROUP_LABELS.needs)
+  } else if (lower === 'emergency') {
+    parts.add('Emergency')
+    parts.add(BUDGET_GROUP_LABELS.needs)
+    parts.add('needs')
+  } else if (lower === 'investment' || lower === 'investment transit') {
+    parts.add('Investment')
+    parts.add('Investment Transit')
+    parts.add(BUDGET_GROUP_LABELS.needs)
+    parts.add('needs')
+  }
+  return [...parts]
+}
+
+export function matchesCategorySearch(
+  query: string,
+  cat: { name: string; budget_group?: BudgetGroup | null },
+  inheritedGroup?: BudgetGroup | null,
+): boolean {
+  return matchesSearchText(
+    query,
+    cat.name,
+    ...budgetGroupSearchParts(cat.budget_group ?? inheritedGroup ?? null),
+  )
+}
+
+export function matchesBucketSearch(
+  query: string,
+  bucket: {
+    name: string
+    kind: string
+    budget_group?: BudgetGroup | null
+  },
+  extras?: { parentName?: string | null },
+): boolean {
+  const kind = bucket.kind as BucketKind
+  const kindLabel =
+    kind in BUCKET_KIND_LABELS ? BUCKET_KIND_LABELS[kind] : bucket.kind
+  return matchesSearchText(
+    query,
+    bucket.name,
+    extras?.parentName,
+    bucket.kind,
+    kindLabel,
+    ...budgetGroupSearchParts(bucket.budget_group),
+  )
+}
+
 export function matchesTransactionSearch(
   query: string,
   tx: TransactionWithCategory,
@@ -90,6 +166,7 @@ export function matchesTransactionSearch(
     owner,
     circle,
     tx.occurred_on,
+    ...budgetGroupSearchParts(budgetGroupOfTx(tx)),
     ...amountSearchParts(tx.amount),
   )
 }
@@ -134,7 +211,7 @@ export function matchesRecurringBillSearch(
     circle,
     bill.is_recurring ? `day ${bill.due_day}` : 'estimate',
     bill.due_day,
-    extras?.planTag,
+    ...planTagSearchParts(extras?.planTag),
     extras?.meta,
     extras?.occurredOn,
     extras?.statusLabel,

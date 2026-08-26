@@ -493,6 +493,15 @@ export async function renameCategory(
       if (!parent.is_active) {
         await showCategory(nextParentId)
       }
+      // Needs vs Wants Plan progress follows the new parent, not the old stamp.
+      if (nextParentId !== current.parent_id && current.type === 'expense') {
+        const inherited = await inheritBudgetGroupFromParent(
+          id,
+          nextParentId,
+          parent.budget_group,
+        )
+        if (inherited) update.budget_group = inherited
+      }
     }
 
     if (nextParentId !== current.parent_id) {
@@ -533,15 +542,20 @@ export async function renameCategory(
   }
 
   if (
+    parentMoved ||
     patch.name != null ||
     patch.icon != null ||
     patch.budget_group !== undefined
   ) {
     const { syncBucketFromCategory } = await import('./bucketsApi')
+    const group =
+      update.budget_group === 'needs' || update.budget_group === 'wants'
+        ? update.budget_group
+        : patch.budget_group
     await syncBucketFromCategory(id, {
       name: patch.name,
       icon: patch.icon,
-      budget_group: patch.budget_group,
+      budget_group: group,
     })
   }
 }
@@ -596,6 +610,38 @@ async function nextSortOrderUnderParent(
   const { data, error } = await query.maybeSingle()
   if (error) throw error
   return Number(data?.sort_order ?? 0) + 1
+}
+
+/**
+ * When a subcategory moves, copy Needs/Wants from the destination parent.
+ * If the parent has no group (common once it has children), use a unanimous
+ * sibling group so Plan sinking progress follows the new family.
+ */
+async function inheritBudgetGroupFromParent(
+  subcategoryId: string,
+  nextParentId: string,
+  parentBudgetGroup: unknown,
+): Promise<'needs' | 'wants' | null> {
+  if (parentBudgetGroup === 'needs' || parentBudgetGroup === 'wants') {
+    return parentBudgetGroup
+  }
+  const { data: siblings, error } = await supabase
+    .from('categories')
+    .select('id, budget_group')
+    .eq('parent_id', nextParentId)
+    .eq('is_active', true)
+  if (error) throw error
+  const groups = (siblings ?? [])
+    .filter((row) => row.id !== subcategoryId)
+    .map((row) => row.budget_group)
+    .filter(
+      (group): group is 'needs' | 'wants' =>
+        group === 'needs' || group === 'wants',
+    )
+  if (groups.length === 0) return null
+  const first = groups[0]
+  if (groups.every((group) => group === first)) return first
+  return null
 }
 
 /** Update sort_order berurutan sesuai array id. */

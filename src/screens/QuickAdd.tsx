@@ -31,14 +31,10 @@ import {
   resolveMonthWritePolicy,
   yearMonthFromOccurredOn,
 } from '../lib/budgetSaveGate'
-import { applyEfLoanRepayment } from '../lib/efLoansApi'
 import { resolveExpenseFromBucketId } from '../lib/bucketsApi'
 import { isExpenseOtherCategory } from '../lib/categoriesApi'
 import { budgetGroupOfCategory } from '../lib/freeWants'
-import {
-  deleteEfLoanForTransaction,
-  upsertEfLoanForTransaction,
-} from '../lib/efLoansApi'
+import { deleteEfLoanForTransaction } from '../lib/efLoansApi'
 import { FormattedAmountInput } from '../components/FormattedAmountInput'
 import { monthRange, todayIso } from '../lib/format'
 import {
@@ -138,9 +134,11 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   const wasActiveRef = useRef(false)
   /** True if this edit session opened an existing Complete Later placeholder. */
   const loadedAsCompleteLaterRef = useRef(false)
-  const editingPriorExpenseRef = useRef<{
-    from_bucket_id: string | null
-    amount: number
+  /** Keep due-item identity when editing History so estimate progress stays linked. */
+  const dueItemLinkRef = useRef<{
+    type: TransactionType
+    is_recurring: boolean
+    recurring_bill_id: string | null
   } | null>(null)
 
   const amountCallbackRef = useCallback(
@@ -170,8 +168,12 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
   const { byId: expenseCategoriesById } = useCategories('expense', {
     includeInactive: true,
   })
-  const { buckets, movements, emergency, loading: loadingBuckets, reload: reloadBuckets } =
-    useBuckets()
+  const {
+    buckets,
+    movements,
+    loading: loadingBuckets,
+    reload: reloadBuckets,
+  } = useBuckets()
 
   useEffect(() => {
     if (!isEditing || !id) return
@@ -205,13 +207,11 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         const wasCompleteLater = data.complete_later === true
         loadedAsCompleteLaterRef.current = wasCompleteLater
         setCompleteLater(wasCompleteLater)
-        if ((data.type as TransactionType) === 'expense') {
-          editingPriorExpenseRef.current = {
-            from_bucket_id: (data.from_bucket_id as string | null) ?? null,
-            amount: Math.round(Number(data.amount) || 0),
-          }
-        } else {
-          editingPriorExpenseRef.current = null
+        dueItemLinkRef.current = {
+          type: data.type as TransactionType,
+          is_recurring: data.is_recurring === true,
+          recurring_bill_id:
+            (data.recurring_bill_id as string | null) ?? null,
         }
         if ((data.type as TransactionType) === 'income') {
           setCircle('hd_family')
@@ -247,6 +247,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     setCircle(nextType === 'income' ? 'hd_family' : null)
     setCompleteLater(false)
     loadedAsCompleteLaterRef.current = false
+    dueItemLinkRef.current = null
     setOwnerOpen(false)
     setCircleOpen(false)
     setCategoryOpen(false)
@@ -639,6 +640,10 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
       type === 'income'
         ? 'hd_family'
         : (circle ?? getStoredCircle() ?? 'hd_family')
+    const dueLink =
+      isEditing && dueItemLinkRef.current?.type === type
+        ? dueItemLinkRef.current
+        : null
 
     const draft: NewTransactionInput =
       type === 'transfer'
@@ -652,7 +657,8 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
             owner,
             circle: resolvedCircle,
             occurred_on: occurredOn,
-            is_recurring: false,
+            is_recurring: dueLink?.is_recurring ?? false,
+            recurring_bill_id: dueLink?.recurring_bill_id ?? null,
             complete_later: completeLater,
             budget_group: null,
           }
@@ -669,7 +675,8 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
             owner,
             circle: resolvedCircle,
             occurred_on: occurredOn,
-            is_recurring: false,
+            is_recurring: dueLink?.is_recurring ?? false,
+            recurring_bill_id: dueLink?.recurring_bill_id ?? null,
             complete_later: completeLater,
             budget_group:
               type === 'expense' ? (budgetGroup ?? 'needs') : null,
@@ -683,15 +690,18 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
         return
       }
 
-      let loan:
-        | { amount: number; source: EfLoanSource; yearMonth: string }
-        | undefined
       if (draft.type === 'expense' && !draft.complete_later) {
+        const editingTx =
+          isEditing && id
+            ? monthTransactions.find((tx) => tx.id === id)
+            : null
         const sinkingEval = evaluateSinkingFundEfLoan({
           draft,
           buckets,
           movements,
-          editingPrior: isEditing ? editingPriorExpenseRef.current : null,
+          editId: isEditing ? id : null,
+          editSortOrder: editingTx?.sort_order,
+          editCreatedAt: editingTx?.created_at,
         })
         if (sinkingEval.borrowAmount > 0 && sinkingEval.source) {
           setEfConfirm({
@@ -729,13 +739,10 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
           })
           return
         }
-        if (evalResult.borrowAmount <= 0) {
-          loan = undefined
-        }
       }
 
       setSaving(true)
-      await persistDraft(draft, loan)
+      await persistDraft(draft)
     } catch (err) {
       showAppToast(err instanceof Error ? err.message : 'Failed to save')
     } finally {
@@ -743,10 +750,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     }
   }
 
-  async function persistDraft(
-    draft: NewTransactionInput,
-    loan?: { amount: number; source: EfLoanSource; yearMonth: string },
-  ) {
+  async function persistDraft(draft: NewTransactionInput) {
     let autoCompleted = false
     if (
       isEditing &&
@@ -760,16 +764,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
 
     if (isEditing && id) {
       await updateTransaction(id, draft)
-      if (loan && loan.amount > 0) {
-        await upsertEfLoanForTransaction({
-          transactionId: id,
-          yearMonth: loan.yearMonth,
-          amount: loan.amount,
-          source: loan.source,
-        })
-      } else if (draft.type === 'expense') {
-        await deleteEfLoanForTransaction(id)
-      }
+      await deleteEfLoanForTransaction(id)
       if (draft.type !== 'income') setStoredCircle(draft.circle)
       if (autoCompleted) {
         showAppToast(`Completed ${ActionEmoji.save}`)
@@ -782,24 +777,6 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
       })
     } else {
       const newId = await createTransaction(draft)
-      if (loan && loan.amount > 0) {
-        await upsertEfLoanForTransaction({
-          transactionId: newId,
-          yearMonth: loan.yearMonth,
-          amount: loan.amount,
-          source: loan.source,
-        })
-      }
-      if (
-        !isEditing &&
-        draft.type === 'transfer' &&
-        emergency?.id &&
-        draft.to_bucket_id === emergency.id &&
-        draft.from_bucket_id == null &&
-        draft.amount > 0
-      ) {
-        await applyEfLoanRepayment(draft.amount)
-      }
       if (draft.category_id) bumpCategoryUsage(draft.category_id)
       if (draft.type !== 'income') setStoredCircle(draft.circle)
       void reloadBuckets()
@@ -817,11 +794,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     if (!efConfirm) return
     setSaving(true)
     try {
-      await persistDraft(efConfirm.draft, {
-        amount: efConfirm.borrowAmount,
-        source: efConfirm.source,
-        yearMonth: efConfirm.yearMonth,
-      })
+      await persistDraft(efConfirm.draft)
       setEfConfirm(null)
     } catch (err) {
       showAppToast(err instanceof Error ? err.message : 'Failed to save')

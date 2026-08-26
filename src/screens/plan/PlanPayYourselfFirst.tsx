@@ -15,7 +15,7 @@ import {
   setCollapseOpen,
 } from '../../lib/collapseState'
 import { formatRupiah } from '../../lib/format'
-import { sumPlannedNeeds } from '../../lib/freeWants'
+import { plannedNeedsCeiling } from '../../lib/freeWants'
 import {
   buildMoneyPlan,
   makeMoneyPlanBucket,
@@ -170,14 +170,12 @@ export function PlanPayYourselfFirst() {
   const viewYm = monthCursorKey(cursor)
   const plannedNeeds = useMemo(
     () =>
-      sumPlannedNeeds(
+      plannedNeedsCeiling({
         bills,
-        new Map(),
         categoriesById,
-        viewYm,
-        undefined,
         bucketsById,
-      ),
+        yearMonth: viewYm,
+      }),
     [bills, categoriesById, bucketsById, viewYm],
   )
 

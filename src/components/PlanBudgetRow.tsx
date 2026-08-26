@@ -9,18 +9,16 @@ import { BudgetGroupBadge } from './BudgetGroupBadge'
 import { CircleBadge } from './CircleBadge'
 import { OwnerBadge } from './OwnerBadge'
 
-/** Ceiling fill: blue under 100%, green at 100%, red when over. */
+/** Ceiling fill: green at/under 100%, red when over. */
 function ceilingFillClass(displayPct: number): string {
   if (displayPct > 100) return 'bg-red-500'
-  if (displayPct === 100) return 'bg-emerald-500'
-  return 'bg-blue-500'
+  return 'bg-emerald-500'
 }
 
 /** Same hue as the ceiling fill (text variant of the bar color). */
 function ceilingStatusColorClass(displayPct: number): string {
   if (displayPct > 100) return 'text-red-500'
-  if (displayPct === 100) return 'text-emerald-500'
-  return 'text-blue-500'
+  return 'text-emerald-500'
 }
 
 export type PlanBudgetDetailStack = {

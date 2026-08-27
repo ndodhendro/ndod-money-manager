@@ -1,6 +1,10 @@
 import { allocationSum, ZERO_CLOSE_ALLOC } from '../lib/closeMonthDefaults'
 import { formatRupiah } from '../lib/format'
 import type { MonthCloseAllocation } from '../lib/types'
+import { FormattedAmountInput } from './FormattedAmountInput'
+
+const ALLOC_INPUT_CLASS =
+  'w-32 rounded-lg border border-neutral-200 bg-neutral-50 px-2 py-1.5 text-right text-sm tabular-nums text-neutral-800 outline-none placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:placeholder:text-neutral-500'
 
 export type AllocMode = 'percent' | 'amount'
 
@@ -62,8 +66,8 @@ export function FourWayAllocationFields({
   const target = mode === 'percent' ? 100 : remaining
   const ok = remaining === 0 || total === target
 
-  function setField(key: keyof MonthCloseAllocation, raw: string) {
-    const n = Math.max(0, Math.round(Number(raw.replace(/\D/g, '')) || 0))
+  function setField(key: keyof MonthCloseAllocation, digits: string) {
+    const n = Math.max(0, Math.round(Number(digits) || 0))
     if (mode === 'percent') {
       onAmountsChange(amountsFromPercents(remaining, { ...pct, [key]: n }))
     } else {
@@ -133,11 +137,14 @@ export function FourWayAllocationFields({
               <span className="text-sm text-neutral-600 dark:text-neutral-300">
                 {label}
               </span>
-              <input
-                inputMode="numeric"
-                className="w-28 rounded-lg border border-neutral-200 bg-neutral-50 px-2 py-1.5 text-right text-sm tabular-nums text-neutral-800 outline-none placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:placeholder:text-neutral-500"
-                value={display[key] || ''}
-                onChange={(e) => setField(key, e.target.value)}
+              <FormattedAmountInput
+                pattern="[0-9]*"
+                autoComplete="off"
+                digits={display[key] ? String(display[key]) : ''}
+                onDigitsChange={(digits) => setField(key, digits)}
+                placeholder="0"
+                aria-label={label}
+                className={ALLOC_INPUT_CLASS}
               />
             </label>
           ))}

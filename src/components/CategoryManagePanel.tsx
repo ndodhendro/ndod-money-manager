@@ -483,23 +483,6 @@ export function CategoryManagePanel({
     <div className={compact ? 'space-y-3 p-3' : 'space-y-4'}>
       {view === 'list' ? (
         <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <SearchField
-              value={searchQuery}
-              onChange={setSearchQuery}
-              placeholder="Search categories…"
-              aria-label="Search categories"
-              className="min-w-0 flex-1"
-            />
-            <button
-              type="button"
-              onClick={openAddForm}
-              className="shrink-0 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white active:bg-emerald-600"
-            >
-              {ActionEmoji.add} Add New
-            </button>
-          </div>
-
           {allowTypeChange && (
             <div className="grid grid-cols-2 gap-1 rounded-xl bg-neutral-100 p-1 dark:bg-neutral-800">
               {(['expense', 'income'] as CategoryType[]).map((t) => (
@@ -522,97 +505,116 @@ export function CategoryManagePanel({
             </div>
           )}
 
-          {!searchActive ? (
-            <p className="text-[11px] text-neutral-400">
-              Hold & drag {ActionEmoji.drag} to reorder.
-            </p>
-          ) : null}
-
-          {orderedTree.length === 0 ? (
-            <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
-              No categories yet. Tap Add New to create one.
-            </p>
-          ) : displayTree.length === 0 ? (
-            <p className="rounded-xl bg-white p-3 text-center text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
-              No matches.
-            </p>
-          ) : (
-            <GroupedListFrame
-              label="Categories List"
-              expanded={searchActive ? true : allSubsExpanded}
-              onToggle={setAllSubsExpanded}
-            >
-              <DndContext
-                sensors={sensors}
-                collisionDetection={closestCenter}
-                onDragEnd={handleParentDragEnd}
-              >
-                <SortableContext
-                  items={parentIds}
-                  strategy={verticalListSortingStrategy}
+          <GroupedListFrame
+            label="Categories List"
+            expanded={searchActive ? true : allSubsExpanded}
+            onToggle={setAllSubsExpanded}
+          >
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <SearchField
+                  value={searchQuery}
+                  onChange={setSearchQuery}
+                  placeholder="Search categories…"
+                  aria-label="Search categories"
+                  className="min-w-0 flex-1"
+                />
+                <button
+                  type="button"
+                  onClick={openAddForm}
+                  className="shrink-0 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white active:bg-emerald-600"
                 >
-                  <div className="space-y-2">
-                    {displayTree.map((cat) => (
-                      <SortableParentRow
-                        key={cat.id}
-                        cat={cat}
-                        categoryType={type}
-                        expanded={
-                          searchActive ? true : expandedIds.has(cat.id)
-                        }
-                        editingId={editingId}
-                        editIcon={editIcon}
-                        editName={editName}
-                        editBudgetGroup={editBudgetGroup}
-                        editParentId={editParentId}
-                        editingIsSubcategory={editingIsSubcategory}
-                        parentOptions={parentOptions}
-                        editLeaf={cat.children.length === 0}
-                        saving={saving}
-                        reorderEnabled={!searchActive}
-                        onToggleExpand={() => toggleExpand(cat.id)}
-                        onStartEdit={startEdit}
-                        onDelete={(cat) => setDeleteTarget(cat)}
-                        onEditIconChange={setEditIcon}
-                        onEditNameChange={setEditName}
-                        onEditBudgetGroupChange={setEditBudgetGroup}
-                        onEditParentChange={(parentId) => {
-                          setEditParentId(parentId)
-                          const parent = orderedTree.find((p) => p.id === parentId)
-                          if (
-                            parent?.budget_group === 'needs' ||
-                            parent?.budget_group === 'wants'
-                          ) {
-                            setEditBudgetGroup(parent.budget_group)
-                            return
+                  {ActionEmoji.add} Add New
+                </button>
+              </div>
+
+              {!searchActive ? (
+                <p className="text-[11px] text-neutral-400">
+                  Hold & drag {ActionEmoji.drag} to reorder.
+                </p>
+              ) : null}
+
+              {orderedTree.length === 0 ? (
+                <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
+                  No categories yet. Tap Add New to create one.
+                </p>
+              ) : displayTree.length === 0 ? (
+                <p className="rounded-xl bg-white p-3 text-center text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
+                  No matches.
+                </p>
+              ) : (
+                <DndContext
+                  sensors={sensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={handleParentDragEnd}
+                >
+                  <SortableContext
+                    items={parentIds}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    <div className="space-y-2">
+                      {displayTree.map((cat) => (
+                        <SortableParentRow
+                          key={cat.id}
+                          cat={cat}
+                          categoryType={type}
+                          expanded={
+                            searchActive ? true : expandedIds.has(cat.id)
                           }
-                          const siblingGroups = (parent?.children ?? [])
-                            .filter((child) => child.id !== editingId)
-                            .map((child) => child.budget_group)
-                            .filter(
-                              (group): group is BudgetGroup =>
-                                group === 'needs' || group === 'wants',
-                            )
-                          if (
-                            siblingGroups.length > 0 &&
-                            siblingGroups.every((group) => group === siblingGroups[0])
-                          ) {
-                            setEditBudgetGroup(siblingGroups[0])
+                          editingId={editingId}
+                          editIcon={editIcon}
+                          editName={editName}
+                          editBudgetGroup={editBudgetGroup}
+                          editParentId={editParentId}
+                          editingIsSubcategory={editingIsSubcategory}
+                          parentOptions={parentOptions}
+                          editLeaf={cat.children.length === 0}
+                          saving={saving}
+                          reorderEnabled={!searchActive}
+                          onToggleExpand={() => toggleExpand(cat.id)}
+                          onStartEdit={startEdit}
+                          onDelete={(cat) => setDeleteTarget(cat)}
+                          onEditIconChange={setEditIcon}
+                          onEditNameChange={setEditName}
+                          onEditBudgetGroupChange={setEditBudgetGroup}
+                          onEditParentChange={(parentId) => {
+                            setEditParentId(parentId)
+                            const parent = orderedTree.find((p) => p.id === parentId)
+                            if (
+                              parent?.budget_group === 'needs' ||
+                              parent?.budget_group === 'wants'
+                            ) {
+                              setEditBudgetGroup(parent.budget_group)
+                              return
+                            }
+                            const siblingGroups = (parent?.children ?? [])
+                              .filter((child) => child.id !== editingId)
+                              .map((child) => child.budget_group)
+                              .filter(
+                                (group): group is BudgetGroup =>
+                                  group === 'needs' || group === 'wants',
+                              )
+                            if (
+                              siblingGroups.length > 0 &&
+                              siblingGroups.every((group) => group === siblingGroups[0])
+                            ) {
+                              setEditBudgetGroup(siblingGroups[0])
+                            }
+                          }}
+                          onSaveEdit={saveEdit}
+                          onCancelEdit={cancelEdit}
+                          onChildDragEnd={(event) =>
+                            handleChildDragEnd(cat.id, event)
                           }
-                        }}
-                        onSaveEdit={saveEdit}
-                        onCancelEdit={cancelEdit}
-                        onChildDragEnd={(event) =>
-                          handleChildDragEnd(cat.id, event)
-                        }
-                        sinkingCategoryIds={sinkingCategoryIds}
-                      />
-                    ))}
-                  </div>
-                </SortableContext>
-              </DndContext>
-            </GroupedListFrame>
-          )}
+                          sinkingCategoryIds={sinkingCategoryIds}
+                        />
+                      ))}
+                    </div>
+                  </SortableContext>
+                </DndContext>
+              )}
+            </div>
+          </GroupedListFrame>
         </div>
       ) : (
         <div

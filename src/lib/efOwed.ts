@@ -277,6 +277,7 @@ export function computeDerivedEfOwed(input: {
       bills,
       input.categoriesById,
       (bill) => isExpenseNeedsOrWantsEstimateBill(bill, input.categoriesById),
+      bucketsById,
     )
     const demand = monthBudgetTrackDemandByTxId({
       bills,

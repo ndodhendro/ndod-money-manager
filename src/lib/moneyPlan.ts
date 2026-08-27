@@ -1,5 +1,9 @@
 import { sumTransfersInto } from './bucketsApi'
-import type { Bucket, TransactionWithCategory } from './types'
+import {
+  isBudgetGroup,
+  type Bucket,
+  type TransactionWithCategory,
+} from './types'
 
 /** Minimal bucket fields for PYF auto-amount transfer detection. */
 export type PyfAutoBucketRef = Pick<Bucket, 'kind' | 'name'>
@@ -33,6 +37,16 @@ export function pyfAutoTransferKind(
   const kind = bucketsById.get(bill.to_bucket_id)?.kind
   if (kind === 'emergency' || kind === 'investment') return kind
   return null
+}
+
+/** Transfer estimates that fund PYF buckets (EF, Inv, sinking). */
+export function isPyfFundingTransfer(
+  bill: Pick<EstimateAmountBill, 'type' | 'to_bucket_id'>,
+  bucketsById: Map<string, PyfAutoBucketRef>,
+): boolean {
+  if (bill.type !== 'transfer' || !bill.to_bucket_id) return false
+  const kind = bucketsById.get(bill.to_bucket_id)?.kind
+  return kind === 'emergency' || kind === 'investment' || kind === 'sinking'
 }
 
 /** Monthly PYF transfer target: round(income × pct / 100). */
@@ -259,19 +273,13 @@ export function buildMoneyPlan(input: MoneyPlanInput): MoneyPlan {
   }
 }
 
+/** Quick Add / stored override first; subcategory (then parent) if unset. */
 function budgetGroupOf(tx: TransactionWithCategory) {
-  const live =
-    tx.category?.budget_group === 'needs' ||
-    tx.category?.budget_group === 'wants'
-      ? tx.category.budget_group
-      : tx.category?.parent?.budget_group === 'needs' ||
-          tx.category?.parent?.budget_group === 'wants'
-        ? tx.category.parent.budget_group
-        : null
-  if (live) return live
-  if (tx.budget_group === 'needs' || tx.budget_group === 'wants') {
-    return tx.budget_group
-  }
+  if (isBudgetGroup(tx.budget_group)) return tx.budget_group
+  const fromCat = tx.category?.budget_group
+  if (isBudgetGroup(fromCat)) return fromCat
+  const fromParent = tx.category?.parent?.budget_group
+  if (isBudgetGroup(fromParent)) return fromParent
   return null
 }
 

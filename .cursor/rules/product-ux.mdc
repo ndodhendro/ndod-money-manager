@@ -40,7 +40,7 @@ alwaysApply: true
 
 ## Budget progress bars
 
-- **Ceiling** (spending limits: Needs, Wants, Buffer, Guilt-Free, estimate lines): neutral track + fill = **used**. Fill color by status — accent while safe, amber near limit (~80%+), red when over. Show `% used` and “X left” / “Over by X”. Do not use dual red/green full bars for used vs available.
+- **Ceiling** (spending limits: Needs, Wants, Buffer, Guilt-Free, estimate lines): neutral track + fill = **used**. Fill color by status — accent while safe, amber near limit (~80%+), red when over. Show `% used` (or `% transferred` on transfer estimate lines) and “X left” / “Over by X”. Do not use dual red/green full bars for used vs available.
 - **Floor** (savings goals / PYF funding): fill = progress toward target (positive). Keep distinct from ceiling semantics.
 
 ## When changing UI

@@ -230,7 +230,9 @@ export function PlanCloseMonth() {
           >
             ←
           </button>
-          <p className="text-sm font-semibold">{monthLabel}</p>
+          <p className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
+            {monthLabel}
+          </p>
           <button
             type="button"
             disabled={!canGoNext}
@@ -257,10 +259,14 @@ export function PlanCloseMonth() {
             )}
 
             <section className="rounded-xl bg-white p-4 shadow-sm dark:bg-neutral-800">
-              <h2 className="text-sm font-semibold">Month Summary</h2>
-              <dl className="mt-2 space-y-1 text-sm">
+              <h2 className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
+                Month Summary
+              </h2>
+              <dl className="mt-2 space-y-1 text-sm text-neutral-800 dark:text-neutral-100">
                 <div className="flex justify-between gap-2">
-                  <dt className="text-neutral-500">Needs Side leftover</dt>
+                  <dt className="text-neutral-500 dark:text-neutral-400">
+                    Needs Side leftover
+                  </dt>
                   <dd className="tabular-nums">
                     {formatRupiah(rem.needsSideRemaining)}
                   </dd>
@@ -273,7 +279,9 @@ export function PlanCloseMonth() {
                   </dd>
                 </div>
                 <div className="flex justify-between gap-2">
-                  <dt className="text-neutral-500">Wants Side leftover</dt>
+                  <dt className="text-neutral-500 dark:text-neutral-400">
+                    Wants Side leftover
+                  </dt>
                   <dd className="tabular-nums">
                     {formatRupiah(rem.wantsSideRemaining)}
                   </dd>
@@ -286,7 +294,9 @@ export function PlanCloseMonth() {
                   </dd>
                 </div>
                 <div className="flex justify-between gap-2 pt-1">
-                  <dt className="text-neutral-500">Owed to Emergency Fund</dt>
+                  <dt className="text-neutral-500 dark:text-neutral-400">
+                    Owed to Emergency Fund
+                  </dt>
                   <dd className="tabular-nums text-amber-700 dark:text-amber-300">
                     {formatRupiah(efOwed.total)}
                   </dd>

@@ -434,8 +434,6 @@ export type NewSinkingFromCategoryInput = {
   /** Expense subcategory id (must have a parent). */
   category_id: string
   target_amount: number
-  opening_balance: number
-  opening_transfers?: number
 }
 
 /**
@@ -460,15 +458,6 @@ export async function createSinkingBucketFromCategory(
   if (!Number.isFinite(target_amount) || target_amount <= 0) {
     throw new Error('Target amount is required')
   }
-  const opening_balance = Number.isFinite(input.opening_balance)
-    ? Math.max(0, input.opening_balance)
-    : 0
-
-  const opening_transfers = Number.isFinite(
-    input.opening_transfers,
-  )
-    ? Math.max(0, Math.round(input.opening_transfers ?? 0))
-    : 0
 
   const group =
     cat.budget_group === 'wants' || cat.budget_group === 'needs'
@@ -504,8 +493,8 @@ export async function createSinkingBucketFromCategory(
         name: cat.name,
         icon: cat.icon || '🎯',
         target_amount,
-        opening_balance,
-        opening_transfers,
+        opening_balance: 0,
+        opening_transfers: 0,
         budget_group: group,
         parent_id: parentBucket.id,
         category_id: cat.id,
@@ -523,8 +512,8 @@ export async function createSinkingBucketFromCategory(
         kind: 'sinking',
         icon: cat.icon || '🎯',
         target_amount,
-        opening_balance,
-        opening_transfers,
+        opening_balance: 0,
+        opening_transfers: 0,
         budget_group: group,
         parent_id: parentBucket.id,
         category_id: cat.id,
@@ -562,7 +551,6 @@ export async function createBucket(input: NewBucketInput): Promise<Bucket> {
     return createSinkingBucketFromCategory({
       category_id: input.category_id,
       target_amount: input.target_amount,
-      opening_balance: input.opening_balance,
     })
   }
   throw new Error('Add sinking funds via subcategory')
@@ -621,6 +609,11 @@ export async function updateBucket(
 
   if (current.kind !== 'sinking') {
     delete nextPatch.parent_id
+  }
+
+  if (current.kind === 'sinking') {
+    delete nextPatch.opening_balance
+    delete nextPatch.opening_transfers
   }
 
   if (nextPatch.opening_balance !== undefined) {

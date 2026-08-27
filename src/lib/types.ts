@@ -87,7 +87,7 @@ export type BucketKind = 'checking' | 'emergency' | 'investment' | 'sinking'
 
 export const BUCKET_KIND_LABELS: Record<BucketKind, string> = {
   checking: 'Account',
-  emergency: 'Emergency',
+  emergency: 'Emergency Fund',
   investment: 'Investment Transit',
   sinking: 'Sinking Fund',
 }
@@ -177,7 +177,7 @@ export interface Transaction {
   recurring_bill_id: string | null
   /** Placeholder to finish later; note required, other fields optional. */
   complete_later: boolean
-  /** Expense Needs/Wants; null for income/transfer or legacy rows. */
+  /** Expense Needs/Wants from Quick Add; null = inherit subcategory. */
   budget_group: BudgetGroup | null
   /** Order within occurred_on. Lower = earlier that day (bottom of History). */
   sort_order: number
@@ -205,7 +205,7 @@ export interface NewTransactionInput {
   /** Pass bill.id when creating a transaction from a due-item check. Omit/null for Quick Add. */
   recurring_bill_id?: string | null
   complete_later: boolean
-  /** Expense Needs/Wants; omit/null for income, transfer, or inherit default. */
+  /** Expense Needs/Wants from Quick Add; omit/null to inherit subcategory. */
   budget_group?: BudgetGroup | null
 }
 

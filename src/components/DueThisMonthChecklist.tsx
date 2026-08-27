@@ -100,7 +100,8 @@ interface DueThisMonthChecklistProps {
    */
   emptySearchMessage?: string
   /**
-   * When true (Plan Upcoming & Skipped), render the search field above the list.
+   * When true (Plan Upcoming & Skipped), render the search field inside the
+   * grouped frame, below the section legend.
    * Parent-owned search via `searchQuery` / `onSearchQueryChange` can omit this.
    */
   showSearchField?: boolean
@@ -797,8 +798,12 @@ export function DueThisMonthChecklist({
             })
             return
           }
+        }
 
-          if (allocation) {
+        if (
+          (draft.type === 'expense' || draft.type === 'transfer') &&
+          allocation
+        ) {
           const evalResult = evaluateExpenseEfLoan({
             draft,
             monthClosed: policy.monthClosed,
@@ -830,7 +835,6 @@ export function DueThisMonthChecklist({
               amountOverride,
             })
             return
-          }
           }
         }
 
@@ -1052,6 +1056,15 @@ export function DueThisMonthChecklist({
         expanded={allExpanded}
         onToggle={toggleAllExpanded}
       >
+        {showSearchField ? (
+          <SearchField
+            value={searchQuery}
+            onChange={handleSearchChange}
+            placeholder="Search upcoming and skipped…"
+            aria-label="Search upcoming and skipped"
+            className="mb-3 min-w-0"
+          />
+        ) : null}
         {body}
       </GroupedListFrame>
     )
@@ -1087,53 +1100,27 @@ export function DueThisMonthChecklist({
       return null
     }
 
-    const searchFieldEl =
-      showSearchField ? (
-        <SearchField
-          value={searchQuery}
-          onChange={handleSearchChange}
-          placeholder="Search upcoming and skipped…"
-          aria-label="Search upcoming and skipped"
-          className="mb-3"
-        />
-      ) : null
-
     if (occurrenceItems.length === 0) {
-      return (
-        <>
-          {searchFieldEl}
-          {renderPlanGroupedFrame(
-            <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
-              No due items yet. Add recurring estimates in Settings → Monthly
-              Estimates.
-            </p>,
-          )}
-        </>
+      return renderPlanGroupedFrame(
+        <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
+          No due items yet. Add recurring estimates in Settings → Monthly
+          Estimates.
+        </p>,
       )
     }
 
     if (searchActive) {
-      return (
-        <>
-          {searchFieldEl}
-          {renderPlanGroupedFrame(
-            <p className="rounded-xl bg-white p-3 text-center text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
-              No matches.
-            </p>,
-          )}
-        </>
+      return renderPlanGroupedFrame(
+        <p className="rounded-xl bg-white p-3 text-center text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
+          No matches.
+        </p>,
       )
     }
 
-    return (
-      <>
-        {searchFieldEl}
-        {renderPlanGroupedFrame(
-          <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
-            No upcoming or skipped items. Due bills are on Transactions.
-          </p>,
-        )}
-      </>
+    return renderPlanGroupedFrame(
+      <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
+        No upcoming or skipped items. Due bills are on Transactions.
+      </p>,
     )
   }
 
@@ -1581,19 +1568,8 @@ export function DueThisMonthChecklist({
     )
   }
 
-  const searchFieldEl = showSearchField ? (
-    <SearchField
-      value={searchQuery}
-      onChange={handleSearchChange}
-      placeholder="Search upcoming and skipped…"
-      aria-label="Search upcoming and skipped"
-      className="mb-3"
-    />
-  ) : null
-
   return (
     <>
-      {searchFieldEl}
       {renderPlanGroupedFrame(
         <div className="space-y-5">{renderStatusSections()}</div>,
       )}

@@ -64,9 +64,19 @@ export interface PaydayAllocation {
   bufferPct: number
   /** Guilt-Free Fund after Needs, Buffer, Wants, and sinking. */
   guiltFree: number
+  /** EF + Inv + untagged sinking (Needs/Wants sinking lives in Planned). */
   sinkingTotal: number
-  /** Transfer estimates (sinking + EF + Inv), Monthly Estimates order. */
+  emergencyName: string
+  emergencyAmount: number
+  investmentName: string
+  investmentAmount: number
+  /**
+   * Payday transfer checklist: Emergency, Investment, then all sinking
+   * funds due this month (including Needs/Wants).
+   */
   sinkingTransfers: PaydayTransferLine[]
+  /** Sum of `sinkingTransfers` (operational total, not the Guilt-Free pool). */
+  sinkingTransferTotal: number
   /** Bonus top-up plan; null when there is no bonus income. */
   bonusAllocation: BonusAllocation | null
 }
@@ -112,11 +122,34 @@ function isSavingsTransferDestination(
   bucketsById: Map<string, PaydayBucketRef>,
 ): 'emergency' | 'investment' | 'sinking' | null {
   if (bill.type !== 'transfer' || !bill.to_bucket_id) return null
-  const kind = bucketsById.get(bill.to_bucket_id)?.kind
-  if (kind === 'emergency' || kind === 'investment' || kind === 'sinking') {
-    return kind
+  const dest = bucketsById.get(bill.to_bucket_id)
+  if (!dest || dest.is_active === false) return null
+  if (dest.kind === 'emergency' || dest.kind === 'investment' || dest.kind === 'sinking') {
+    return dest.kind
   }
   return null
+}
+
+function paydayTransferKindRank(
+  kind: 'emergency' | 'investment' | 'sinking',
+): number {
+  if (kind === 'emergency') return 0
+  if (kind === 'investment') return 1
+  return 2
+}
+
+function activeBucketNameByKind(
+  bucketsById: Map<string, PaydayBucketRef>,
+  kind: 'emergency' | 'investment',
+  fallback: string,
+): string {
+  for (const bucket of bucketsById.values()) {
+    if (bucket.kind === kind && bucket.is_active !== false) {
+      const name = bucket.name?.trim()
+      if (name) return name
+    }
+  }
+  return fallback
 }
 
 /**
@@ -438,14 +471,6 @@ export function buildPaydayAllocation(
   for (const bill of input.bills) {
     if (!bill.is_active) continue
     if (!isSavingsTransferDestination(bill, input.bucketsById)) continue
-    if (
-      isPlannedNeedsOrWantsSinkingTransfer(
-        bill,
-        input.bucketsById,
-        input.categoriesById,
-      )
-    )
-      continue
     const override = input.overridesByBillId.get(bill.id)
     const count = estimateOccurrenceCount(
       bill,
@@ -461,9 +486,16 @@ export function buildPaydayAllocation(
     transferBills,
     input.categoriesById,
     input.bucketsById as Map<string, BucketWithBalance>,
-  )
+  ).sort((a, b) => {
+    const kindA = isSavingsTransferDestination(a, input.bucketsById)
+    const kindB = isSavingsTransferDestination(b, input.bucketsById)
+    if (!kindA || !kindB) return 0
+    return paydayTransferKindRank(kindA) - paydayTransferKindRank(kindB)
+  })
 
   const sinkingTransfers: PaydayTransferLine[] = []
+  let emergencyAmount = 0
+  let investmentAmount = 0
   for (const bill of ordered) {
     const bucketKind = isSavingsTransferDestination(bill, input.bucketsById)
     if (!bucketKind) continue
@@ -489,7 +521,24 @@ export function buildPaydayAllocation(
       icon: bucket?.icon || TRANSFER_TYPE_ICON,
       bucketKind,
     })
+    if (bucketKind === 'emergency') emergencyAmount += amount
+    if (bucketKind === 'investment') investmentAmount += amount
   }
+
+  const emergencyName = activeBucketNameByKind(
+    input.bucketsById,
+    'emergency',
+    'Emergency Fund',
+  )
+  const investmentName = activeBucketNameByKind(
+    input.bucketsById,
+    'investment',
+    'Investment',
+  )
+  const sinkingTransferTotal = sinkingTransfers.reduce(
+    (sum, row) => sum + row.amount,
+    0,
+  )
 
   const bonusAllocation =
     bonusIncome > 0
@@ -512,7 +561,12 @@ export function buildPaydayAllocation(
     bufferPct: base.bufferPct,
     guiltFree: base.guiltFree,
     sinkingTotal: base.sinkingTotal,
+    emergencyName,
+    emergencyAmount,
+    investmentName,
+    investmentAmount,
     sinkingTransfers,
+    sinkingTransferTotal,
     bonusAllocation,
   }
 }

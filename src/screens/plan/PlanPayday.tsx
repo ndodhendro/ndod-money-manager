@@ -110,8 +110,12 @@ export function PlanPayday() {
                 <AmountRow label="Bonus" amount={allocation.bonusIncome} />
               )}
               <AmountRow
-                label="Sinking Funds"
-                amount={allocation.sinkingTotal}
+                label={allocation.emergencyName}
+                amount={allocation.emergencyAmount}
+              />
+              <AmountRow
+                label={allocation.investmentName}
+                amount={allocation.investmentAmount}
               />
               <div className="space-y-1.5 border-t border-neutral-100 pt-2 dark:border-neutral-700">
                 <AmountRow
@@ -203,7 +207,7 @@ export function PlanPayday() {
               <div className="mb-3">
                 <AmountRow
                   label="Total"
-                  amount={allocation.sinkingTotal}
+                  amount={allocation.sinkingTransferTotal}
                   emphasize
                 />
               </div>

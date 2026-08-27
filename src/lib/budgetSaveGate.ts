@@ -8,6 +8,7 @@ import {
 import {
   isPlannedNeedsSchedule,
   budgetGroupOfEstimate,
+  budgetGroupOfTransferTo,
   type BucketBudgetRef,
 } from './freeWants'
 import { formatRupiah, formatYearMonthLabel } from './format'
@@ -88,17 +89,17 @@ function isExpenseNeedsOrWantsEstimateBill(
   return g === 'needs' || g === 'wants'
 }
 
-function syntheticExpense(
+function syntheticDraftTx(
   draft: NewTransactionInput,
   id: string,
   category: Category | null,
 ): TransactionWithCategory {
   return {
     id,
-    type: 'expense',
+    type: draft.type,
     category_id: draft.category_id,
     from_bucket_id: draft.from_bucket_id,
-    to_bucket_id: null,
+    to_bucket_id: draft.to_bucket_id,
     amount: draft.amount,
     description: draft.description,
     owner: draft.owner,
@@ -123,9 +124,11 @@ export type EfLoanEvaluation = {
 }
 
 /**
- * How much of this expense draft must be borrowed from Emergency Fund.
- * Open month: Buffer then EF for Needs overspend / unplanned Needs;
+ * How much of this Main/checking draft must be borrowed from Emergency Fund.
+ * Expenses: Buffer then EF for Needs overspend / unplanned Needs;
  * Guilt-Free then EF for Wants overspend / unplanned Wants.
+ * Transfers into Needs/Wants sinking funds use the same tracks (planned
+ * amount fills Planned; overage / unplanned hits Buffer or Guilt-Free).
  * Closed month: leftover capacity frozen — new overage → EF only.
  */
 export function evaluateExpenseEfLoan(input: {
@@ -145,12 +148,7 @@ export function evaluateExpenseEfLoan(input: {
   dueBillIdByTxId?: Map<string, string>
 }): EfLoanEvaluation {
   const draft = input.draft
-  if (
-    draft.type !== 'expense' ||
-    draft.complete_later ||
-    draft.amount <= 0 ||
-    !draft.category_id
-  ) {
+  if (draft.complete_later || draft.amount <= 0) {
     return { borrowAmount: 0, source: null }
   }
 
@@ -163,7 +161,21 @@ export function evaluateExpenseEfLoan(input: {
   )
   const from = draft.from_bucket_id
   if (from != null && !checkingIds.has(from)) {
-    // Sinking-bucket expense — not Buffer/GF Main spending.
+    // Sinking (or other non-checking) outflow — not Buffer/GF Main spending.
+    return { borrowAmount: 0, source: null }
+  }
+
+  let draftGroup: 'needs' | 'wants' | null = null
+  if (draft.type === 'expense') {
+    if (!draft.category_id) return { borrowAmount: 0, source: null }
+  } else if (draft.type === 'transfer') {
+    draftGroup = budgetGroupOfTransferTo(
+      draft.to_bucket_id,
+      input.bucketsById,
+      input.categoriesById,
+    )
+    if (draftGroup == null) return { borrowAmount: 0, source: null }
+  } else {
     return { borrowAmount: 0, source: null }
   }
 
@@ -171,10 +183,14 @@ export function evaluateExpenseEfLoan(input: {
     input.bills,
     input.categoriesById,
     (bill) => isExpenseNeedsOrWantsEstimateBill(bill, input.categoriesById),
+    input.bucketsById,
   )
-  const category = input.categoriesById.get(draft.category_id) ?? null
-  const draftTx = syntheticExpense(draft, input.editId ?? '__draft__', category)
-  const draftGroup = budgetGroupOfTx(draftTx)
+  const category =
+    draft.category_id != null
+      ? (input.categoriesById.get(draft.category_id) ?? null)
+      : null
+  const draftTx = syntheticDraftTx(draft, input.editId ?? '__draft__', category)
+  if (draftGroup == null) draftGroup = budgetGroupOfTx(draftTx)
 
   const baseTxs = input.editId
     ? input.transactions.filter((t) => t.id !== input.editId)
@@ -184,6 +200,8 @@ export function evaluateExpenseEfLoan(input: {
     estimateCoverageKeys,
     checkingBucketIds: checkingIds,
     dueBillIdByTxId: input.dueBillIdByTxId,
+    bucketsById: input.bucketsById,
+    categoriesById: input.categoriesById,
   }
 
   const before = computeMonthBudgetSpend({

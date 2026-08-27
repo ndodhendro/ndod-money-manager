@@ -1183,33 +1183,16 @@ export function RecurringBillsPanel({
         <p className="text-sm text-neutral-400">Loading</p>
       )}
       {view === 'list' ? (
-        <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <SearchField
-              value={searchQuery}
-              onChange={setSearchQuery}
-              placeholder="Search estimates…"
-              aria-label="Search monthly estimates"
-              className="min-w-0 flex-1"
-            />
-            <button
-              type="button"
-              onClick={openAddForm}
-              className="shrink-0 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white active:bg-emerald-600"
-            >
-              {ActionEmoji.add} Add New
-            </button>
-          </div>
-          {listLoading ? null : sortedBills.length === 0 ? (
-            <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
-              No estimates yet. Tap Add New to create one.
-            </p>
-          ) : filteredBills.length === 0 ? (
-            <p className="rounded-xl bg-white p-3 text-center text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
-              No matches.
-            </p>
-          ) : (
-            <>
+        <GroupedListFrame
+          label="Monthly Estimates"
+          expanded={dayGroupsExpanded}
+          onToggle={(expanded) => {
+            setDayGroupsExpanded(expanded)
+            setDayGroupsVersion((v) => v + 1)
+          }}
+        >
+          <div className="space-y-3">
+            {!listLoading && sortedBills.length > 0 ? (
               <div className="rounded-xl bg-white px-3 py-2.5 text-xs shadow-sm dark:bg-neutral-800">
                 <p className="mb-1.5 font-medium text-neutral-500 dark:text-neutral-400">
                   This Month Totals
@@ -1235,14 +1218,32 @@ export function RecurringBillsPanel({
                   </div>
                 </div>
               </div>
-              <GroupedListFrame
-                label="Monthly Estimates"
-                expanded={dayGroupsExpanded}
-                onToggle={(expanded) => {
-                  setDayGroupsExpanded(expanded)
-                  setDayGroupsVersion((v) => v + 1)
-                }}
+            ) : null}
+            <div className="flex items-center gap-2">
+              <SearchField
+                value={searchQuery}
+                onChange={setSearchQuery}
+                placeholder="Search estimates…"
+                aria-label="Search monthly estimates"
+                className="min-w-0 flex-1"
+              />
+              <button
+                type="button"
+                onClick={openAddForm}
+                className="shrink-0 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white active:bg-emerald-600"
               >
+                {ActionEmoji.add} Add New
+              </button>
+            </div>
+            {listLoading ? null : sortedBills.length === 0 ? (
+              <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
+                No estimates yet. Tap Add New to create one.
+              </p>
+            ) : filteredBills.length === 0 ? (
+              <p className="rounded-xl bg-white p-3 text-center text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
+                No matches.
+              </p>
+            ) : (
                 <div className="space-y-5">
                   {groupedBills.map((group) => (
                     <CollapsibleDayGroup
@@ -1315,10 +1316,9 @@ export function RecurringBillsPanel({
                     </CollapsibleDayGroup>
                   ))}
                 </div>
-              </GroupedListFrame>
-            </>
-          )}
-        </div>
+            )}
+          </div>
+        </GroupedListFrame>
       ) : (
         <div className="space-y-3">
         <div className="grid grid-cols-3 gap-1 rounded-xl bg-neutral-100 p-1 dark:bg-neutral-800">

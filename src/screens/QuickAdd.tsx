@@ -713,7 +713,11 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
           return
         }
       }
-      if (draft.type === 'expense' && !draft.complete_later && allocation) {
+      if (
+        (draft.type === 'expense' || draft.type === 'transfer') &&
+        !draft.complete_later &&
+        allocation
+      ) {
         const evalResult = evaluateExpenseEfLoan({
           draft,
           editId: isEditing ? id : null,

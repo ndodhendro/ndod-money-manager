@@ -97,13 +97,22 @@ function effectiveDueBillId(
   return tx.recurring_bill_id ?? dueBillIdByTxId?.get(tx.id) ?? null
 }
 
+/** Main Account (null from) or a checking bucket — Month Budget outflows. */
+function isFromMainOrChecking(
+  tx: Pick<TransactionWithCategory, 'from_bucket_id' | 'complete_later'>,
+  checkingBucketIds: Set<string>,
+): boolean {
+  if (tx.complete_later) return false
+  const from = tx.from_bucket_id
+  return from == null || checkingBucketIds.has(from)
+}
+
 function isMainOrCheckingExpenseTx(
   tx: TransactionWithCategory,
   checkingBucketIds: Set<string>,
 ): boolean {
-  if (tx.type !== 'expense' || tx.complete_later) return false
-  const from = tx.from_bucket_id
-  return from == null || checkingBucketIds.has(from)
+  if (tx.type !== 'expense') return false
+  return isFromMainOrChecking(tx, checkingBucketIds)
 }
 
 export function transactionsForEstimateBill(
@@ -159,6 +168,13 @@ export function transactionsForEstimateBill(
     for (const tx of transactions) {
       if (tx.type !== 'transfer' || tx.complete_later) continue
       if (exclude?.has(tx.id)) continue
+      if (
+        options?.mainCheckingOnly &&
+        checkingIds &&
+        !isFromMainOrChecking(tx, checkingIds)
+      ) {
+        continue
+      }
       const dueBillId = effectiveDueBillId(tx, dueBillIdByTxId)
       if (dueBillId != null) {
         if (dueBillId === bill.id) matched.push(tx)
@@ -371,15 +387,25 @@ type MonthBudgetEstimateCandidate = {
   group: BudgetGroup
 }
 
-function monthBudgetExpenseCandidates(
+function monthBudgetEstimateCandidates(
   bills: RecurringBill[],
   categoriesById: Map<string, Category>,
+  bucketsById: Map<string, EstimateBucketRef>,
 ): MonthBudgetEstimateCandidate[] {
   const out: MonthBudgetEstimateCandidate[] = []
   for (const bill of bills) {
-    if (!bill.is_active || bill.type !== 'expense') continue
+    if (!bill.is_active) continue
     if (!isPlannedNeedsSchedule(bill)) continue
-    const group = budgetGroupOfEstimate(bill, categoriesById)
+    let group: BudgetGroup | null = null
+    if (bill.type === 'expense') {
+      group = budgetGroupOfEstimate(bill, categoriesById)
+    } else if (bill.type === 'transfer') {
+      group = budgetGroupOfActiveSinkingTransfer(
+        bill.to_bucket_id,
+        bucketsById,
+        categoriesById,
+      )
+    }
     if (group === 'needs' || group === 'wants') {
       out.push({ bill, group })
     }
@@ -395,8 +421,9 @@ function monthBudgetExpenseCandidates(
 }
 
 /**
- * Month Budget used: expense estimate lines only, Main/checking History,
- * each transaction counted at most once (first matching line wins).
+ * Month Budget used: Needs/Wants expense lines plus transfers into
+ * Needs/Wants sinking funds, Main/checking History only. Each
+ * transaction counted at most once (first matching line wins).
  */
 export function buildMonthBudgetEstimateRows(input: {
   bills: RecurringBill[]
@@ -417,9 +444,10 @@ export function buildMonthBudgetEstimateRows(input: {
     dueBillIdByTxId: input.dueBillIdByTxId,
   }
 
-  for (const { bill, group } of monthBudgetExpenseCandidates(
+  for (const { bill, group } of monthBudgetEstimateCandidates(
     input.bills,
     input.categoriesById,
+    input.bucketsById,
   )) {
     const override = input.overridesByBillId.get(bill.id)
     const count = estimatePlannedOccurrenceCount(
@@ -445,12 +473,16 @@ export function buildMonthBudgetEstimateRows(input: {
     const cat = bill.category_id
       ? input.categoriesById.get(bill.category_id)
       : undefined
-    const name = bill.name || cat?.name || 'Unnamed'
+    const bucket =
+      bill.type === 'transfer' && bill.to_bucket_id
+        ? input.bucketsById.get(bill.to_bucket_id)
+        : undefined
+    const name = bill.name || cat?.name || bucket?.name || 'Unnamed'
 
     rows.push({
       billId: bill.id,
       name,
-      icon: cat?.icon ?? '🏷️',
+      icon: cat?.icon ?? bucket?.icon ?? '🏷️',
       group,
       planned,
       actual,
@@ -511,9 +543,10 @@ export function monthBudgetFlexibleTrackDemandByTxId(input: {
     dueBillIdByTxId: input.dueBillIdByTxId,
   }
 
-  for (const { bill, group } of monthBudgetExpenseCandidates(
+  for (const { bill, group } of monthBudgetEstimateCandidates(
     input.bills,
     input.categoriesById,
+    input.bucketsById,
   )) {
     const override = input.overridesByBillId.get(bill.id)
     const count = estimatePlannedOccurrenceCount(
@@ -771,7 +804,8 @@ function upcomingAmountForRecurringBill(
 }
 
 /**
- * Unchecked future occurrences (Upcoming) per Month Budget expense line.
+ * Unchecked future occurrences (Upcoming) per Month Budget line
+ * (Needs/Wants expenses and sinking transfers).
  * Uses the estimate for weekly/biweekly remaining dates (not a this-month
  * override from an earlier underspend). Monthly uses override, else template.
  * Skipped / checked / due (today or past) dates are omitted.
@@ -782,13 +816,15 @@ export function upcomingExpenseAmountByBillId(input: {
   skippedOccurrenceKeys?: Set<string>
   logByOccurrenceKey: Map<string, RecurringBillLog>
   categoriesById: Map<string, Category>
+  bucketsById: Map<string, EstimateBucketRef>
   yearMonth: string
   today: string
 }): Map<string, number> {
   const byBillId = new Map<string, number>()
-  for (const { bill } of monthBudgetExpenseCandidates(
+  for (const { bill } of monthBudgetEstimateCandidates(
     input.bills,
     input.categoriesById,
+    input.bucketsById,
   )) {
     const upcoming = upcomingAmountForRecurringBill(
       bill,
@@ -804,7 +840,7 @@ export function upcomingExpenseAmountByBillId(input: {
 }
 
 /**
- * Shadow amounts for Monthly Estimate Progress recurring lines (expense +
+ * Shadow amounts for Monthly Progress recurring estimate lines (expense +
  * transfer): every dated occurrence this month that is not skipped and not
  * checklist-checked — including already-due dates still unpaid.
  * Non-recurring estimates have no dated occurrences.

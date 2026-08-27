@@ -6,22 +6,16 @@ export const PLAN_PROGRESS_SECTIONS = [
     subtitle: 'Bills not yet due and skipped this month',
   },
   {
-    to: '/rencana/needs-wants',
+    to: '/rencana/monthly-progress',
     icon: '⚖️',
-    title: 'Monthly Estimate Progress',
-    subtitle: 'Planned vs Actual for This Month',
+    title: 'Monthly Progress',
+    subtitle: 'Funding and planned vs actual this month',
   },
   {
     to: '/rencana/emergency',
     icon: '🎯',
     title: 'Savings Goals',
     subtitle: 'Balances vs your goal amounts',
-  },
-  {
-    to: '/rencana/pay-yourself-first',
-    icon: '💰',
-    title: 'Pay Yourself First',
-    subtitle: 'Funding vs your monthly targets',
   },
   {
     to: '/rencana/payday',
@@ -52,16 +46,14 @@ export const PlanIcon = {
   payday: planSection('/rencana/payday').icon,
   closeMonth: planSection('/rencana/close-month').icon,
   recurring: planSection('/rencana/recurring').icon,
-  payYourselfFirst: planSection('/rencana/pay-yourself-first').icon,
+  monthlyProgress: planSection('/rencana/monthly-progress').icon,
   emergency: planSection('/rencana/emergency').icon,
-  needsWants: planSection('/rencana/needs-wants').icon,
 } as const
 
 export const PlanTitle = {
   payday: planSection('/rencana/payday').title,
   closeMonth: planSection('/rencana/close-month').title,
   recurring: planSection('/rencana/recurring').title,
-  payYourselfFirst: planSection('/rencana/pay-yourself-first').title,
+  monthlyProgress: planSection('/rencana/monthly-progress').title,
   emergency: planSection('/rencana/emergency').title,
-  needsWants: planSection('/rencana/needs-wants').title,
 } as const

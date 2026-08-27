@@ -1,8 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { CollapseChevron } from '../../components/CollapseChevron'
 import { GroupedListFrame } from '../../components/GroupedListFrame'
-import { PlanBudgetRow } from '../../components/PlanBudgetRow'
+import {
+  PlanBudgetAmount,
+  PlanBudgetRow,
+} from '../../components/PlanBudgetRow'
 import { PlanSubPage } from '../../components/PlanSubPage'
+import { SearchField } from '../../components/SearchField'
 import { SinkingAllocateSheet } from '../../components/SinkingAllocateSheet'
 import { useBuckets } from '../../hooks/useBuckets'
 import { useEfOwed } from '../../hooks/useEfOwed'
@@ -22,6 +26,7 @@ import {
   type MoneyPlanBucket,
 } from '../../lib/moneyPlan'
 import { formatRupiah } from '../../lib/format'
+import { isBlankSearch, matchesBucketSearch } from '../../lib/listSearch'
 import { currentMonthCursor, monthCursorKey } from '../../lib/monthCursor'
 import { PlanIcon, PlanTitle } from '../../lib/planSections'
 import {
@@ -29,6 +34,10 @@ import {
   isMissingRecurringSchema,
   type RecurringBill,
 } from '../../lib/recurringBillsApi'
+import {
+  buildSinkingGoalsRow,
+  computeSinkingFundPace,
+} from '../../lib/sinkingFundPace'
 import {
   missedTransferHint,
   sinkingMissedTransferAmount,
@@ -55,18 +64,19 @@ function overallRowForBucket(
   efOwedTotal: number,
 ): {
   bucket: MoneyPlanBucket
-  hint: string
+  hint: ReactNode
 } {
   const isSystemEmergency = emergencyId != null && b.id === emergencyId
   if (isSystemEmergency && efTarget > 0) {
     const available = Math.max(0, Math.round(b.balance) - Math.max(0, efOwedTotal))
-    const base = `${efMultiplier}× planned needs`
     return {
       bucket: makeMoneyPlanBucket(b.name, efTarget, b.balance, 'floor'),
-      hint:
-        efOwedTotal > 0
-          ? `${base} · Available ${formatRupiah(available)}`
-          : base,
+      hint: (
+        <span className="block space-y-0.5">
+          <span className="block">{`${efMultiplier}× planned needs`}</span>
+          <span className="block">Available {formatRupiah(available)}</span>
+        </span>
+      ),
     }
   }
   if (b.kind === 'investment') {
@@ -83,6 +93,72 @@ function overallRowForBucket(
   }
 }
 
+function sinkingGoalsRowForBucket(input: {
+  bucket: BucketWithBalance
+  bills: RecurringBill[]
+  movements: Array<{
+    id: string
+    amount: number
+    from_bucket_id: string | null
+    occurred_on: string
+  }>
+  sinkingBorrowByTxId?: Map<string, number>
+  yearMonth: string
+  barFallback: string
+}) {
+  const b = input.bucket
+  const target = b.target_amount ?? 0
+  const onHand = Math.max(0, Math.round(b.balance))
+  const cashAndProgress = (progress: number) => ({
+    headlineAmount: (
+      <PlanBudgetAmount prefix="Available" actual={onHand} tone="emphasis" />
+    ) as ReactNode,
+    hint: (
+      <PlanBudgetAmount actual={progress} target={target} tone="muted" />
+    ) as ReactNode,
+    hintAlign: 'right' as const,
+  })
+  const fallback = {
+    bucket: makeMoneyPlanBucket(b.name, target, b.balance, 'floor'),
+    hint: '' as ReactNode,
+    hintAlign: 'left' as const,
+    headlineAmount: undefined as ReactNode,
+    badge: null as { label: string; className: string } | null,
+    barClass: input.barFallback,
+    footerNote: undefined as string | undefined,
+    footerNoteClassName: undefined as string | undefined,
+  }
+  if (target <= 0) return fallback
+
+  const pace = computeSinkingFundPace({
+    destinationIds: [b.id],
+    target,
+    balance: b.balance,
+    openingTransfers: b.opening_transfers,
+    movements: input.movements,
+    ledgerBalance: b.own_balance,
+    sinkingBorrowByTxId: input.sinkingBorrowByTxId,
+    yearMonth: input.yearMonth,
+    bills: input.bills,
+  })
+  if (!pace) {
+    return {
+      ...fallback,
+      ...cashAndProgress(onHand),
+    }
+  }
+
+  const row = buildSinkingGoalsRow({ pace, onHand: b.balance })
+  return {
+    bucket: makeMoneyPlanBucket(b.name, target, row.progress, 'floor'),
+    ...cashAndProgress(row.progress),
+    badge: row.badge,
+    barClass: row.barClass,
+    footerNote: row.footerText,
+    footerNoteClassName: row.footerClass,
+  }
+}
+
 export function PlanEmergency() {
   const {
     settings,
@@ -92,6 +168,7 @@ export function PlanEmergency() {
   const {
     buckets,
     movements,
+    sinkingBorrowByTxId,
     byId: bucketsById,
     emergency,
     investment,
@@ -114,6 +191,7 @@ export function PlanEmergency() {
   const [allocateBucket, setAllocateBucket] = useState<BucketWithBalance | null>(
     null,
   )
+  const [searchQuery, setSearchQuery] = useState('')
 
   const viewYm = monthCursorKey(currentMonthCursor())
 
@@ -165,13 +243,47 @@ export function PlanEmergency() {
     [buckets, categoriesById],
   )
 
-  const expandableSinkingParentIds = useMemo(() => {
+  const searchActive = !isBlankSearch(searchQuery)
+  const sinkingNodes = useMemo(() => {
     const sinking = groupedBuckets.find(([kind]) => kind === 'sinking')
-    if (!sinking) return [] as string[]
-    return sinking[1]
-      .filter((node) => node.children.length > 0)
-      .map((node) => node.bucket.id)
+    return sinking?.[1] ?? []
   }, [groupedBuckets])
+  const sinkingAvailableTotal = useMemo(
+    () =>
+      sinkingNodes.reduce(
+        (sum, node) => sum + Math.max(0, Math.round(node.bucket.balance)),
+        0,
+      ),
+    [sinkingNodes],
+  )
+  const filteredSinkingNodes = useMemo(() => {
+    if (!searchActive) return sinkingNodes
+    return sinkingNodes
+      .map((node) => {
+        const parentMatch = matchesBucketSearch(searchQuery, node.bucket)
+        const children = node.children.filter(
+          (child) =>
+            parentMatch ||
+            matchesBucketSearch(searchQuery, child, {
+              parentName: node.bucket.name,
+            }),
+        )
+        return { ...node, children }
+      })
+      .filter(
+        (node) =>
+          matchesBucketSearch(searchQuery, node.bucket) ||
+          node.children.length > 0,
+      )
+  }, [sinkingNodes, searchActive, searchQuery])
+
+  const expandableSinkingParentIds = useMemo(
+    () =>
+      sinkingNodes
+        .filter((node) => node.children.length > 0)
+        .map((node) => node.bucket.id),
+    [sinkingNodes],
+  )
 
   const missedByBucketId = useMemo(() => {
     const map = new Map<string, number>()
@@ -190,6 +302,17 @@ export function PlanEmergency() {
     }
     return map
   }, [buckets, bills, movements, viewYm])
+
+  function sinkingRow(b: BucketWithBalance) {
+    return sinkingGoalsRowForBucket({
+      bucket: b,
+      bills,
+      movements,
+      sinkingBorrowByTxId,
+      yearMonth: viewYm,
+      barFallback: KIND_BAR.sinking,
+    })
+  }
 
   const allSinkingCatsExpanded =
     expandableSinkingParentIds.length > 0 &&
@@ -269,7 +392,7 @@ export function PlanEmergency() {
 
   function renderSinkingNode(node: BucketTreeNode, kind: BucketKind) {
     const hasChildren = node.children.length > 0
-    const expanded = expandedParentIds.has(node.bucket.id)
+    const expanded = searchActive || expandedParentIds.has(node.bucket.id)
 
     if (hasChildren) {
       return (
@@ -305,23 +428,22 @@ export function PlanEmergency() {
           />
           {expanded
             ? node.children.map((child) => {
-                const { bucket, hint } = overallRowForBucket(
-                  child,
-                  emergency?.id ?? null,
-                  efTarget,
-                  efMultiplier,
-                  efOwed.total,
-                )
+                const row = sinkingRow(child)
                 return (
                 <div key={child.id} className="pl-5">
                   <PlanBudgetRow
                     icon={child.icon}
-                    bucket={bucket}
-                    hint={hint}
+                    bucket={row.bucket}
+                    hint={row.hint || undefined}
+                    hintAlign={row.hintAlign}
+                    headlineAmount={row.headlineAmount}
+                    badge={row.badge}
+                    footerNote={row.footerNote}
+                    footerNoteClassName={row.footerNoteClassName}
                     alertHint={missedTransferHint(
                       missedByBucketId.get(child.id) ?? 0,
                     )}
-                    barClass={KIND_BAR[kind]}
+                    barClass={row.barClass}
                     mode="floor"
                     showToGo={false}
                     surfaceClassName="bg-neutral-100 dark:bg-neutral-700/70"
@@ -335,23 +457,22 @@ export function PlanEmergency() {
       )
     }
 
-    const { bucket, hint } = overallRowForBucket(
-      node.bucket,
-      emergency?.id ?? null,
-      efTarget,
-      efMultiplier,
-      efOwed.total,
-    )
+    const row = sinkingRow(node.bucket)
     return (
       <div key={node.bucket.id} className="space-y-2">
         <PlanBudgetRow
           icon={node.bucket.icon}
-          bucket={bucket}
-          hint={hint}
+          bucket={row.bucket}
+          hint={row.hint || undefined}
+          hintAlign={row.hintAlign}
+          headlineAmount={row.headlineAmount}
+          badge={row.badge}
+          footerNote={row.footerNote}
+          footerNoteClassName={row.footerNoteClassName}
           alertHint={missedTransferHint(
             missedByBucketId.get(node.bucket.id) ?? 0,
           )}
-          barClass={KIND_BAR[kind]}
+          barClass={row.barClass}
           mode="floor"
           showToGo={false}
           trailing={allocateTrailing(node.bucket)}
@@ -410,29 +531,52 @@ export function PlanEmergency() {
                   <div key={kind}>
                     <button
                       type="button"
-                      onClick={() =>
+                      onClick={() => {
+                        if (searchActive) return
                         setAllSinkingCatsExpanded(!allSinkingCatsExpanded)
+                      }}
+                      aria-expanded={
+                        searchActive ? true : allSinkingCatsExpanded
                       }
-                      aria-expanded={allSinkingCatsExpanded}
                       aria-label={
-                        allSinkingCatsExpanded
-                          ? 'Collapse all sinking categories'
-                          : 'Expand all sinking categories'
+                        searchActive || allSinkingCatsExpanded
+                          ? `Collapse all sinking categories, ${formatRupiah(sinkingAvailableTotal)}`
+                          : `Expand all sinking categories, ${formatRupiah(sinkingAvailableTotal)}`
                       }
                       className="mb-2 flex w-full items-center gap-1.5 text-left"
                     >
                       <CollapseChevron
-                        expanded={allSinkingCatsExpanded}
+                        expanded={
+                          searchActive ? true : allSinkingCatsExpanded
+                        }
                         size={14}
                         className="shrink-0 text-neutral-400"
                       />
-                      <p className="min-w-0 flex-1 text-xs font-semibold tracking-wide text-neutral-400">
+                      <p className="min-w-0 flex-1 text-xs font-semibold tracking-wide text-neutral-800 dark:text-white">
                         {BUCKET_KIND_LABELS[kind]}
                       </p>
+                      <p className="shrink-0 text-xs font-semibold tabular-nums tracking-wide text-neutral-800 dark:text-white">
+                        {formatRupiah(sinkingAvailableTotal)}
+                      </p>
                     </button>
-                    <div className="space-y-2">
-                      {items.map((node) => renderSinkingNode(node, kind))}
-                    </div>
+                    <SearchField
+                      value={searchQuery}
+                      onChange={setSearchQuery}
+                      placeholder="Search sinking funds…"
+                      aria-label="Search Sinking Funds"
+                      className="mb-2 min-w-0"
+                    />
+                    {searchActive && filteredSinkingNodes.length === 0 ? (
+                      <p className="rounded-xl bg-white p-3 text-center text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
+                        No matches.
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {filteredSinkingNodes.map((node) =>
+                          renderSinkingNode(node, kind),
+                        )}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div key={kind}>

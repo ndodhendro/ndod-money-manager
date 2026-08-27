@@ -14,7 +14,12 @@ import type {
   RecurringBillLog,
   RecurringBillMonthOverride,
 } from './recurringBillsApi'
-import { budgetGroupOfEstimate } from './freeWants'
+import {
+  budgetGroupOfActiveSinkingTransfer,
+  budgetGroupOfEstimate,
+  budgetGroupOfTransferTo,
+  type BucketBudgetRef,
+} from './freeWants'
 import { budgetGroupOfTx } from './moneyPlan'
 import type {
   Bucket,
@@ -32,13 +37,59 @@ export const BUDGET_TRACK_LABELS = {
   guiltFree: 'Guilt-Free Fund',
 } as const
 
+function isFromMainOrChecking(
+  tx: Pick<TransactionWithCategory, 'from_bucket_id' | 'complete_later'>,
+  checkingBucketIds: Set<string>,
+): boolean {
+  if (tx.complete_later) return false
+  const from = tx.from_bucket_id
+  return from == null || checkingBucketIds.has(from)
+}
+
 function isMainOrCheckingExpense(
   tx: TransactionWithCategory,
   checkingBucketIds: Set<string>,
 ): boolean {
-  if (tx.type !== 'expense' || tx.complete_later) return false
-  const from = tx.from_bucket_id
-  return from == null || checkingBucketIds.has(from)
+  if (tx.type !== 'expense') return false
+  return isFromMainOrChecking(tx, checkingBucketIds)
+}
+
+function transferCoverageKey(
+  toBucketId: string,
+  group: 'needs' | 'wants',
+): string {
+  return `transfer:${toBucketId}:${group}`
+}
+
+type UnplannedSpendInput = {
+  transactions: TransactionWithCategory[]
+  estimateCoverageKeys: Set<string>
+  checkingBucketIds: Set<string>
+  dueBillIdByTxId?: Map<string, string>
+  bucketsById?: Map<string, BucketBudgetRef>
+  categoriesById?: Map<string, Category>
+}
+
+function isUnplannedSinkingTransfer(
+  tx: TransactionWithCategory,
+  group: 'needs' | 'wants',
+  input: UnplannedSpendInput,
+): boolean {
+  if (tx.type !== 'transfer' || tx.complete_later) return false
+  if (!tx.to_bucket_id) return false
+  if (!isFromMainOrChecking(tx, input.checkingBucketIds)) return false
+  if (isDueItemTx(tx, input.dueBillIdByTxId)) return false
+  if (!input.bucketsById) return false
+  const destGroup = budgetGroupOfTransferTo(
+    tx.to_bucket_id,
+    input.bucketsById,
+    input.categoriesById,
+  )
+  if (destGroup !== group) return false
+  if (input.estimateCoverageKeys.has(transferCoverageKey(tx.to_bucket_id, group))) {
+    return false
+  }
+  return true
 }
 
 /** Due-item check (FK, checklist log, or legacy is_recurring). Not Quick Add. */
@@ -54,19 +105,17 @@ function isDueItemTx(
 }
 
 /**
- * Needs expenses outside non-recurring Monthly Estimate coverage (Main/checking).
- * Quick Add on a recurring-only estimate category is included (Buffer).
+ * Needs outflows outside non-recurring Monthly Estimate coverage (Main/checking):
+ * expenses plus Quick Add transfers into Needs sinking funds.
  * Due-item checks are excluded — they fill Planned via the estimate line.
- * These consume Buffer directly (not Planned Needs, not Guilt-Free).
  */
-export function sumUnplannedNeedsSpent(input: {
-  transactions: TransactionWithCategory[]
-  estimateCoverageKeys: Set<string>
-  checkingBucketIds: Set<string>
-  dueBillIdByTxId?: Map<string, string>
-}): number {
+export function sumUnplannedNeedsSpent(input: UnplannedSpendInput): number {
   let sum = 0
   for (const tx of input.transactions) {
+    if (isUnplannedSinkingTransfer(tx, 'needs', input)) {
+      sum += tx.amount
+      continue
+    }
     if (!isMainOrCheckingExpense(tx, input.checkingBucketIds)) continue
     if (isDueItemTx(tx, input.dueBillIdByTxId)) continue
     const group = budgetGroupOfTx(tx)
@@ -78,14 +127,15 @@ export function sumUnplannedNeedsSpent(input: {
 }
 
 /** Transaction ids for Needs outside non-recurring estimates (full amount uses Buffer). */
-export function unplannedNeedsTransactionIds(input: {
-  transactions: TransactionWithCategory[]
-  estimateCoverageKeys: Set<string>
-  checkingBucketIds: Set<string>
-  dueBillIdByTxId?: Map<string, string>
-}): Set<string> {
+export function unplannedNeedsTransactionIds(
+  input: UnplannedSpendInput,
+): Set<string> {
   const ids = new Set<string>()
   for (const tx of input.transactions) {
+    if (isUnplannedSinkingTransfer(tx, 'needs', input)) {
+      ids.add(tx.id)
+      continue
+    }
     if (!isMainOrCheckingExpense(tx, input.checkingBucketIds)) continue
     if (isDueItemTx(tx, input.dueBillIdByTxId)) continue
     const group = budgetGroupOfTx(tx)
@@ -97,14 +147,15 @@ export function unplannedNeedsTransactionIds(input: {
 }
 
 /** Transaction ids for Wants outside non-recurring estimates (full amount uses Guilt-Free). */
-export function unplannedWantsTransactionIds(input: {
-  transactions: TransactionWithCategory[]
-  estimateCoverageKeys: Set<string>
-  checkingBucketIds: Set<string>
-  dueBillIdByTxId?: Map<string, string>
-}): Set<string> {
+export function unplannedWantsTransactionIds(
+  input: UnplannedSpendInput,
+): Set<string> {
   const ids = new Set<string>()
   for (const tx of input.transactions) {
+    if (isUnplannedSinkingTransfer(tx, 'wants', input)) {
+      ids.add(tx.id)
+      continue
+    }
     if (!isMainOrCheckingExpense(tx, input.checkingBucketIds)) continue
     if (isDueItemTx(tx, input.dueBillIdByTxId)) continue
     const group = budgetGroupOfTx(tx)
@@ -116,19 +167,18 @@ export function unplannedWantsTransactionIds(input: {
 }
 
 /**
- * Wants expenses outside non-recurring Monthly Estimate coverage (Main/checking).
- * Quick Add on a recurring-only estimate category is included (Guilt-Free).
+ * Wants outflows outside non-recurring Monthly Estimate coverage (Main/checking):
+ * expenses plus Quick Add transfers into Wants sinking funds.
  * Due-item checks are excluded — they fill Planned via the estimate line.
  * Full amount uses Guilt-Free Fund (not Planned Wants).
  */
-export function sumUnplannedWantsSpent(input: {
-  transactions: TransactionWithCategory[]
-  estimateCoverageKeys: Set<string>
-  checkingBucketIds: Set<string>
-  dueBillIdByTxId?: Map<string, string>
-}): number {
+export function sumUnplannedWantsSpent(input: UnplannedSpendInput): number {
   let sum = 0
   for (const tx of input.transactions) {
+    if (isUnplannedSinkingTransfer(tx, 'wants', input)) {
+      sum += tx.amount
+      continue
+    }
     if (!isMainOrCheckingExpense(tx, input.checkingBucketIds)) continue
     if (isDueItemTx(tx, input.dueBillIdByTxId)) continue
     const group = budgetGroupOfTx(tx)
@@ -198,6 +248,8 @@ export function monthBudgetTrackDemandByTxId(input: {
     estimateCoverageKeys: input.estimateCoverageKeys,
     checkingBucketIds: input.checkingBucketIds,
     dueBillIdByTxId: input.dueBillIdByTxId,
+    bucketsById: input.bucketsById,
+    categoriesById: input.categoriesById,
   })) {
     const tx = txsById.get(id)
     if (!tx) continue
@@ -208,6 +260,8 @@ export function monthBudgetTrackDemandByTxId(input: {
     estimateCoverageKeys: input.estimateCoverageKeys,
     checkingBucketIds: input.checkingBucketIds,
     dueBillIdByTxId: input.dueBillIdByTxId,
+    bucketsById: input.bucketsById,
+    categoriesById: input.categoriesById,
   })) {
     const tx = txsById.get(id)
     if (!tx) continue
@@ -255,13 +309,16 @@ export function monthBudgetCeilingOverspendTransactionIds(input: {
 
 /**
  * Category+group keys covered by active non-recurring Needs/Wants expense
- * estimates (incl. children). Recurring estimate categories are omitted so
- * Quick Add spend uses Buffer / Guilt-Free instead of Planned.
+ * estimates (incl. children), plus `transfer:{bucketId}:{group}` for
+ * non-recurring sinking-fund transfer estimates. Recurring estimate
+ * categories / destinations are omitted so Quick Add uses Buffer / Guilt-Free
+ * instead of Planned.
  */
 export function estimateExpenseCoverageKeys(
   bills: RecurringBill[],
   categoriesById: Map<string, Category>,
   isNeedsOrWantsEstimate: (bill: RecurringBill) => boolean,
+  bucketsById?: Map<string, BucketBudgetRef>,
 ): Set<string> {
   const keys = new Set<string>()
   for (const bill of bills) {
@@ -277,6 +334,21 @@ export function estimateExpenseCoverageKeys(
       if (cat.parent_id === bill.category_id) {
         keys.add(`${cat.id}:${group}`)
       }
+    }
+  }
+  if (bucketsById) {
+    for (const bill of bills) {
+      if (!bill.is_active || bill.type !== 'transfer' || !bill.to_bucket_id) {
+        continue
+      }
+      if (bill.is_recurring) continue
+      const group = budgetGroupOfActiveSinkingTransfer(
+        bill.to_bucket_id,
+        bucketsById,
+        categoriesById,
+      )
+      if (group !== 'needs' && group !== 'wants') continue
+      keys.add(transferCoverageKey(bill.to_bucket_id, group))
     }
   }
   return keys
@@ -349,8 +421,9 @@ export type MonthBudgetSpend = {
 /**
  * Split History spend across the four Month Budget tracks.
  * Planned used is capped per estimate line (due items + Quick Add on
- * non-recurring estimates). Leftover Needs and Quick Add on recurring-only
- * estimate categories → Buffer; leftover Wants / same for Wants → Guilt-Free.
+ * non-recurring estimates, including sinking transfers). Leftover Needs
+ * and Quick Add on recurring-only lines → Buffer; leftover Wants / same
+ * for Wants → Guilt-Free.
  */
 export function computeMonthBudgetSpend(input: {
   estimateRows: EstimateProgressRow[]
@@ -358,6 +431,8 @@ export function computeMonthBudgetSpend(input: {
   estimateCoverageKeys: Set<string>
   checkingBucketIds: Set<string>
   dueBillIdByTxId?: Map<string, string>
+  bucketsById?: Map<string, BucketBudgetRef>
+  categoriesById?: Map<string, Category>
 }): MonthBudgetSpend {
   const needsUsed = sumCappedEstimateActual(input.estimateRows, 'needs')
   const wantsUsed = sumCappedEstimateActual(input.estimateRows, 'wants')
@@ -403,6 +478,7 @@ export function computeMonthBudgetUpcoming(input: {
   skippedOccurrenceKeys?: Set<string>
   logByOccurrenceKey: Map<string, RecurringBillLog>
   categoriesById: Map<string, Category>
+  bucketsById: Map<string, EstimateBucketRef>
   yearMonth: string
   today: string
 }): {
@@ -551,6 +627,19 @@ export function buildMonthBudgetProgress(input: {
     },
   }
 }
+
+/** Placeholder so Month Budget cards reserve layout before data arrives. */
+export const EMPTY_MONTH_BUDGET_PROGRESS: MonthBudgetProgress =
+  buildMonthBudgetProgress({
+    plannedNeeds: 0,
+    needsUsed: 0,
+    plannedWants: 0,
+    wantsUsed: 0,
+    buffer: 0,
+    guiltFree: 0,
+    bufferSpent: 0,
+    guiltFreeSpent: 0,
+  })
 
 /** @deprecated Prefer MonthBudgetProgress.guiltFree */
 export type FreeGuiltyProgress = {

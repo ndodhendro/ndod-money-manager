@@ -179,6 +179,7 @@ export function useFreeGuiltyProgress(
       bills,
       categoriesById,
       (bill) => isExpenseNeedsOrWantsEstimateBill(bill, categoriesById),
+      bucketsById,
     )
     const spend = computeMonthBudgetSpend({
       estimateRows,
@@ -186,6 +187,8 @@ export function useFreeGuiltyProgress(
       estimateCoverageKeys,
       checkingBucketIds: checkingBucketIdSet(buckets),
       dueBillIdByTxId,
+      bucketsById,
+      categoriesById,
     })
     const upcoming = computeMonthBudgetUpcoming({
       estimateRows,
@@ -194,6 +197,7 @@ export function useFreeGuiltyProgress(
       skippedOccurrenceKeys,
       logByOccurrenceKey,
       categoriesById,
+      bucketsById,
       yearMonth,
       today: todayIso(),
     })

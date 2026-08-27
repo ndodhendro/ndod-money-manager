@@ -86,7 +86,7 @@ export function planTagSearchParts(
   } else if (lower === 'needs') {
     parts.add(BUDGET_GROUP_LABELS.needs)
   } else if (lower === 'emergency') {
-    parts.add('Emergency')
+    parts.add(BUCKET_KIND_LABELS.emergency)
     parts.add(BUDGET_GROUP_LABELS.needs)
     parts.add('needs')
   } else if (lower === 'investment' || lower === 'investment transit') {

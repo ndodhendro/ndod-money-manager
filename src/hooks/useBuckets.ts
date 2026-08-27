@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  computeBucketBalances,
   computeDisplayBalances,
   ensureSystemBuckets,
   fetchBuckets,
   fetchTransferMovements,
+  walkBucketLedger,
 } from '../lib/bucketsApi'
 import {
   BUCKET_KIND_ORDER,
@@ -72,10 +72,11 @@ export function useBuckets(options?: { includeInactive?: boolean }) {
     void reload()
   }, [reload])
 
-  const ownBalances = useMemo(
-    () => computeBucketBalances(buckets, movements),
+  const ledgerWalk = useMemo(
+    () => walkBucketLedger(buckets, movements),
     [buckets, movements],
   )
+  const ownBalances = ledgerWalk.balances
 
   const displayBalances = useMemo(
     () => computeDisplayBalances(buckets, ownBalances),
@@ -114,6 +115,7 @@ export function useBuckets(options?: { includeInactive?: boolean }) {
   return {
     buckets: withBalances,
     movements,
+    sinkingBorrowByTxId: ledgerWalk.sinkingBorrowByTxId,
     byId,
     childrenMap,
     emergency,

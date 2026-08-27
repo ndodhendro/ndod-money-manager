@@ -22,74 +22,56 @@ export type SinkingPace = {
   transfersElapsed?: number
   transfersTotal?: number
   recurringLabel?: string
-  /** Funding cycle finished and balance was spent from this bucket as planned. */
-  cycleSpent?: boolean
-  /** Spent above target; EF loan covers the shortfall. */
-  cycleOverspent?: boolean
-  /** Spent below target; surplus remains in the bucket. */
-  cycleUnderspent?: boolean
-  /** Amount shown in Overspent / Underspent labels. */
-  cycleVarianceAmount?: number
   /**
-   * Funding progress this cycle: ledger + outflows in the funding window.
-   * Used for On Track / At Risk so envelope spends do not look underfunded.
+   * Funding progress this cycle: ledger + cash taken from the jar in the
+   * funding window. Envelope spends do not look underfunded; EF overlay
+   * (expense above cash on hand) is not counted as extra savings.
    */
   funded: number
-  /** Outflows from the bucket during the funding window through `yearMonth`. */
+  /** Cash taken from the bucket during the funding window through `yearMonth`. */
   spentThisCycle: number
 }
 
-export function sinkingPaceLabel(
-  status: SinkingPaceStatus,
-  pace?: Pick<
-    SinkingPace,
-    'cycleSpent' | 'cycleOverspent' | 'cycleUnderspent'
-  > | null,
-): string {
-  if (pace?.cycleOverspent) return 'Overspent'
-  if (pace?.cycleUnderspent) return 'Underspent'
-  if (pace?.cycleSpent) return 'Spent'
+export function sinkingPaceLabel(status: SinkingPaceStatus): string {
   if (status === 'safe') return 'Safe'
   if (status === 'at_risk') return 'At Risk'
   return 'On Track'
 }
 
-export function sinkingPaceCycleDeltaLabel(pace: Pick<
-  SinkingPace,
-  'cycleSpent' | 'cycleOverspent' | 'cycleUnderspent' | 'cycleVarianceAmount'
->): { text: string; tone: 'over' | 'under' | 'even' } | null {
-  const amount = Math.max(0, Math.round(pace.cycleVarianceAmount ?? 0))
-  if (pace.cycleOverspent && amount > 0) {
-    return { text: `Overspent ${formatRupiah(amount)}`, tone: 'under' }
-  }
-  if (pace.cycleUnderspent && amount > 0) {
-    return { text: `Underspent ${formatRupiah(amount)}`, tone: 'over' }
-  }
-  if (pace.cycleSpent) {
-    return { text: 'Spent this cycle', tone: 'over' }
-  }
-  return null
-}
-
-/** Balance vs linear expected: over / under / on expected. */
+/** Funded vs linear expected: ahead / behind / on expected. */
 export function sinkingPaceDeltaLabel(
-  balance: number,
+  funded: number,
   expected: number,
 ): { text: string; tone: 'over' | 'under' | 'even' } {
-  const delta = Math.round(balance) - Math.round(expected)
+  const delta = Math.round(funded) - Math.round(expected)
   if (delta > 0) {
-    return { text: `Over by ${formatRupiah(delta)}`, tone: 'over' }
+    return { text: `Ahead by ${formatRupiah(delta)}`, tone: 'over' }
   }
   if (delta < 0) {
-    return { text: `Under by ${formatRupiah(-delta)}`, tone: 'under' }
+    return { text: `Behind by ${formatRupiah(-delta)}`, tone: 'under' }
   }
   return { text: 'On expected', tone: 'even' }
 }
 
 type BucketOutflow = {
+  id?: string
   amount: number
   from_bucket_id: string | null
   occurred_on: string
+}
+
+/** Cash that actually left the jar (expense minus EF overlay borrow). */
+function outflowCashTaken(
+  movement: BucketOutflow,
+  sinkingBorrowByTxId?: Map<string, number>,
+): number {
+  const amount = Math.max(0, Math.round(movement.amount))
+  if (!movement.id || !sinkingBorrowByTxId) return amount
+  const borrow = Math.max(
+    0,
+    Math.round(sinkingBorrowByTxId.get(movement.id) ?? 0),
+  )
+  return Math.max(0, amount - borrow)
 }
 
 /** Outflows from `bucketIds` with occurred_on in [fromYm, toYm] inclusive. */
@@ -98,6 +80,7 @@ export function spentFromBucketsInYearMonthRange(
   movements: BucketOutflow[],
   fromYearMonth: string,
   toYearMonth: string,
+  sinkingBorrowByTxId?: Map<string, number>,
 ): number {
   if (bucketIds.size === 0 || fromYearMonth > toYearMonth) return 0
   let sum = 0
@@ -105,7 +88,7 @@ export function spentFromBucketsInYearMonthRange(
     if (!m.from_bucket_id || !bucketIds.has(m.from_bucket_id)) continue
     const ym = m.occurred_on.slice(0, 7)
     if (ym < fromYearMonth || ym > toYearMonth) continue
-    sum += m.amount
+    sum += outflowCashTaken(m, sinkingBorrowByTxId)
   }
   return Math.max(0, Math.round(sum))
 }
@@ -131,6 +114,39 @@ export const SINKING_PACE_BAR_CLASS: Record<SinkingPaceStatus, string> = {
   safe: 'bg-emerald-500',
   on_track: 'bg-sky-500',
   at_risk: 'bg-red-500',
+}
+
+export type SinkingGoalsRow = {
+  progress: number
+  available: number
+  badge: { label: string; className: string }
+  barClass: string
+  footerText: string
+  footerClass: string
+}
+
+/**
+ * Savings Goals row: bar = funded this cycle (spends do not look underfunded).
+ * Remaining cash is “Available” (title-row right), not the progress metric.
+ * Funded / target sits under the title, right-aligned.
+ */
+export function buildSinkingGoalsRow(input: {
+  pace: SinkingPace
+  onHand: number
+}): SinkingGoalsRow {
+  const { pace, onHand } = input
+  const delta = sinkingPaceDeltaLabel(pace.funded, pace.expected)
+  return {
+    progress: Math.max(0, Math.round(pace.funded)),
+    available: Math.max(0, Math.round(onHand)),
+    badge: {
+      label: sinkingPaceLabel(pace.status),
+      className: SINKING_PACE_BADGE_CLASS[pace.status],
+    },
+    barClass: SINKING_PACE_BAR_CLASS[pace.status],
+    footerText: delta.text,
+    footerClass: SINKING_PACE_DELTA_CLASS[delta.tone],
+  }
 }
 
 type TransferScheduleBill = Pick<
@@ -248,6 +264,57 @@ export function sinkingFundingWindow(
   return null
 }
 
+function fundingWindowHasHardEnd(
+  destinationIds: Set<string>,
+  bills: TransferScheduleBill[],
+): boolean {
+  return fundingTransfers(destinationIds, bills).some((bill) =>
+    Boolean(bill.ends_year_month),
+  )
+}
+
+/**
+ * Ongoing (no Ends) windows last one cycle (from rate). After that month,
+ * repeat the same length so the next month is a new Safe/On Track/At Risk
+ * cycle — not a leftover label from the previous cycle.
+ * Bills with Ends keep the closed window.
+ */
+export function rollOngoingFundingWindow(input: {
+  startsYearMonth: string
+  endsYearMonth: string
+  yearMonth: string
+  hasHardEnd: boolean
+}): { startsYearMonth: string; endsYearMonth: string } {
+  if (input.hasHardEnd) {
+    return {
+      startsYearMonth: input.startsYearMonth,
+      endsYearMonth: input.endsYearMonth,
+    }
+  }
+  const startIdx = yearMonthIndex(input.startsYearMonth)
+  const endIdx = yearMonthIndex(input.endsYearMonth)
+  const nowIdx = yearMonthIndex(input.yearMonth)
+  if (startIdx == null || endIdx == null || nowIdx == null) {
+    return {
+      startsYearMonth: input.startsYearMonth,
+      endsYearMonth: input.endsYearMonth,
+    }
+  }
+  const length = endIdx - startIdx + 1
+  if (length <= 0 || nowIdx <= endIdx) {
+    return {
+      startsYearMonth: input.startsYearMonth,
+      endsYearMonth: input.endsYearMonth,
+    }
+  }
+  const cycleIndex = Math.floor((nowIdx - startIdx) / length)
+  const nextStart = startIdx + cycleIndex * length
+  return {
+    startsYearMonth: indexToYearMonth(nextStart),
+    endsYearMonth: indexToYearMonth(nextStart + length - 1),
+  }
+}
+
 /**
  * Linear expected balance by `yearMonth` given transfer funding window.
  * `destinationIds` = this bucket plus any child leaf ids that receive transfers.
@@ -271,12 +338,15 @@ export function computeSinkingFundPace(input: {
    */
   movements?: BucketOutflow[]
   /**
-   * Unfloored own ledger. Prefer this over `balance` when computing `funded`
-   * so an EF hole (negative ledger) is not counted as extra savings.
+   * Own ledger (sinking expenses are capped at cash on hand). Prefer this
+   * over display `balance` when computing `funded`.
    */
   ledgerBalance?: number
-  /** EF borrow from sinking-fund overspend in `yearMonth`. */
-  efLoanBorrowedInYearMonth?: number
+  /**
+   * Sinking expense amount not covered by cash in the jar (EF overlay).
+   * Subtracted from spent so borrow is not counted as extra funding.
+   */
+  sinkingBorrowByTxId?: Map<string, number>
   /** As-of YYYY-MM (usually current month). */
   yearMonth: string
   bills: TransferScheduleBill[]
@@ -326,6 +396,14 @@ export function computeSinkingFundPace(input: {
     startsYearMonth = shifted.startsYearMonth
     endsYearMonth = shifted.endsYearMonth
   }
+  const rolled = rollOngoingFundingWindow({
+    startsYearMonth,
+    endsYearMonth,
+    yearMonth: input.yearMonth,
+    hasHardEnd: fundingWindowHasHardEnd(destinations, input.bills),
+  })
+  startsYearMonth = rolled.startsYearMonth
+  endsYearMonth = rolled.endsYearMonth
 
   const startIdx = yearMonthIndex(startsYearMonth)
   const endIdx = yearMonthIndex(endsYearMonth)
@@ -347,6 +425,7 @@ export function computeSinkingFundPace(input: {
         input.movements,
         startsYearMonth,
         fundingThroughYm,
+        input.sinkingBorrowByTxId,
       )
     : Math.max(0, Math.round(Number(input.spentFromBucketInYearMonth ?? 0)))
   const funded = ledger + spentThisCycle
@@ -388,78 +467,6 @@ export function computeSinkingFundPace(input: {
     Math.round(Math.min(target * 0.02, monthlySlice * 0.25)),
   )
 
-  const transfersComplete =
-    transfersMeta.transfersElapsed != null &&
-    transfersMeta.transfersTotal != null &&
-    transfersMeta.transfersTotal > 0 &&
-    transfersMeta.transfersElapsed >= transfersMeta.transfersTotal
-  const spentThisMonth = Math.max(
-    0,
-    Math.round(Number(input.spentFromBucketInYearMonth ?? 0)),
-  )
-  const efBorrowed = Math.max(
-    0,
-    Math.round(Number(input.efLoanBorrowedInYearMonth ?? 0)),
-  )
-
-  const fundingFields = { funded, spentThisCycle }
-
-  if (transfersComplete && spentThisMonth > 0) {
-    if (efBorrowed > 0) {
-      return {
-        status: 'safe',
-        expected,
-        balance,
-        target,
-        startsYearMonth,
-        endsYearMonth,
-        monthsElapsed,
-        monthsTotal,
-        cycleOverspent: true,
-        cycleVarianceAmount: efBorrowed,
-        ...fundingFields,
-        ...transfersMeta,
-      }
-    }
-
-    const underspendAmount = Math.max(0, Math.round(target - spentThisMonth))
-    if (underspendAmount > 0) {
-      return {
-        status: 'safe',
-        expected,
-        balance,
-        target,
-        startsYearMonth,
-        endsYearMonth,
-        monthsElapsed,
-        monthsTotal,
-        cycleUnderspent: true,
-        cycleVarianceAmount: underspendAmount,
-        ...fundingFields,
-        ...transfersMeta,
-      }
-    }
-
-    if (
-      spentThisMonth >= target - band ||
-      funded >= expected - band
-    ) {
-      return {
-        status: 'safe',
-        expected,
-        balance,
-        target,
-        startsYearMonth,
-        endsYearMonth,
-        monthsElapsed,
-        monthsTotal,
-        cycleSpent: true,
-        ...fundingFields,
-        ...transfersMeta,
-      }
-    }
-  }
-
   let status: SinkingPaceStatus
   if (funded > expected + band) status = 'safe'
   else if (funded < expected - band) status = 'at_risk'
@@ -470,11 +477,12 @@ export function computeSinkingFundPace(input: {
     expected,
     balance,
     target,
+    funded,
+    spentThisCycle,
     startsYearMonth,
     endsYearMonth,
     monthsElapsed,
     monthsTotal,
-    ...fundingFields,
     ...transfersMeta,
   }
 }

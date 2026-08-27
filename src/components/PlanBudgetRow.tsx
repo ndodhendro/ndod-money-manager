@@ -9,15 +9,26 @@ import { BudgetGroupBadge } from './BudgetGroupBadge'
 import { CircleBadge } from './CircleBadge'
 import { OwnerBadge } from './OwnerBadge'
 
-/** Ceiling fill: green at/under 100%, red when over. */
-function ceilingFillClass(displayPct: number): string {
+/** Spend ceiling: green at/under 100%, red when over. */
+function spendFillClass(displayPct: number): string {
   if (displayPct > 100) return 'bg-red-500'
   return 'bg-emerald-500'
 }
 
-/** Same hue as the ceiling fill (text variant of the bar color). */
-function ceilingStatusColorClass(displayPct: number): string {
+/** Fund floor: red below 100%, green at/above 100%. */
+function fundFillClass(displayPct: number): string {
+  if (displayPct < 100) return 'bg-red-500'
+  return 'bg-emerald-500'
+}
+
+/** Same hue as the spend/fund fill (text variant of the bar color). */
+function spendStatusColorClass(displayPct: number): string {
   if (displayPct > 100) return 'text-red-500'
+  return 'text-emerald-500'
+}
+
+function fundStatusColorClass(displayPct: number): string {
+  if (displayPct < 100) return 'text-red-500'
   return 'text-emerald-500'
 }
 
@@ -31,11 +42,42 @@ export type PlanBudgetDetailStack = {
   isTransfer?: boolean
 }
 
+/** Title-row or under-title amount pair. */
+export function PlanBudgetAmount({
+  actual,
+  target,
+  prefix,
+  tone = 'emphasis',
+}: {
+  actual: number
+  target?: number | null
+  prefix?: string
+  /** `emphasis` = title-strength (white in dark). `muted` = gray secondary. */
+  tone?: 'emphasis' | 'muted'
+}) {
+  const colorClass =
+    tone === 'muted'
+      ? 'font-normal text-neutral-400'
+      : 'font-semibold text-neutral-800 dark:text-white'
+  return (
+    <p className={`shrink-0 text-right text-xs leading-none ${colorClass}`}>
+      {prefix ? <span>{prefix} </span> : null}
+      <span>{formatRupiah(actual)}</span>
+      {target != null && target > 0 ? (
+        <span> / {formatRupiah(target)}</span>
+      ) : null}
+    </p>
+  )
+}
+
 export function PlanBudgetRow({
   bucket,
   hint,
+  hintAlign = 'left',
+  headlineAmount,
   barClass,
   mode,
+  progressKind = 'spend',
   icon,
   surfaceClassName,
   leading,
@@ -49,11 +91,25 @@ export function PlanBudgetRow({
   detailStack = null,
   upcoming = 0,
   unscheduled = 0,
+  footerNote,
+  footerNoteClassName,
+  showZeroTarget = false,
+  alwaysShowProjection = false,
 }: {
   bucket: MoneyPlanBucket
   hint?: ReactNode
+  /** Under-title hint alignment. Default left; sinking funded/target uses right. */
+  hintAlign?: 'left' | 'right'
+  /** Replaces the title-row actual/target. Progress bar still uses `bucket`. */
+  headlineAmount?: ReactNode
   barClass: string
   mode: 'floor' | 'ceiling'
+  /**
+   * Spend ceiling (default): green ≤100%, red when over.
+   * Fund floor: red below 100%, green at/above 100% (transfer estimates).
+   * Only applies when mode is ceiling; floor mode still uses barClass.
+   */
+  progressKind?: 'spend' | 'fund'
   icon?: string
   /** Override card background (default white / dark neutral-800). */
   surfaceClassName?: string
@@ -95,6 +151,19 @@ export function PlanBudgetRow({
   upcoming?: number
   /** Remaining room on non-recurring Monthly Estimate lines. */
   unscheduled?: number
+  /** Overrides the floor footer left text (e.g. sinking pace vs expected). */
+  footerNote?: string | null
+  footerNoteClassName?: string
+  /**
+   * Keep ceiling amounts, remaining line, and bar visible when target is 0
+   * so Month Budget cards do not change height while data loads.
+   */
+  showZeroTarget?: boolean
+  /**
+   * Always show Upcoming / Unscheduled rows (including Rp 0) so Planned
+   * Needs/Wants keep a stable height before those amounts arrive.
+   */
+  alwaysShowProjection?: boolean
 }) {
   const upcomingSafe = Math.max(0, Math.round(upcoming))
   const unscheduledSafe = Math.max(0, Math.round(unscheduled))
@@ -134,19 +203,32 @@ export function PlanBudgetRow({
     mode === 'ceiling' && bucket.actual > bucket.target && bucket.target > 0
   const floorOver =
     mode === 'floor' && bucket.actual > bucket.target && bucket.target > 0
+  const isFundGoal = progressKind === 'fund'
   const fillClass =
-    mode === 'ceiling' ? ceilingFillClass(displayPct) : barClass
+    mode === 'ceiling'
+      ? isFundGoal
+        ? fundFillClass(displayPct)
+        : spendFillClass(displayPct)
+      : barClass
   const ceilingStatusColor =
-    mode === 'ceiling' ? ceilingStatusColorClass(displayPct) : null
+    mode === 'ceiling'
+      ? isFundGoal
+        ? fundStatusColorClass(displayPct)
+        : spendStatusColorClass(displayPct)
+      : null
   const pctLabelClass =
     ceilingStatusColor ??
     (floorOver
       ? 'text-emerald-600 dark:text-emerald-400'
       : 'text-neutral-500 dark:text-neutral-400')
+  const ceilingPctLabel = isFundGoal
+    ? `${displayPct}% transferred`
+    : `${displayPct}% used`
+  const hasDisplayTarget = bucket.target > 0 || showZeroTarget
   const showFloorFooter =
     showMetrics && mode === 'floor' && bucket.target > 0
   const ceilingStatusText =
-    mode === 'ceiling' && bucket.target > 0
+    mode === 'ceiling' && hasDisplayTarget
       ? ceilingOver
         ? `Over by ${formatRupiah(bucket.actual - bucket.target)}`
         : `${formatRupiah(Math.max(0, bucket.remaining))} left`
@@ -171,17 +253,24 @@ export function PlanBudgetRow({
   const overTarget = Math.max(0, Math.round(bucket.actual - bucket.target))
   const toGo = Math.max(0, Math.round(bucket.target - bucket.actual))
   const floorStatusText =
-    mode === 'floor' && bucket.target > 0
-      ? floorOver
-        ? `Over target ${formatRupiah(overTarget)}`
-        : toGo > 0
-          ? showToGo
-            ? `${formatRupiah(toGo)} to go`
-            : null
-          : showToGo
-            ? 'Target reached'
-            : null
-      : null
+    footerNote !== undefined
+      ? footerNote
+      : mode === 'floor' && bucket.target > 0
+        ? floorOver
+          ? `Over target ${formatRupiah(overTarget)}`
+          : toGo > 0
+            ? showToGo
+              ? `${formatRupiah(toGo)} to go`
+              : null
+            : showToGo
+              ? 'Target reached'
+              : null
+        : null
+  const floorFooterClass =
+    footerNoteClassName ??
+    (floorOver
+      ? 'text-emerald-600 dark:text-emerald-400'
+      : 'text-neutral-400')
   const floorStatusUnderTitle =
     showMetrics &&
     mode === 'floor' &&
@@ -195,9 +284,11 @@ export function PlanBudgetRow({
     ceilingStatusPlacement === 'under-title' &&
     ceilingStatusText != null
   const upcomingLabel =
-    upcomingSafe > 0 ? `Upcoming ${formatRupiah(upcomingSafe)}` : null
+    alwaysShowProjection || upcomingSafe > 0
+      ? `Upcoming ${formatRupiah(upcomingSafe)}`
+      : null
   const unscheduledLabel =
-    unscheduledSafe > 0
+    alwaysShowProjection || unscheduledSafe > 0
       ? `Unscheduled ${formatRupiah(unscheduledSafe)}`
       : null
   const splitProjectionRows = upcomingLabel != null && unscheduledLabel != null
@@ -216,14 +307,14 @@ export function PlanBudgetRow({
     !useDetailStack &&
     showMetrics &&
     mode === 'ceiling' &&
-    bucket.target > 0 &&
+    hasDisplayTarget &&
     ceilingStatusPlacement === 'below-bar' &&
     ceilingStatusText != null
   const showCeilingOnGroupRow =
     useDetailStack &&
     showMetrics &&
     mode === 'ceiling' &&
-    bucket.target > 0 &&
+    hasDisplayTarget &&
     ceilingStatusText != null
 
   const floorFooterText =
@@ -231,18 +322,20 @@ export function PlanBudgetRow({
   const showFloorFooterRow =
     showFloorFooter && (floorFooterText != null || badge)
 
-  const amountNode = showMetrics ? (
-    <p className="shrink-0 text-right text-xs leading-none text-neutral-500">
-      <span className="font-semibold text-neutral-700 dark:text-neutral-200">
+  const amountNode =
+    headlineAmount ??
+    (showMetrics ? (
+      <p className="shrink-0 text-right text-xs leading-none text-neutral-500">
+        <span className="font-semibold text-neutral-700 dark:text-neutral-200">
+          {formatRupiah(bucket.actual)}
+        </span>
+        {hasDisplayTarget && <span> / {formatRupiah(bucket.target)}</span>}
+      </p>
+    ) : (
+      <p className="shrink-0 text-right text-xs font-semibold leading-none text-neutral-700 dark:text-neutral-200">
         {formatRupiah(bucket.actual)}
-      </span>
-      {bucket.target > 0 && <span> / {formatRupiah(bucket.target)}</span>}
-    </p>
-  ) : (
-    <p className="shrink-0 text-right text-xs font-semibold leading-none text-neutral-700 dark:text-neutral-200">
-      {formatRupiah(bucket.actual)}
-    </p>
-  )
+      </p>
+    ))
 
   const stackChild = detailStack?.childName?.trim() || null
   const stackNote = detailStack?.note?.trim() || null
@@ -353,9 +446,9 @@ export function PlanBudgetRow({
                   <p className="min-w-0 text-[11px] text-neutral-400">
                     {upcomingLabel}
                   </p>
-                  {ceilingOver ? (
+                  {ceilingOver || (!projectedStatusText && ceilingStatusText) ? (
                     <p
-                      className={`shrink-0 text-right text-[11px] font-semibold tabular-nums ${ceilingStatusColor}`}
+                      className={`shrink-0 text-right text-[11px] font-semibold tabular-nums whitespace-nowrap ${ceilingStatusColor}`}
                     >
                       {ceilingStatusText}
                     </p>
@@ -366,7 +459,7 @@ export function PlanBudgetRow({
                     {unscheduledLabel}
                   </p>
                   {projectedStatusText ? (
-                    <p className="shrink-0 text-right text-[11px] tabular-nums text-neutral-400">
+                    <p className="shrink-0 text-right text-[11px] tabular-nums whitespace-nowrap text-neutral-400">
                       {projectedStatusText}
                     </p>
                   ) : null}
@@ -379,13 +472,21 @@ export function PlanBudgetRow({
                     hintUnderTitle &&
                     (ceilingStatusUnderTitle || floorStatusUnderTitle)
                       ? 'justify-between'
-                      : ceilingStatusUnderTitle || floorStatusUnderTitle
+                      : ceilingStatusUnderTitle ||
+                          floorStatusUnderTitle ||
+                          hintAlign === 'right'
                         ? 'justify-end'
                         : ''
                   }`}
                 >
                   {hintUnderTitle ? (
-                    <div className="min-w-0 text-[11px] text-neutral-400">
+                    <div
+                      className={
+                        hintAlign === 'right'
+                          ? 'shrink-0'
+                          : 'min-w-0 text-[11px] text-neutral-400'
+                      }
+                    >
                       {hintUnderTitle}
                     </div>
                   ) : null}
@@ -402,11 +503,7 @@ export function PlanBudgetRow({
                   ) : null}
                   {floorStatusUnderTitle ? (
                     <p
-                      className={`shrink-0 text-right text-[11px] tabular-nums ${
-                        floorOver
-                          ? 'text-emerald-600 dark:text-emerald-400'
-                          : 'text-neutral-400'
-                      }`}
+                      className={`shrink-0 text-right text-[11px] tabular-nums ${floorFooterClass}`}
                     >
                       {floorStatusText}
                     </p>
@@ -432,7 +529,7 @@ export function PlanBudgetRow({
         )}
         {trailing}
       </div>
-      {showMetrics && bucket.target > 0 ? (
+      {showMetrics && (bucket.target > 0 || (showZeroTarget && mode === 'ceiling')) ? (
         <div className="mt-2">
           {showCeilingBelowBar ? (
             <div className="mb-0.5 space-y-0.5">
@@ -488,24 +585,18 @@ export function PlanBudgetRow({
               className={`shrink-0 text-[11px] font-semibold tabular-nums ${pctLabelClass}`}
               aria-label={
                 mode === 'ceiling'
-                  ? `${displayPct}% used`
+                  ? ceilingPctLabel
                   : `${displayPct}% progress`
               }
             >
-              {mode === 'ceiling' ? `${displayPct}% used` : `${displayPct}%`}
+              {mode === 'ceiling' ? ceilingPctLabel : `${displayPct}%`}
             </span>
           </div>
         </div>
       ) : null}
       {showFloorFooterRow ? (
         <div className="mt-1 flex items-center justify-between gap-2">
-          <p
-            className={`min-w-0 text-[11px] ${
-              floorOver
-                ? 'text-emerald-600 dark:text-emerald-400'
-                : 'text-neutral-400'
-            }`}
-          >
+          <p className={`min-w-0 text-[11px] ${floorFooterClass}`}>
             {floorFooterText}
           </p>
           <div className="flex shrink-0 items-center gap-2">

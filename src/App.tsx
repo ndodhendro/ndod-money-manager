@@ -16,8 +16,7 @@ import { History } from './screens/History'
 import { MoneyPlanScreen } from './screens/MoneyPlan'
 import { PlanCloseMonth } from './screens/plan/PlanCloseMonth'
 import { PlanEmergency } from './screens/plan/PlanEmergency'
-import { PlanNeedsWants } from './screens/plan/PlanNeedsWants'
-import { PlanPayYourselfFirst } from './screens/plan/PlanPayYourselfFirst'
+import { PlanMonthlyProgress } from './screens/plan/PlanMonthlyProgress'
 import { PlanPayday } from './screens/plan/PlanPayday'
 import { PlanRecurring } from './screens/plan/PlanRecurring'
 import { PinUnlock } from './screens/PinUnlock'
@@ -81,15 +80,22 @@ function AppShell({ onProfileReset }: { onProfileReset: () => void }) {
         <Route path="/rencana/close-month" element={<PlanCloseMonth />} />
         <Route path="/rencana/recurring" element={<PlanRecurring />} />
         <Route
+          path="/rencana/monthly-progress"
+          element={<PlanMonthlyProgress />}
+        />
+        <Route
           path="/rencana/pay-yourself-first"
-          element={<PlanPayYourselfFirst />}
+          element={<Navigate to="/rencana/monthly-progress" replace />}
         />
         <Route path="/rencana/emergency" element={<PlanEmergency />} />
         <Route
           path="/rencana/buckets"
-          element={<Navigate to="/rencana/pay-yourself-first" replace />}
+          element={<Navigate to="/rencana/monthly-progress" replace />}
         />
-        <Route path="/rencana/needs-wants" element={<PlanNeedsWants />} />
+        <Route
+          path="/rencana/needs-wants"
+          element={<Navigate to="/rencana/monthly-progress" replace />}
+        />
         <Route path="/ringkasan" element={<Navigate to="/dashboard" replace />} />
         <Route
           path="/pengaturan"

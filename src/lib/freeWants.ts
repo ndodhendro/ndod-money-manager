@@ -168,7 +168,7 @@ export function budgetGroupOfCategory(
 
 /**
  * Needs/Wants (or Savings) for a Monthly Estimate row:
- * expense → stored override, else category default; transfer → destination sinking fund.
+ * expense → stored override, else subcategory default; transfer → destination sinking fund.
  */
 export function budgetGroupOfEstimate(
   bill: Pick<RecurringBill, 'type' | 'category_id' | 'to_bucket_id' | 'budget_group'>,
@@ -176,10 +176,8 @@ export function budgetGroupOfEstimate(
   bucketsById?: Map<string, BucketBudgetRef>,
 ): BudgetGroup | null {
   if (bill.type === 'expense') {
-    const fromCat = budgetGroupOfCategory(bill.category_id, categoriesById)
-    if (fromCat) return fromCat
     if (isBudgetGroup(bill.budget_group)) return bill.budget_group
-    return null
+    return budgetGroupOfCategory(bill.category_id, categoriesById)
   }
   if (bill.type === 'transfer' && bucketsById) {
     return budgetGroupOfTransferTo(

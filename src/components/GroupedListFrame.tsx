@@ -15,7 +15,11 @@ interface GroupedListFrameProps {
   children: ReactNode
 }
 
-/** Rounded grouping frame with collapse/expand toggle on the top border. */
+/**
+ * Rounded grouping frame with collapse/expand toggle on the top border.
+ * Outer `pt-4` reserves room for the hanging legend (h-7, -translate-y-1/2)
+ * so it never overlaps the previous sibling (search field, nested frames).
+ */
 export function GroupedListFrame({
   expanded,
   onToggle,
@@ -25,13 +29,11 @@ export function GroupedListFrame({
   children,
 }: GroupedListFrameProps) {
   const showContent = !collapseContent || expanded
-  // Legend sits on the top border (h-7, -translate-y-1/2). Extra top padding
-  // keeps the first child group from overlapping that control — more when a
-  // text label is shown, and enough for a nested GroupedListFrame legend.
+  // Inner padding keeps the first child from overlapping this frame's legend.
   const contentPad = label ? 'pt-9' : 'pt-6'
 
   return (
-    <div className={`relative ${className}`}>
+    <div className={`relative pt-4 ${className}`.trim()}>
       <div
         className={
           showContent
@@ -54,7 +56,7 @@ export function GroupedListFrame({
               : 'Expand all'
         }
         aria-expanded={expanded}
-        className="absolute top-0 left-2 z-10 flex h-7 -translate-y-1/2 items-center gap-1 bg-neutral-50 px-1.5 text-neutral-400 active:opacity-70 dark:bg-neutral-950"
+        className="absolute top-4 left-2 z-10 flex h-7 -translate-y-1/2 items-center gap-1 bg-neutral-50 px-1.5 text-neutral-400 active:opacity-70 dark:bg-neutral-950"
       >
         <CollapseChevron expanded={expanded} size={16} />
         {label ? (

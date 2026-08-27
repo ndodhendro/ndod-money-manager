@@ -94,9 +94,7 @@ export function MoneyPlanScreen() {
         onNext={goNextMonth}
       />
 
-      {freeGuiltyProgress && (
-        <FreeGuiltyRemainingGlance progress={freeGuiltyProgress} />
-      )}
+      <FreeGuiltyRemainingGlance progress={freeGuiltyProgress} />
 
       {error && (
         <p className="mt-6 text-center text-sm text-red-500">{error}</p>

@@ -58,8 +58,6 @@ import {
 import { deleteTransaction, reorderTransactions } from '../lib/transactionsApi'
 import { sinkingLinkedCategoryIds } from '../lib/bucketsApi'
 import {
-  CIRCLE_LABELS,
-  CIRCLES,
   BUDGET_GROUP_TEXT_CLASS,
   categoryDisplayParts,
   formatTransferLabel,
@@ -67,31 +65,11 @@ import {
   isBudgetGroup,
   isCircle,
   TRANSFER_TYPE_ICON,
-  type Category,
-  type Circle,
   type TransactionWithCategory,
 } from '../lib/types'
 
 type MonthCursor = { year: number; month: number }
 type HistoryLocationState = { highlightTxId?: string }
-type AllFilter = 'all'
-
-const SELECT_CLASS =
-  'w-full rounded-lg border-0 bg-neutral-100 px-2 py-2 text-xs text-neutral-800 outline-none dark:bg-neutral-800 dark:text-neutral-100'
-
-/** Income/expense parents can share a display name with different ids. */
-function categoryNameKey(name: string): string {
-  return name.trim().toLowerCase()
-}
-
-function resolveParentCategory(
-  cat: Category | null | undefined,
-  byId: Map<string, Category>,
-): Category | null {
-  if (!cat) return null
-  if (!cat.parent_id) return cat
-  return byId.get(cat.parent_id) ?? null
-}
 
 function currentCursor(): MonthCursor {
   const now = new Date()
@@ -120,11 +98,6 @@ export function History() {
   const navigate = useNavigate()
   const location = useLocation()
   const [cursor, setCursor] = useState<MonthCursor>(currentCursor)
-  const [circleFilter, setCircleFilter] = useState<Circle | AllFilter>('all')
-  const [categoryFilter, setCategoryFilter] = useState<string | AllFilter>('all')
-  const [subcategoryFilter, setSubcategoryFilter] = useState<
-    string | AllFilter
-  >('all')
   const [searchQuery, setSearchQuery] = useState('')
   const touchStart = useRef<{ x: number; y: number } | null>(null)
   const highlightRef = useRef<HTMLDivElement | null>(null)
@@ -147,7 +120,6 @@ export function History() {
     version: 0,
   })
 
-  const { parents, childrenByParent, byId } = useCategories()
   const { byId: categoriesById } = useCategories(undefined, {
     includeInactive: true,
   })
@@ -229,86 +201,6 @@ export function History() {
     })
   }, [highlightId, loading, transactions])
 
-  const categoryOptions = useMemo(() => {
-    const sorted = [...parents].sort((a, b) => {
-      if (a.type !== b.type) return a.type === 'expense' ? -1 : 1
-      return a.sort_order - b.sort_order
-    })
-    // One option per display name so Business covers income + expense parents.
-    const seen = new Set<string>()
-    const unique: typeof sorted = []
-    for (const parent of sorted) {
-      const key = categoryNameKey(parent.name)
-      if (seen.has(key)) continue
-      seen.add(key)
-      unique.push(parent)
-    }
-    return unique
-  }, [parents])
-
-  const parentIdsMatchingCategoryFilter = useMemo(() => {
-    if (categoryFilter === 'all') return null
-    const selected = byId.get(categoryFilter)
-    if (!selected) return new Set<string>([categoryFilter])
-    const key = categoryNameKey(selected.name)
-    return new Set(
-      parents
-        .filter((p) => categoryNameKey(p.name) === key)
-        .map((p) => p.id),
-    )
-  }, [categoryFilter, byId, parents])
-
-  const subcategoryOptions = useMemo(() => {
-    if (categoryFilter !== 'all' && parentIdsMatchingCategoryFilter) {
-      const seen = new Set<string>()
-      const options: Array<{ id: string; label: string }> = []
-      for (const parentId of parentIdsMatchingCategoryFilter) {
-        for (const child of childrenByParent.get(parentId) ?? []) {
-          const key = categoryNameKey(child.name)
-          if (seen.has(key)) continue
-          seen.add(key)
-          options.push({
-            id: child.id,
-            label: `${child.icon} ${child.name}${
-              sinkingCategoryIds.has(child.id) ? ' SF' : ''
-            }`,
-          })
-        }
-      }
-      return options
-    }
-    const seen = new Set<string>()
-    const options: Array<{ id: string; label: string }> = []
-    for (const parent of categoryOptions) {
-      const parentIds = parents
-        .filter((p) => categoryNameKey(p.name) === categoryNameKey(parent.name))
-        .map((p) => p.id)
-      for (const parentId of parentIds) {
-        const parentRow = byId.get(parentId) ?? parent
-        for (const child of childrenByParent.get(parentId) ?? []) {
-          const key = `${categoryNameKey(parentRow.name)}/${categoryNameKey(child.name)}`
-          if (seen.has(key)) continue
-          seen.add(key)
-          options.push({
-            id: child.id,
-            label: `${child.icon} ${parentRow.name} / ${child.name}${
-              sinkingCategoryIds.has(child.id) ? ' SF' : ''
-            }`,
-          })
-        }
-      }
-    }
-    return options
-  }, [
-    categoryFilter,
-    parentIdsMatchingCategoryFilter,
-    childrenByParent,
-    categoryOptions,
-    parents,
-    byId,
-    sinkingCategoryIds,
-  ])
-
   const canGoNext = !isCurrentMonth(cursor) && !isAfterCurrentMonth(cursor)
 
   function goPrevMonth() {
@@ -344,11 +236,6 @@ export function History() {
     else goNextMonth()
   }
 
-  function handleCategoryFilterChange(value: string) {
-    setCategoryFilter(value as string | AllFilter)
-    setSubcategoryFilter('all')
-  }
-
   async function confirmDelete() {
     if (!pendingDeleteId) return
     setDeleting(true)
@@ -379,54 +266,9 @@ export function History() {
     }
   }
 
-  const filtered = transactions.filter((tx) => {
-    const circle = isCircle(tx.circle) ? tx.circle : 'hd_family'
-    if (circleFilter !== 'all' && circle !== circleFilter) return false
-
-    // Transfers have no category — hide when a category filter is active.
-    if (tx.type === 'transfer') {
-      if (categoryFilter !== 'all' || subcategoryFilter !== 'all') return false
-      return matchesTransactionSearch(searchQuery, tx)
-    }
-
-    if (subcategoryFilter !== 'all') {
-      const selectedSub = byId.get(subcategoryFilter)
-      const cat = tx.category
-      if (!selectedSub || !cat) return false
-      if (cat.id === subcategoryFilter) {
-        return matchesTransactionSearch(searchQuery, tx)
-      }
-      // Same subcategory name under same parent name (income + expense ids differ).
-      const selectedParent = resolveParentCategory(selectedSub, byId)
-      const txParent = resolveParentCategory(cat, byId)
-      if (!selectedParent || !txParent) return false
-      if (
-        categoryNameKey(cat.name) !== categoryNameKey(selectedSub.name) ||
-        categoryNameKey(txParent.name) !== categoryNameKey(selectedParent.name)
-      ) {
-        return false
-      }
-      return matchesTransactionSearch(searchQuery, tx)
-    }
-
-    if (categoryFilter !== 'all' && parentIdsMatchingCategoryFilter) {
-      const cat = tx.category
-      if (!cat) return false
-      if (parentIdsMatchingCategoryFilter.has(cat.id)) {
-        return matchesTransactionSearch(searchQuery, tx)
-      }
-      if (cat.parent_id && parentIdsMatchingCategoryFilter.has(cat.parent_id)) {
-        return matchesTransactionSearch(searchQuery, tx)
-      }
-      const parent = resolveParentCategory(cat, byId)
-      if (parent == null || !parentIdsMatchingCategoryFilter.has(parent.id)) {
-        return false
-      }
-      return matchesTransactionSearch(searchQuery, tx)
-    }
-
-    return matchesTransactionSearch(searchQuery, tx)
-  })
+  const filtered = transactions.filter((tx) =>
+    matchesTransactionSearch(searchQuery, tx),
+  )
   const searchActive = !isBlankSearch(searchQuery)
 
   const monthIncome = filtered
@@ -439,11 +281,7 @@ export function History() {
 
   const completeLaterTxs = filtered.filter((tx) => tx.complete_later)
   const historyTxs = filtered.filter((tx) => !tx.complete_later)
-  const dayReorderEnabled =
-    !searchActive &&
-    circleFilter === 'all' &&
-    categoryFilter === 'all' &&
-    subcategoryFilter === 'all'
+  const dayReorderEnabled = !searchActive
 
   const overspendTxIds = useMemo(() => {
     const ids = new Set<string>()
@@ -459,6 +297,7 @@ export function History() {
         bills,
         categoriesById,
         isExpenseNeedsOrWantsEstimate,
+        bucketsById,
       )
       for (const id of monthBudgetCeilingOverspendTransactionIds({
         bills,
@@ -849,77 +688,6 @@ export function History() {
         onNext={goNextMonth}
       />
 
-      <SearchField
-        value={searchQuery}
-        onChange={setSearchQuery}
-        placeholder="Search transactions…"
-        aria-label="Search transactions"
-        className="mt-3"
-      />
-
-      <div className="mt-2 grid grid-cols-3 gap-1.5">
-        <label className="block min-w-0">
-          <span className="mb-0.5 block truncate text-[10px] font-medium text-neutral-400">
-            Circle
-          </span>
-          <select
-            value={circleFilter}
-            onChange={(e) =>
-              setCircleFilter(e.target.value as Circle | AllFilter)
-            }
-            className={SELECT_CLASS}
-            aria-label="Filter by circle"
-          >
-            <option value="all">All</option>
-            {CIRCLES.map((c) => (
-              <option key={c} value={c}>
-                {CIRCLE_LABELS[c]}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="block min-w-0">
-          <span className="mb-0.5 block truncate text-[10px] font-medium text-neutral-400">
-            Category
-          </span>
-          <select
-            value={categoryFilter}
-            onChange={(e) => handleCategoryFilterChange(e.target.value)}
-            className={SELECT_CLASS}
-            aria-label="Filter by category"
-          >
-            <option value="all">All</option>
-            {categoryOptions.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.icon} {c.name}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="block min-w-0">
-          <span className="mb-0.5 block truncate text-[10px] font-medium text-neutral-400">
-            Subcategory
-          </span>
-          <select
-            value={subcategoryFilter}
-            onChange={(e) =>
-              setSubcategoryFilter(e.target.value as string | AllFilter)
-            }
-            className={SELECT_CLASS}
-            aria-label="Filter by subcategory"
-          >
-            <option value="all">All</option>
-            {subcategoryOptions.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-
       {!loading && !error && (
         <div className="mt-2 rounded-lg bg-white px-2.5 py-1.5 shadow-sm dark:bg-neutral-800">
           <div className="grid grid-cols-3 gap-1 text-center">
@@ -958,19 +726,26 @@ export function History() {
       {error && (
         <p className="mt-6 text-center text-sm text-red-500">{error}</p>
       )}
-      {!loading && !hasListContent && (
-        <p className="mt-10 text-center text-sm text-neutral-400">
-          {searchActive ? 'No matches.' : 'No transactions this month.'}
-        </p>
-      )}
 
-      {!loading && hasListContent && (
+      {!loading && !error && (
         <div className="mt-4">
           <GroupedListFrame
             label="Transactions"
             expanded={allExpanded}
             onToggle={toggleAllExpanded}
           >
+            <SearchField
+              value={searchQuery}
+              onChange={setSearchQuery}
+              placeholder="Search transactions…"
+              aria-label="Search transactions"
+              className="mb-3 min-w-0"
+            />
+            {!hasListContent ? (
+              <p className="rounded-xl bg-white p-3 text-center text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
+                {searchActive ? 'No matches.' : 'No transactions this month.'}
+              </p>
+            ) : (
             <div className="space-y-5">
               {completeLaterTxs.length > 0 && (
                 <GroupedListFrame
@@ -1049,6 +824,7 @@ export function History() {
                 </GroupedListFrame>
               )}
             </div>
+            )}
           </GroupedListFrame>
         </div>
       )}

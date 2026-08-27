@@ -130,39 +130,38 @@ export function BucketManagePanel({
   }, [groupedTree])
 
   const searchActive = !isBlankSearch(searchQuery)
-  const filteredDisplayGroups = useMemo(() => {
-    if (!searchActive) return displayGroups
-    return displayGroups
-      .map(([kind, nodes]) => {
-        const filtered = nodes
-          .map((node) => {
-            const parentMatch = matchesBucketSearch(searchQuery, node.bucket)
-            const children = node.children.filter(
-              (child) =>
-                parentMatch ||
-                matchesBucketSearch(searchQuery, child, {
-                  parentName: node.bucket.name,
-                }),
-            )
-            return { ...node, children }
-          })
-          .filter(
-            (node) =>
-              matchesBucketSearch(searchQuery, node.bucket) ||
-              node.children.length > 0,
-          )
-        return [kind, filtered] as const
-      })
-      .filter(([, nodes]) => nodes.length > 0)
-  }, [displayGroups, searchActive, searchQuery])
-
-  const expandableSinkingParentIds = useMemo(() => {
+  const sinkingNodes = useMemo(() => {
     const sinking = displayGroups.find(([kind]) => kind === 'sinking')
-    if (!sinking) return [] as string[]
-    return sinking[1]
-      .filter((node) => node.children.length > 0)
-      .map((node) => node.bucket.id)
+    return sinking?.[1] ?? []
   }, [displayGroups])
+  const filteredSinkingNodes = useMemo(() => {
+    if (!searchActive) return sinkingNodes
+    return sinkingNodes
+      .map((node) => {
+        const parentMatch = matchesBucketSearch(searchQuery, node.bucket)
+        const children = node.children.filter(
+          (child) =>
+            parentMatch ||
+            matchesBucketSearch(searchQuery, child, {
+              parentName: node.bucket.name,
+            }),
+        )
+        return { ...node, children }
+      })
+      .filter(
+        (node) =>
+          matchesBucketSearch(searchQuery, node.bucket) ||
+          node.children.length > 0,
+      )
+  }, [sinkingNodes, searchActive, searchQuery])
+
+  const expandableSinkingParentIds = useMemo(
+    () =>
+      sinkingNodes
+        .filter((node) => node.children.length > 0)
+        .map((node) => node.bucket.id),
+    [sinkingNodes],
+  )
 
   const allSinkingCatsExpanded =
     expandableSinkingParentIds.length > 0 &&
@@ -483,7 +482,6 @@ export function BucketManagePanel({
       const created = await createSinkingBucketFromCategory({
         category_id: categoryId,
         target_amount: target,
-        opening_balance: 0,
       })
       resetForm()
       setKindGroupsExpanded(true)
@@ -615,23 +613,12 @@ export function BucketManagePanel({
 
       {view === 'list' ? (
         <div className="space-y-3">
-          <SearchField
-            value={searchQuery}
-            onChange={setSearchQuery}
-            placeholder="Search buckets…"
-            aria-label="Search buckets"
-          />
           {!loading && buckets.length === 0 ? (
             <p className="rounded-xl bg-white p-3 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
               No buckets yet. Add a sinking fund under Sinking Fund below.
             </p>
           ) : null}
 
-          {searchActive && filteredDisplayGroups.length === 0 ? (
-            <p className="rounded-xl bg-white p-3 text-center text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
-              No matches.
-            </p>
-          ) : (
           <GroupedListFrame
             label="Buckets List"
             expanded={searchActive ? true : kindGroupsExpanded}
@@ -641,24 +628,29 @@ export function BucketManagePanel({
             }}
           >
             <div className="space-y-5">
-              {filteredDisplayGroups.map(([kind, nodes]) => {
+              {displayGroups.map(([kind, nodes]) => {
                 return kind === 'sinking' ? (
                   <div key={kind}>
                     <button
                       type="button"
-                      onClick={() =>
+                      onClick={() => {
+                        if (searchActive) return
                         setAllSinkingCatsExpanded(!allSinkingCatsExpanded)
+                      }}
+                      aria-expanded={
+                        searchActive ? true : allSinkingCatsExpanded
                       }
-                      aria-expanded={allSinkingCatsExpanded}
                       aria-label={
-                        allSinkingCatsExpanded
+                        searchActive || allSinkingCatsExpanded
                           ? 'Collapse all sinking categories'
                           : 'Expand all sinking categories'
                       }
                       className="mb-2 flex w-full items-center gap-1.5 text-left"
                     >
                       <CollapseChevron
-                        expanded={allSinkingCatsExpanded}
+                        expanded={
+                          searchActive ? true : allSinkingCatsExpanded
+                        }
                         size={14}
                         className="shrink-0 text-neutral-400"
                       />
@@ -667,51 +659,63 @@ export function BucketManagePanel({
                       </p>
                     </button>
                     <div className="space-y-2">
-                      <div className="flex items-center justify-end">
+                      <div className="flex items-center gap-2">
+                        <SearchField
+                          value={searchQuery}
+                          onChange={setSearchQuery}
+                          placeholder="Search sinking funds…"
+                          aria-label="Search Sinking Funds"
+                          className="min-w-0 flex-1"
+                        />
                         <button
                           type="button"
                           onClick={openAddForm}
-                          className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white active:bg-emerald-600"
+                          className="shrink-0 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white active:bg-emerald-600"
                         >
                           {ActionEmoji.add} Add New
                         </button>
                       </div>
-                      {nodes.length === 0 ? (
+                      {searchActive && filteredSinkingNodes.length === 0 ? (
+                        <p className="rounded-xl bg-white px-3 py-2.5 text-center text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
+                          No matches.
+                        </p>
+                      ) : filteredSinkingNodes.length === 0 ? (
                         <p className="rounded-xl bg-white px-3 py-2.5 text-sm text-neutral-500 shadow-sm dark:bg-neutral-800 dark:text-neutral-400">
                           No sinking funds yet. Tap Add New and pick a
                           subcategory.
                         </p>
-                      ) : null}
-                      {nodes.map((node) => (
-                        <BucketTreeRows
-                          key={node.bucket.id}
-                          node={node}
-                          openSwipeId={openSwipeId}
-                          setOpenSwipeId={setOpenSwipeId}
-                          highlightId={highlightId}
-                          highlightRef={highlightRef}
-                          expanded={
-                            searchActive
-                              ? true
-                              : expandedParentIds.has(node.bucket.id)
-                          }
-                          onToggleExpand={() =>
-                            toggleParentExpanded(node.bucket.id)
-                          }
-                          onEdit={openEditForm}
-                          disableEdit={
-                            node.bucket.kind === 'sinking' &&
-                            node.bucket.category_id != null
-                              ? categoriesById.get(node.bucket.category_id)
-                                  ?.parent_id == null
-                              : false
-                          }
-                          onDelete={(b) => {
-                            setOpenSwipeId(b.id)
-                            setDeleteTarget(b)
-                          }}
-                        />
-                      ))}
+                      ) : (
+                        filteredSinkingNodes.map((node) => (
+                          <BucketTreeRows
+                            key={node.bucket.id}
+                            node={node}
+                            openSwipeId={openSwipeId}
+                            setOpenSwipeId={setOpenSwipeId}
+                            highlightId={highlightId}
+                            highlightRef={highlightRef}
+                            expanded={
+                              searchActive
+                                ? true
+                                : expandedParentIds.has(node.bucket.id)
+                            }
+                            onToggleExpand={() =>
+                              toggleParentExpanded(node.bucket.id)
+                            }
+                            onEdit={openEditForm}
+                            disableEdit={
+                              node.bucket.kind === 'sinking' &&
+                              node.bucket.category_id != null
+                                ? categoriesById.get(node.bucket.category_id)
+                                    ?.parent_id == null
+                                : false
+                            }
+                            onDelete={(b) => {
+                              setOpenSwipeId(b.id)
+                              setDeleteTarget(b)
+                            }}
+                          />
+                        ))
+                      )}
                     </div>
                   </div>
                 ) : (
@@ -750,7 +754,6 @@ export function BucketManagePanel({
               })}
             </div>
           </GroupedListFrame>
-          )}
         </div>
       ) : (
         <div className="space-y-3">

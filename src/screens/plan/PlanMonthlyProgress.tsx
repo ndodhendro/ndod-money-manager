@@ -11,7 +11,7 @@ import { useCategories } from '../../hooks/useCategories'
 import { useMonthCursor } from '../../hooks/useMonthCursor'
 import { usePyfSettings } from '../../hooks/usePyfSettings'
 import { useTransactions } from '../../hooks/useTransactions'
-import { groupBucketsByKindAsTree } from '../../lib/bucketsGroup'
+import { groupBucketsByKindAsTree, withoutEmptySinkingCategoryNodes } from '../../lib/bucketsGroup'
 import {
   areAllCollapseOpen,
   getCollapseOpen,
@@ -277,7 +277,7 @@ export function PlanMonthlyProgress() {
   const sinkingSearchActive = !isBlankSearch(sinkingSearchQuery)
   const sinkingNodes = useMemo(() => {
     const sinking = groupedBuckets.find(([kind]) => kind === 'sinking')
-    return sinking?.[1] ?? []
+    return withoutEmptySinkingCategoryNodes(sinking?.[1] ?? [])
   }, [groupedBuckets])
 
   const pyfKindPersistKeys = useMemo(
@@ -385,35 +385,42 @@ export function PlanMonthlyProgress() {
 
   const filteredSinkingNodes = useMemo(() => {
     if (sinkingSearchActive) {
-      return sinkingNodes
-        .map((node) => {
-          const parentMatch = matchesBucketSearch(sinkingSearchQuery, node.bucket)
-          const children = node.children.filter(
-            (child) =>
-              parentMatch ||
-              matchesBucketSearch(sinkingSearchQuery, child, {
-                parentName: node.bucket.name,
-              }),
-          )
-          return { ...node, children }
-        })
+      return withoutEmptySinkingCategoryNodes(
+        sinkingNodes
+          .map((node) => {
+            const parentMatch = matchesBucketSearch(sinkingSearchQuery, node.bucket)
+            const children = node.children.filter(
+              (child) =>
+                parentMatch ||
+                matchesBucketSearch(sinkingSearchQuery, child, {
+                  parentName: node.bucket.name,
+                  missedTransfer: (missedByBucketId.get(child.id) ?? 0) > 0,
+                }),
+            )
+            return { ...node, children }
+          })
+          .filter(
+            (node) =>
+              matchesBucketSearch(sinkingSearchQuery, node.bucket, {
+                missedTransfer:
+                  (missedByBucketId.get(node.bucket.id) ?? 0) > 0,
+              }) || node.children.length > 0,
+          ),
+      )
+    }
+    return withoutEmptySinkingCategoryNodes(
+      sinkingNodes
+        .map((node) => ({
+          ...node,
+          children: node.children.filter((child) =>
+            isSinkingDueThisMonth(child.id),
+          ),
+        }))
         .filter(
           (node) =>
-            matchesBucketSearch(sinkingSearchQuery, node.bucket) ||
-            node.children.length > 0,
-        )
-    }
-    return sinkingNodes
-      .map((node) => ({
-        ...node,
-        children: node.children.filter((child) =>
-          isSinkingDueThisMonth(child.id),
+            node.children.length > 0 || isSinkingDueThisMonth(node.bucket.id),
         ),
-      }))
-      .filter(
-        (node) =>
-          node.children.length > 0 || isSinkingDueThisMonth(node.bucket.id),
-      )
+    )
   }, [
     sinkingNodes,
     sinkingSearchActive,
@@ -441,6 +448,13 @@ export function PlanMonthlyProgress() {
   function renderSinkingNode(node: BucketTreeNode, kind: 'sinking') {
     const visibleChildren = node.children
     const hasChildren = visibleChildren.length > 0
+    if (
+      !hasChildren &&
+      node.bucket.parent_id == null &&
+      node.bucket.category_id
+    ) {
+      return null
+    }
     if (!hasChildren) {
       const { monthTarget, monthInflow, missed } = sinkingMonthActivity(
         node.bucket.id,

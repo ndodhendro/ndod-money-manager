@@ -99,12 +99,15 @@ function parseYearMonth(value: string): { year: number; month: number } | null {
   return { year, month }
 }
 
+/** How far back Starts/Ends year dropdowns may go from the current year. */
+const YEAR_DROPDOWN_LOOKBACK = 15
+
 function buildYearOptions(): number[] {
   const nowYear = new Date().getFullYear()
-  const minYear = 2026
+  const minYear = nowYear - YEAR_DROPDOWN_LOOKBACK
   const years: number[] = []
-  // Starts/Ends: from 2026 through a long forward range for installments/plans.
-  for (let year = minYear; year <= Math.max(nowYear, minYear) + 80; year++) {
+  // Starts/Ends: 15 years back through a long forward range for installments/plans.
+  for (let year = minYear; year <= nowYear + 80; year++) {
     years.push(year)
   }
   return years
@@ -196,7 +199,7 @@ export function RecurringBillsPanel({
   const [isRecurring, setIsRecurring] = useState(true)
   const yearOptions = useMemo(() => {
     const base = buildYearOptions()
-    const minYear = base[0] ?? 2026
+    const minYear = base[0] ?? new Date().getFullYear() - YEAR_DROPDOWN_LOOKBACK
     const extras = new Set<number>()
     const starts = parseYearMonth(startsYearMonth)
     const ends = endsYearMonth ? parseYearMonth(endsYearMonth) : null

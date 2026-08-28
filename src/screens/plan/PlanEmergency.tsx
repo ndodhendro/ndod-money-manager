@@ -14,7 +14,7 @@ import { useCategories } from '../../hooks/useCategories'
 import { usePyfSettings } from '../../hooks/usePyfSettings'
 import { ActionEmoji } from '../../lib/actionEmoji'
 import { showAppToast } from '../../lib/appToast'
-import { groupBucketsByKindAsTree } from '../../lib/bucketsGroup'
+import { groupBucketsByKindAsTree, withoutEmptySinkingCategoryNodes } from '../../lib/bucketsGroup'
 import {
   getCollapseOpen,
   setCollapseOpen,
@@ -246,7 +246,7 @@ export function PlanEmergency() {
   const searchActive = !isBlankSearch(searchQuery)
   const sinkingNodes = useMemo(() => {
     const sinking = groupedBuckets.find(([kind]) => kind === 'sinking')
-    return sinking?.[1] ?? []
+    return withoutEmptySinkingCategoryNodes(sinking?.[1] ?? [])
   }, [groupedBuckets])
   const sinkingAvailableTotal = useMemo(
     () =>
@@ -254,34 +254,6 @@ export function PlanEmergency() {
         (sum, node) => sum + Math.max(0, Math.round(node.bucket.balance)),
         0,
       ),
-    [sinkingNodes],
-  )
-  const filteredSinkingNodes = useMemo(() => {
-    if (!searchActive) return sinkingNodes
-    return sinkingNodes
-      .map((node) => {
-        const parentMatch = matchesBucketSearch(searchQuery, node.bucket)
-        const children = node.children.filter(
-          (child) =>
-            parentMatch ||
-            matchesBucketSearch(searchQuery, child, {
-              parentName: node.bucket.name,
-            }),
-        )
-        return { ...node, children }
-      })
-      .filter(
-        (node) =>
-          matchesBucketSearch(searchQuery, node.bucket) ||
-          node.children.length > 0,
-      )
-  }, [sinkingNodes, searchActive, searchQuery])
-
-  const expandableSinkingParentIds = useMemo(
-    () =>
-      sinkingNodes
-        .filter((node) => node.children.length > 0)
-        .map((node) => node.bucket.id),
     [sinkingNodes],
   )
 
@@ -302,6 +274,41 @@ export function PlanEmergency() {
     }
     return map
   }, [buckets, bills, movements, viewYm])
+
+  const filteredSinkingNodes = useMemo(() => {
+    if (!searchActive) return sinkingNodes
+    const hasMissed = (bucketId: string) =>
+      (missedByBucketId.get(bucketId) ?? 0) > 0
+    return withoutEmptySinkingCategoryNodes(
+      sinkingNodes
+        .map((node) => {
+          const parentMatch = matchesBucketSearch(searchQuery, node.bucket)
+          const children = node.children.filter(
+            (child) =>
+              parentMatch ||
+              matchesBucketSearch(searchQuery, child, {
+                parentName: node.bucket.name,
+                missedTransfer: hasMissed(child.id),
+              }),
+          )
+          return { ...node, children }
+        })
+        .filter(
+          (node) =>
+            matchesBucketSearch(searchQuery, node.bucket, {
+              missedTransfer: hasMissed(node.bucket.id),
+            }) || node.children.length > 0,
+        ),
+    )
+  }, [sinkingNodes, searchActive, searchQuery, missedByBucketId])
+
+  const expandableSinkingParentIds = useMemo(
+    () =>
+      sinkingNodes
+        .filter((node) => node.children.length > 0)
+        .map((node) => node.bucket.id),
+    [sinkingNodes],
+  )
 
   function sinkingRow(b: BucketWithBalance) {
     return sinkingGoalsRowForBucket({
@@ -393,6 +400,10 @@ export function PlanEmergency() {
   function renderSinkingNode(node: BucketTreeNode, kind: BucketKind) {
     const hasChildren = node.children.length > 0
     const expanded = searchActive || expandedParentIds.has(node.bucket.id)
+
+    if (!hasChildren && node.bucket.parent_id == null && node.bucket.category_id) {
+      return null
+    }
 
     if (hasChildren) {
       return (
@@ -528,6 +539,7 @@ export function PlanEmergency() {
             <div className="space-y-5">
               {groupedBuckets.map(([kind, items]) =>
                 kind === 'sinking' ? (
+                  filteredSinkingNodes.length === 0 && !searchActive ? null : (
                   <div key={kind}>
                     <button
                       type="button"
@@ -578,6 +590,7 @@ export function PlanEmergency() {
                       </div>
                     )}
                   </div>
+                  )
                 ) : (
                   <div key={kind}>
                     <p className="mb-2 text-xs font-semibold tracking-wide text-neutral-400">

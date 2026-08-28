@@ -95,6 +95,13 @@ export const BUCKET_KIND_LABELS: Record<BucketKind, string> = {
 /** Compact SF marker — same sky tone as Wants text markers. */
 export const SINKING_FUND_LABEL_CLASS = BUDGET_GROUP_TEXT_CLASS.wants
 
+/** Sinking fund with no active transfer in Monthly Estimates. */
+export const NO_TRANSFER_LABEL = 'No Transfer in Monthly Estimate'
+export const NO_TRANSFER_LABEL_CLASS = 'text-amber-600 dark:text-amber-400'
+
+/** Prefix of the amber missed-transfer hint (`Missed Rp …`). */
+export const MISSED_TRANSFER_LABEL = 'Missed'
+
 /** Sentinel: null bucket id = shared main account (checking / available money). */
 export const CASHFLOW_LABEL = 'Main Account'
 

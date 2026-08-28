@@ -74,7 +74,7 @@ export function RecurringMonthOverrideSheet({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col justify-end">
+    <div className="fixed inset-0 z-50 flex flex-col items-center justify-end">
       <button
         type="button"
         aria-label="Close"
@@ -83,7 +83,7 @@ export function RecurringMonthOverrideSheet({
         onClick={onClose}
       />
       <div
-        className="relative rounded-t-2xl bg-neutral-100 shadow-2xl dark:bg-neutral-900"
+        className="relative w-full max-w-md rounded-t-2xl bg-neutral-100 shadow-2xl dark:bg-neutral-900"
         role="dialog"
         aria-modal="true"
         aria-labelledby="month-override-title"

@@ -42,6 +42,7 @@ import {
 } from '../lib/types'
 import { BudgetGroupBadge } from './BudgetGroupBadge'
 import { CategoryPicker } from './CategoryPicker'
+import { NoTransferLabel } from './NoTransferLabel'
 import { CollapseChevron } from './CollapseChevron'
 import { ConfirmDialog } from './ConfirmDialog'
 import { GroupedListFrame } from './GroupedListFrame'
@@ -99,6 +100,7 @@ export function BucketManagePanel({
   const [highlightId, setHighlightId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [bills, setBills] = useState<RecurringBill[]>([])
+  const [billsReady, setBillsReady] = useState(false)
   const highlightRef = useRef<HTMLDivElement | null>(null)
   const hydratedEditIdRef = useRef<string | null>(null)
   const onViewChangeRef = useRef(onViewChange)
@@ -134,26 +136,65 @@ export function BucketManagePanel({
     const sinking = displayGroups.find(([kind]) => kind === 'sinking')
     return sinking?.[1] ?? []
   }, [displayGroups])
+
+  const transferDestIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const bill of bills) {
+      if (bill.is_active && bill.type === 'transfer' && bill.to_bucket_id) {
+        ids.add(bill.to_bucket_id)
+      }
+    }
+    return ids
+  }, [bills])
+
+  const sinkingParentIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const b of buckets) {
+      if (b.parent_id) ids.add(b.parent_id)
+    }
+    return ids
+  }, [buckets])
+
+  function sinkingMissingTransfer(bucket: BucketWithBalance): boolean {
+    return (
+      billsReady &&
+      bucket.kind === 'sinking' &&
+      !sinkingParentIds.has(bucket.id) &&
+      !transferDestIds.has(bucket.id)
+    )
+  }
+
   const filteredSinkingNodes = useMemo(() => {
     if (!searchActive) return sinkingNodes
     return sinkingNodes
       .map((node) => {
-        const parentMatch = matchesBucketSearch(searchQuery, node.bucket)
+        const parentMatch = matchesBucketSearch(searchQuery, node.bucket, {
+          missingTransfer: sinkingMissingTransfer(node.bucket),
+        })
         const children = node.children.filter(
           (child) =>
             parentMatch ||
             matchesBucketSearch(searchQuery, child, {
               parentName: node.bucket.name,
+              missingTransfer: sinkingMissingTransfer(child),
             }),
         )
         return { ...node, children }
       })
       .filter(
         (node) =>
-          matchesBucketSearch(searchQuery, node.bucket) ||
-          node.children.length > 0,
+          matchesBucketSearch(searchQuery, node.bucket, {
+            missingTransfer: sinkingMissingTransfer(node.bucket),
+          }) || node.children.length > 0,
       )
-  }, [sinkingNodes, searchActive, searchQuery])
+  }, [
+    sinkingNodes,
+    searchActive,
+    searchQuery,
+    billsReady,
+    transferDestIds,
+    sinkingParentIds,
+  ])
 
   const expandableSinkingParentIds = useMemo(
     () =>
@@ -208,11 +249,14 @@ export function BucketManagePanel({
     void (async () => {
       try {
         const rows = await fetchRecurringBills()
-        if (!cancelled) setBills(rows)
+        if (cancelled) return
+        setBills(rows)
+        setBillsReady(true)
       } catch (err) {
         if (cancelled) return
         const message = err instanceof Error ? err.message : ''
         if (isMissingRecurringSchema(message)) setBills([])
+        setBillsReady(true)
       }
     })()
     return () => {
@@ -605,6 +649,14 @@ export function BucketManagePanel({
   const deleteChildCount = deleteTarget
     ? buckets.filter((b) => b.parent_id === deleteTarget.id).length
     : 0
+  const deleteEmptyParent =
+    deleteTarget?.parent_id &&
+    buckets.filter(
+      (b) =>
+        b.parent_id === deleteTarget.parent_id && b.id !== deleteTarget.id,
+    ).length === 0
+      ? buckets.find((b) => b.id === deleteTarget.parent_id) ?? null
+      : null
 
   return (
     <div className="space-y-3">
@@ -709,6 +761,7 @@ export function BucketManagePanel({
                                     ?.parent_id == null
                                 : false
                             }
+                            missingTransfer={sinkingMissingTransfer}
                             onDelete={(b) => {
                               setOpenSwipeId(b.id)
                               setDeleteTarget(b)
@@ -742,6 +795,7 @@ export function BucketManagePanel({
                           }
                           onEdit={openEditForm}
                           disableEdit={false}
+                          missingTransfer={sinkingMissingTransfer}
                           onDelete={(b) => {
                             setOpenSwipeId(b.id)
                             setDeleteTarget(b)
@@ -956,7 +1010,9 @@ export function BucketManagePanel({
           deleteTarget
             ? deleteChildCount > 0
               ? `“${deleteTarget.name}” and its ${deleteChildCount} child bucket${deleteChildCount === 1 ? '' : 's'} will be removed from pickers. Balances and history stay.`
-              : `“${deleteTarget.name}” will be removed from pickers. Balances and history stay.`
+              : deleteEmptyParent
+                ? `“${deleteTarget.name}” will be removed from pickers. “${deleteEmptyParent.name}” will also be removed because it has no other sinking funds. Balances and history stay.`
+                : `“${deleteTarget.name}” will be removed from pickers. Balances and history stay.`
             : ''
         }
         confirmLabel="Delete"
@@ -983,6 +1039,7 @@ function BucketTreeRows({
   onEdit,
   onDelete,
   disableEdit = false,
+  missingTransfer,
 }: {
   node: BucketTreeNode
   openSwipeId: string | null
@@ -995,6 +1052,7 @@ function BucketTreeRows({
   onDelete: (b: BucketWithBalance) => void
   /** Disable tap-to-edit for parent/bank-mirror buckets. */
   disableEdit?: boolean
+  missingTransfer: (bucket: BucketWithBalance) => boolean
 }) {
   const hasChildren = node.children.length > 0
   return (
@@ -1012,6 +1070,7 @@ function BucketTreeRows({
         onToggleExpand={hasChildren ? onToggleExpand : undefined}
         onEdit={disableEdit ? undefined : onEdit}
         onDelete={onDelete}
+        showNoTransfer={missingTransfer(node.bucket)}
       />
       {hasChildren && expanded
         ? node.children.map((child) => (
@@ -1026,6 +1085,7 @@ function BucketTreeRows({
                 highlightRef={highlightRef}
                 onEdit={onEdit}
                 onDelete={onDelete}
+                showNoTransfer={missingTransfer(child)}
               />
             </div>
           ))
@@ -1047,6 +1107,7 @@ function BucketListRow({
   onToggleExpand,
   onEdit,
   onDelete,
+  showNoTransfer = false,
 }: {
   bucket: BucketWithBalance
   indent: number
@@ -1060,6 +1121,7 @@ function BucketListRow({
   onToggleExpand?: () => void
   onEdit?: (b: BucketWithBalance) => void
   onDelete: (b: BucketWithBalance) => void
+  showNoTransfer?: boolean
 }) {
   const isHighlighted = highlightId === bucket.id
   const isChild = indent > 0
@@ -1073,6 +1135,7 @@ function BucketListRow({
       expandable={expandable}
       expanded={expanded}
       onToggleExpand={onToggleExpand}
+      showNoTransfer={showNoTransfer}
     />
   )
 
@@ -1134,13 +1197,20 @@ function BucketRowContent({
   expandable = false,
   expanded = false,
   onToggleExpand,
+  showNoTransfer = false,
 }: {
   bucket: BucketWithBalance
   childCount?: number
   expandable?: boolean
   expanded?: boolean
   onToggleExpand?: () => void
+  showNoTransfer?: boolean
 }) {
+  const budgetGroup =
+    bucket.kind === 'sinking' &&
+    (bucket.budget_group === 'needs' || bucket.budget_group === 'wants')
+      ? bucket.budget_group
+      : null
   return (
     <>
       {expandable && onToggleExpand ? (
@@ -1169,10 +1239,10 @@ function BucketRowContent({
             </span>
           ) : null}
         </p>
-        {bucket.kind === 'sinking' &&
-        (bucket.budget_group === 'needs' || bucket.budget_group === 'wants') ? (
-          <p className="mt-0.5">
-            <BudgetGroupBadge group={bucket.budget_group} />
+        {budgetGroup || showNoTransfer ? (
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+            {budgetGroup ? <BudgetGroupBadge group={budgetGroup} /> : null}
+            {showNoTransfer ? <NoTransferLabel /> : null}
           </p>
         ) : null}
       </div>

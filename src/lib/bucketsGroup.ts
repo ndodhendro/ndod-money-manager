@@ -179,6 +179,38 @@ export function isBucketLeaf(
 }
 
 /**
+ * Category bank-mirror: top-level sinking linked to a category, with no
+ * active children. Auto-created with the first leaf and should not linger
+ * as an empty group in lists or pickers.
+ */
+export function isEmptySinkingBankMirror<
+  T extends Pick<Bucket, 'id' | 'kind' | 'parent_id' | 'category_id'>,
+>(bucket: T, childrenMap: Map<string, unknown[]>): boolean {
+  return (
+    bucket.kind === 'sinking' &&
+    bucket.parent_id == null &&
+    bucket.category_id != null &&
+    isBucketLeaf(bucket.id, childrenMap)
+  )
+}
+
+/** Tree node that is only an empty category group (no sinking leaves). */
+export function isEmptySinkingCategoryNode(node: BucketTreeNode): boolean {
+  return (
+    node.children.length === 0 &&
+    node.bucket.kind === 'sinking' &&
+    node.bucket.parent_id == null &&
+    node.bucket.category_id != null
+  )
+}
+
+export function withoutEmptySinkingCategoryNodes(
+  nodes: BucketTreeNode[],
+): BucketTreeNode[] {
+  return nodes.filter((node) => !isEmptySinkingCategoryNode(node))
+}
+
+/**
  * Leaves-only display balance: own ledger for leaves;
  * sum of children's own balances for parents with children.
  */
@@ -220,6 +252,7 @@ export function buildBucketTree(
 
   const roots: BucketWithBalance[] = []
   for (const b of buckets) {
+    if (isEmptySinkingBankMirror(b, childrenMap)) continue
     if (!b.parent_id) {
       roots.push(b)
       continue
@@ -241,7 +274,11 @@ export function leafBuckets(
   buckets: BucketWithBalance[],
 ): BucketWithBalance[] {
   const childrenMap = childrenByParentId(buckets)
-  return buckets.filter((b) => isBucketLeaf(b.id, childrenMap))
+  return buckets.filter(
+    (b) =>
+      isBucketLeaf(b.id, childrenMap) &&
+      !isEmptySinkingBankMirror(b, childrenMap),
+  )
 }
 
 /**

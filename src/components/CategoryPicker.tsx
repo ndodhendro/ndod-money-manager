@@ -61,13 +61,23 @@ export function CategoryPicker({
   const [managing, setManaging] = useState(false)
   const [manageView, setManageView] = useState<'list' | 'form'>('list')
   const backToListRef = useRef<(() => void) | null>(null)
+  const selectedParentId =
+    selected?.parent_id ??
+    (selected && !selected.parent_id ? selected.id : null)
+  const selectedParentIdRef = useRef(selectedParentId)
+  selectedParentIdRef.current = selectedParentId
 
   useEffect(() => {
     if (!open) {
       setManaging(false)
       setManageView('list')
       setSearchQuery('')
+      return
     }
+    // Snap to the current selection only when the sheet opens — not while
+    // browsing, or a selected category would pin the left column in place.
+    const parentId = selectedParentIdRef.current
+    if (parentId) setActiveParentId(parentId)
   }, [open])
 
   useEffect(() => {
@@ -99,17 +109,6 @@ export function CategoryPicker({
 
   useEffect(() => {
     if (!open || managing) return
-    const selectedParentId =
-      selected?.parent_id ??
-      (selected && !selected.parent_id ? selected.id : null)
-    if (
-      !searchActive &&
-      selectedParentId &&
-      filteredTree.some((p) => p.id === selectedParentId)
-    ) {
-      setActiveParentId(selectedParentId)
-      return
-    }
     if (activeParentId && filteredTree.some((p) => p.id === activeParentId)) {
       return
     }
@@ -121,14 +120,7 @@ export function CategoryPicker({
       return
     }
     if (filteredTree[0]) setActiveParentId(filteredTree[0].id)
-  }, [
-    open,
-    managing,
-    selected,
-    filteredTree,
-    activeParentId,
-    searchActive,
-  ])
+  }, [open, managing, selectedParentId, filteredTree, activeParentId])
 
   const activeParent = filteredTree.find((p) => p.id === activeParentId) ?? null
   const children = activeParent?.children ?? []
@@ -209,7 +201,7 @@ export function CategoryPicker({
       </button>
 
       {open && (
-        <div className="fixed inset-0 z-50 flex flex-col justify-end">
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-end">
           {!managing && (
             <button
               type="button"
@@ -219,7 +211,7 @@ export function CategoryPicker({
             />
           )}
           <div
-            className={`relative flex flex-col bg-neutral-100 shadow-2xl dark:bg-neutral-900 ${
+            className={`relative flex w-full max-w-md flex-col bg-neutral-100 shadow-2xl dark:bg-neutral-900 ${
               managing
                 ? 'h-full rounded-none'
                 : 'h-[70vh] max-h-[640px] rounded-t-2xl'

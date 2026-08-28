@@ -100,7 +100,7 @@ export function SinkingAllocateSheet({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col justify-end">
+    <div className="fixed inset-0 z-50 flex flex-col items-center justify-end">
       <button
         type="button"
         aria-label="Close"
@@ -109,7 +109,7 @@ export function SinkingAllocateSheet({
         onClick={onClose}
       />
       <div
-        className="relative max-h-[90vh] overflow-y-auto rounded-t-2xl bg-neutral-100 shadow-2xl dark:bg-neutral-900"
+        className="relative max-h-[90vh] w-full max-w-md overflow-y-auto rounded-t-2xl bg-neutral-100 shadow-2xl dark:bg-neutral-900"
         role="dialog"
         aria-modal="true"
         aria-labelledby="sinking-allocate-title"

@@ -4,6 +4,7 @@ import {
   ensureSystemBuckets,
   fetchBuckets,
   fetchTransferMovements,
+  pruneEmptySinkingBankMirrors,
   walkBucketLedger,
 } from '../lib/bucketsApi'
 import {
@@ -47,10 +48,21 @@ export function useBuckets(options?: { includeInactive?: boolean }) {
     setError(null)
     try {
       await ensureSystemBuckets()
-      const [bucketRows, transferRows] = await Promise.all([
+      const [initialBuckets, transferRows] = await Promise.all([
         fetchBuckets({ includeInactive }),
         fetchTransferMovements(),
       ])
+      let bucketRows = initialBuckets
+      if (!includeInactive) {
+        try {
+          const pruned = await pruneEmptySinkingBankMirrors(bucketRows)
+          if (pruned > 0) {
+            bucketRows = await fetchBuckets({ includeInactive })
+          }
+        } catch {
+          // Keep the original list; empty parents are still hidden in the UI.
+        }
+      }
       setBuckets(bucketRows)
       setMovements(transferRows)
     } catch (err) {

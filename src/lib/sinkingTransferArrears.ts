@@ -1,5 +1,6 @@
 import { formatRupiah, todayIso } from './format'
 import { currentMonthCursor, monthCursorKey } from './monthCursor'
+import { MISSED_TRANSFER_LABEL } from './types'
 import {
   estimateOccurrenceCount,
   occurrencesInMonth,
@@ -143,7 +144,7 @@ export function sinkingMissedTransferAmount(input: {
 export function missedTransferHint(amount: number): string | null {
   const n = Math.max(0, Math.round(amount))
   if (n <= 0) return null
-  return `Missed ${formatRupiah(n)}`
+  return `${MISSED_TRANSFER_LABEL} ${formatRupiah(n)}`
 }
 
 /** Sum of scheduled transfer amounts into sinking buckets for one month. */

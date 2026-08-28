@@ -3,6 +3,7 @@ import {
   childrenByParentId,
   compareBucketsWithinKindWithCategories,
   displayBucketBalance,
+  isEmptySinkingBankMirror,
   type CategorySortRef,
 } from './bucketsGroup'
 import { supabase } from './supabase'
@@ -652,15 +653,71 @@ export async function updateBucket(
   return updated
 }
 
+/**
+ * Soft-delete a category bank-mirror sinking parent when it has no active
+ * children left. Safe no-op if the parent still has leaves, is a system
+ * bucket, or is not a top-level category mirror.
+ */
+export async function pruneEmptyParentSinkingBucket(
+  parentId: string | null | undefined,
+): Promise<boolean> {
+  if (!parentId) return false
+
+  const active = await fetchBuckets()
+  const parent = active.find((b) => b.id === parentId)
+  if (!parent) return false
+  if (parent.is_system) return false
+  if (!isEmptySinkingBankMirror(parent, childrenByParentId(active))) {
+    return false
+  }
+
+  if (parent.category_id) {
+    try {
+      const cat = await fetchCategory(parent.category_id)
+      if (cat.parent_id) return false
+    } catch {
+      // Linked category missing — still remove the empty mirror.
+    }
+  }
+
+  const { error } = await supabase
+    .from('buckets')
+    .update({ is_active: false })
+    .eq('id', parent.id)
+  if (error) throw new Error(error.message)
+  await reorderBucketsByNameWithinKinds()
+  return true
+}
+
+/** Soft-delete every empty category bank-mirror currently in the list. */
+export async function pruneEmptySinkingBankMirrors(
+  buckets?: Bucket[],
+): Promise<number> {
+  const active = buckets ?? (await fetchBuckets())
+  const childrenMap = childrenByParentId(active)
+  const empties = active.filter((b) => isEmptySinkingBankMirror(b, childrenMap))
+  let count = 0
+  for (const parent of empties) {
+    if (await pruneEmptyParentSinkingBucket(parent.id)) count += 1
+  }
+  return count
+}
+
 /** Soft-delete: sets is_active=false. Cascades to children. */
 export async function deleteBucket(id: string): Promise<void> {
   const { data: row, error: fetchError } = await supabase
     .from('buckets')
-    .select('is_system')
+    .select('is_system, parent_id, kind')
     .eq('id', id)
     .maybeSingle()
   if (fetchError) throw new Error(fetchError.message)
   if (row?.is_system) throw new Error('System buckets cannot be deleted')
+
+  const parentId =
+    row?.parent_id == null || row.parent_id === ''
+      ? null
+      : String(row.parent_id)
+  const kind = row?.kind as BucketKind | undefined
 
   const { error: childError } = await supabase
     .from('buckets')
@@ -679,6 +736,10 @@ export async function deleteBucket(id: string): Promise<void> {
     .eq('id', id)
   if (error) throw new Error(error.message)
   await reorderBucketsByNameWithinKinds()
+
+  if (kind === 'sinking' && parentId) {
+    await pruneEmptyParentSinkingBucket(parentId)
+  }
 }
 
 /** Soft-delete sinking linked to a category (and children if parent). */
@@ -778,6 +839,8 @@ export async function reparentSinkingForSubcategoryMove(
     }
   }
 
+  const previousParentId = childBucket.parent_id
+
   if (!parentChanged && childBucket.budget_group === group) return
 
   const { error } = await supabase
@@ -789,7 +852,10 @@ export async function reparentSinkingForSubcategoryMove(
     )
     .eq('id', childBucket.id)
   if (error) throwMappedBucketError(error.message)
-  if (parentChanged) await reorderBucketsByNameWithinKinds()
+  if (parentChanged) {
+    await reorderBucketsByNameWithinKinds()
+    await pruneEmptyParentSinkingBucket(previousParentId)
+  }
 }
 
 /**
@@ -848,6 +914,8 @@ export async function relinkSinkingBucketToSubcategory(
       ? nextCat.budget_group
       : 'needs'
 
+  const previousParentId = current.parent_id
+
   const { data, error } = await supabase
     .from('buckets')
     .update({
@@ -863,6 +931,9 @@ export async function relinkSinkingBucketToSubcategory(
   if (error) throw new Error(error.message)
 
   await reorderBucketsByNameWithinKinds()
+  if (previousParentId !== parentBucket.id) {
+    await pruneEmptyParentSinkingBucket(previousParentId)
+  }
 
   return mapBucket(data as Record<string, unknown>)
 }

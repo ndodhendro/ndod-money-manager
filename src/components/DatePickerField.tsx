@@ -184,14 +184,14 @@ export function DatePickerField({
       </button>
 
       {open && (
-        <div className="fixed inset-0 z-50 flex flex-col justify-end">
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-end">
           <button
             type="button"
             aria-label="Close"
             className="absolute inset-0 bg-black/40"
             onClick={handleCancel}
           />
-          <div className="relative rounded-t-2xl bg-neutral-100 shadow-2xl dark:bg-neutral-900">
+          <div className="relative w-full max-w-md rounded-t-2xl bg-neutral-100 shadow-2xl dark:bg-neutral-900">
             <div className="flex items-center justify-between border-b border-neutral-200 px-4 py-3 dark:border-neutral-800">
               <p className="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
                 Date

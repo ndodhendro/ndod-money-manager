@@ -4,6 +4,8 @@ import {
   BUCKET_KIND_LABELS,
   BUDGET_GROUP_LABELS,
   CIRCLE_LABELS,
+  MISSED_TRANSFER_LABEL,
+  NO_TRANSFER_LABEL,
   OWNER_LABELS,
   categoryDisplayParts,
   formatTransferLabel,
@@ -117,7 +119,11 @@ export function matchesBucketSearch(
     kind: string
     budget_group?: BudgetGroup | null
   },
-  extras?: { parentName?: string | null },
+  extras?: {
+    parentName?: string | null
+    missingTransfer?: boolean
+    missedTransfer?: boolean
+  },
 ): boolean {
   const kind = bucket.kind as BucketKind
   const kindLabel =
@@ -128,6 +134,8 @@ export function matchesBucketSearch(
     extras?.parentName,
     bucket.kind,
     kindLabel,
+    extras?.missingTransfer ? NO_TRANSFER_LABEL : undefined,
+    extras?.missedTransfer ? MISSED_TRANSFER_LABEL : undefined,
     ...budgetGroupSearchParts(bucket.budget_group),
   )
 }

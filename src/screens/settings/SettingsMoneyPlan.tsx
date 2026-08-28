@@ -21,9 +21,12 @@ import {
   monthCursorRange,
 } from '../../lib/monthCursor'
 import {
+  amountToAllocationPct,
+  formatPctInput,
   pyfTransferTargetAmount,
   sumMonthRegularIncome,
 } from '../../lib/moneyPlan'
+import type { AllocationInputMode } from '../../lib/pyfSettingsApi'
 import {
   fetchRecurringBills,
   isMissingRecurringSchema,
@@ -41,13 +44,10 @@ const DISABLED_FIELD_CLASS =
 const INPUT_CLASS =
   'mt-1 w-full rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-700 dark:text-neutral-100'
 
-type AllocationMode = 'pct' | 'amount'
 type AllocationKind = 'emergency' | 'investment' | 'buffer'
 
 function amountToPctString(amount: number, base: number): string {
-  if (base <= 0) return '0'
-  const pct = Math.round((Math.max(0, amount) / base) * 10000) / 100
-  return String(pct)
+  return formatPctInput(amountToAllocationPct(amount, base))
 }
 
 function bufferTargetAmount(plannedNeeds: number, bufferPct: number): number {
@@ -61,9 +61,9 @@ function AllocationModeToggle({
   amountDisabled,
   onSelect,
 }: {
-  mode: AllocationMode
+  mode: AllocationInputMode
   amountDisabled: boolean
-  onSelect: (mode: AllocationMode) => void
+  onSelect: (mode: AllocationInputMode) => void
 }) {
   return (
     <div
@@ -114,14 +114,14 @@ function MonthlyAllocationField({
   onAmountDigitsChange,
 }: {
   kind: AllocationKind
-  mode: AllocationMode
+  mode: AllocationInputMode
   pct: string
   amountDigits: string
   monthIncome: number
   plannedNeeds: number
   emergencyPct: string
   investmentPct: string
-  onModeSelect: (mode: AllocationMode) => void
+  onModeSelect: (mode: AllocationInputMode) => void
   onPctChange: (value: string) => void
   onAmountDigitsChange: (digits: string) => void
 }) {
@@ -225,9 +225,9 @@ export function SettingsMoneyPlan() {
   const [investmentPct, setInvestmentPct] = useState('15')
   const [bufferPct, setBufferPct] = useState('10')
   const [efMultiplier, setEfMultiplier] = useState('3')
-  const [efMode, setEfMode] = useState<AllocationMode>('pct')
-  const [invMode, setInvMode] = useState<AllocationMode>('pct')
-  const [bufferMode, setBufferMode] = useState<AllocationMode>('pct')
+  const [efMode, setEfMode] = useState<AllocationInputMode>('pct')
+  const [invMode, setInvMode] = useState<AllocationInputMode>('pct')
+  const [bufferMode, setBufferMode] = useState<AllocationInputMode>('pct')
   const [efAmountDigits, setEfAmountDigits] = useState('')
   const [invAmountDigits, setInvAmountDigits] = useState('')
   const [bufferAmountDigits, setBufferAmountDigits] = useState('')
@@ -253,17 +253,14 @@ export function SettingsMoneyPlan() {
 
   useEffect(() => {
     if (!settings) return
-    setEmergencyPct(String(settings.emergency_fund_pct))
-    setInvestmentPct(String(settings.investment_pct))
-    setBufferPct(String(settings.buffer_pct ?? 10))
+    setEmergencyPct(formatPctInput(settings.emergency_fund_pct))
+    setInvestmentPct(formatPctInput(settings.investment_pct))
+    setBufferPct(formatPctInput(settings.buffer_pct ?? 10))
     setEfMultiplier(String(settings.emergency_fund_target_multiplier || 3))
+    setEfMode(settings.emergency_mode)
+    setInvMode(settings.investment_mode)
+    setBufferMode(settings.buffer_mode)
   }, [settings])
-
-  useEffect(() => {
-    if (monthIncome > 0) return
-    if (efMode === 'amount') setEfMode('pct')
-    if (invMode === 'amount') setInvMode('pct')
-  }, [monthIncome, efMode, invMode])
 
   useEffect(() => {
     let cancelled = false
@@ -300,9 +297,55 @@ export function SettingsMoneyPlan() {
   )
 
   useEffect(() => {
+    if (!settings) return
+    if (settings.emergency_mode === 'amount' && monthIncome > 0) {
+      const saved = settings.emergency_amount
+      const amount =
+        saved != null && saved > 0
+          ? saved
+          : pyfTransferTargetAmount(
+              'emergency',
+              monthIncome,
+              settings.emergency_fund_pct,
+              settings.investment_pct,
+            )
+      setEfAmountDigits(amount > 0 ? String(amount) : '')
+    }
+    if (settings.investment_mode === 'amount' && monthIncome > 0) {
+      const saved = settings.investment_amount
+      const amount =
+        saved != null && saved > 0
+          ? saved
+          : pyfTransferTargetAmount(
+              'investment',
+              monthIncome,
+              settings.emergency_fund_pct,
+              settings.investment_pct,
+            )
+      setInvAmountDigits(amount > 0 ? String(amount) : '')
+    }
+    if (settings.buffer_mode === 'amount' && plannedNeeds > 0) {
+      const saved = settings.buffer_amount
+      const amount =
+        saved != null && saved > 0
+          ? saved
+          : bufferTargetAmount(plannedNeeds, settings.buffer_pct ?? 10)
+      setBufferAmountDigits(amount > 0 ? String(amount) : '')
+    }
+  }, [settings, monthIncome, plannedNeeds])
+
+  useEffect(() => {
+    if (transactionsLoading) return
+    if (monthIncome > 0) return
+    if (efMode === 'amount') setEfMode('pct')
+    if (invMode === 'amount') setInvMode('pct')
+  }, [transactionsLoading, monthIncome, efMode, invMode])
+
+  useEffect(() => {
+    if (billsLoading) return
     if (plannedNeeds > 0) return
     if (bufferMode === 'amount') setBufferMode('pct')
-  }, [plannedNeeds, bufferMode])
+  }, [billsLoading, plannedNeeds, bufferMode])
 
   function setSectionOpen(key: string, open: boolean) {
     setCollapseOpen(key, open)
@@ -318,7 +361,7 @@ export function SettingsMoneyPlan() {
     setSectionOpen(BUFFER_COLLAPSE_KEY, open)
   }
 
-  function selectAllocationMode(kind: AllocationKind, mode: AllocationMode) {
+  function selectAllocationMode(kind: AllocationKind, mode: AllocationInputMode) {
     if (kind === 'buffer') {
       if (mode === 'amount' && plannedNeeds <= 0) {
         showAppToast('Add planned needs to use Amount')
@@ -365,9 +408,18 @@ export function SettingsMoneyPlan() {
   }
 
   async function handleSaveMoneyPlan() {
-    const emergency = Number(emergencyPct)
-    const investment = Number(investmentPct)
-    const buffer = Number(bufferPct)
+    const emergency =
+      efMode === 'amount'
+        ? amountToAllocationPct(Number(efAmountDigits) || 0, monthIncome)
+        : Number(emergencyPct)
+    const investment =
+      invMode === 'amount'
+        ? amountToAllocationPct(Number(invAmountDigits) || 0, monthIncome)
+        : Number(investmentPct)
+    const buffer =
+      bufferMode === 'amount'
+        ? amountToAllocationPct(Number(bufferAmountDigits) || 0, plannedNeeds)
+        : Number(bufferPct)
     const multiplier = Number(efMultiplier)
 
     if (
@@ -399,6 +451,17 @@ export function SettingsMoneyPlan() {
         buffer_pct: buffer,
         planned_needs_amount: plannedNeeds,
         emergency_fund_target_multiplier: multiplier,
+        emergency_mode: efMode,
+        investment_mode: invMode,
+        buffer_mode: bufferMode,
+        emergency_amount:
+          efMode === 'amount' ? Math.round(Number(efAmountDigits) || 0) : null,
+        investment_amount:
+          invMode === 'amount' ? Math.round(Number(invAmountDigits) || 0) : null,
+        buffer_amount:
+          bufferMode === 'amount'
+            ? Math.round(Number(bufferAmountDigits) || 0)
+            : null,
       })
       showAppToast('Money plan saved')
     } catch (err) {

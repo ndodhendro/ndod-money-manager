@@ -60,6 +60,22 @@ export function pyfTransferTargetAmount(
   return Math.round((Math.max(0, income) * Math.max(0, pct)) / 100)
 }
 
+/** Rupiah amount as % of `base` — keep full precision so amount round-trips. */
+export function amountToAllocationPct(amount: number, base: number): number {
+  if (!(base > 0)) return 0
+  return (Math.max(0, amount) / base) * 100
+}
+
+/**
+ * Stable % field string (no binary tails like 2.9900000000000002).
+ * Keeps up to 6 decimals so Amount → % → Amount stays exact in rupiah.
+ */
+export function formatPctInput(pct: number): string {
+  if (!Number.isFinite(pct)) return '0'
+  const trimmed = pct.toFixed(6).replace(/\.?0+$/, '')
+  return trimmed === '' || trimmed === '-' ? '0' : trimmed
+}
+
 /** DB placeholder when computed is 0 (constraint amount > 0). */
 export function pyfAutoAmountPlaceholder(computed: number): number {
   return Math.max(1, Math.round(computed))

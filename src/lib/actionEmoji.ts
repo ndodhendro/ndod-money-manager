@@ -11,6 +11,6 @@ export const ActionEmoji = {
   add: '➕',
   delete: '🗑️',
   restore: '♻️',
-  /** Move leftover / surplus into EF, Investment, Buffer, or Guilt-Free. */
-  allocate: '📤',
+  /** Same glyph as transfer-type rows (`TRANSFER_TYPE_ICON`). */
+  allocate: '➡️',
 } as const

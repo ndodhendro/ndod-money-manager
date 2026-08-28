@@ -1,5 +1,7 @@
 import { supabase } from './supabase'
 
+export type AllocationInputMode = 'pct' | 'amount'
+
 export interface PyfSettings {
   id: string
   emergency_fund_pct: number
@@ -8,6 +10,13 @@ export interface PyfSettings {
   buffer_pct: number
   planned_needs_amount: number
   emergency_fund_target_multiplier: number
+  emergency_mode: AllocationInputMode
+  investment_mode: AllocationInputMode
+  buffer_mode: AllocationInputMode
+  /** Last Amount-mode value; null when that bucket is in % mode. */
+  emergency_amount: number | null
+  investment_amount: number | null
+  buffer_amount: number | null
   effective_from: string
   created_at: string
 }
@@ -18,6 +27,12 @@ export type PyfSettingsUpdate = {
   buffer_pct: number
   planned_needs_amount: number
   emergency_fund_target_multiplier: number
+  emergency_mode: AllocationInputMode
+  investment_mode: AllocationInputMode
+  buffer_mode: AllocationInputMode
+  emergency_amount: number | null
+  investment_amount: number | null
+  buffer_amount: number | null
 }
 
 const DEFAULTS = {
@@ -29,6 +44,54 @@ const DEFAULTS = {
 
 const PLANNED_NEEDS_LS_KEY = 'ndod_planned_needs_amount'
 const BUFFER_PCT_LS_KEY = 'ndod_buffer_pct'
+/** Precise % + input mode. DB numeric(5,2) rounds; this keeps Amount (e.g. 250000) exact. */
+const ALLOC_LS_KEY = 'ndod_money_plan_alloc'
+
+type LocalAlloc = {
+  emergency_fund_pct?: number
+  investment_pct?: number
+  buffer_pct?: number
+  emergency_mode?: AllocationInputMode
+  investment_mode?: AllocationInputMode
+  buffer_mode?: AllocationInputMode
+  emergency_amount?: number | null
+  investment_amount?: number | null
+  buffer_amount?: number | null
+}
+
+function isAllocMode(value: unknown): value is AllocationInputMode {
+  return value === 'pct' || value === 'amount'
+}
+
+function readLocalAlloc(): LocalAlloc {
+  try {
+    const raw = localStorage.getItem(ALLOC_LS_KEY)
+    if (!raw) return {}
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') return {}
+    return parsed as LocalAlloc
+  } catch {
+    return {}
+  }
+}
+
+function writeLocalAlloc(patch: LocalAlloc): void {
+  try {
+    const prev = readLocalAlloc()
+    localStorage.setItem(ALLOC_LS_KEY, JSON.stringify({ ...prev, ...patch }))
+  } catch {
+    // ignore quota / private mode
+  }
+}
+
+function pickPct(local: number | undefined, fromDb: number): number {
+  if (local == null || !Number.isFinite(local) || local < 0) return fromDb
+  return local
+}
+
+function pickMode(local: unknown): AllocationInputMode {
+  return isAllocMode(local) ? local : 'pct'
+}
 
 function readLocalPlannedNeeds(): number {
   try {
@@ -68,6 +131,26 @@ function writeLocalBufferPct(pct: number): void {
   }
 }
 
+function persistAllocFromPatch(patch: PyfSettingsUpdate): void {
+  writeLocalAlloc({
+    emergency_fund_pct: patch.emergency_fund_pct,
+    investment_pct: patch.investment_pct,
+    buffer_pct: patch.buffer_pct,
+    emergency_mode: patch.emergency_mode,
+    investment_mode: patch.investment_mode,
+    buffer_mode: patch.buffer_mode,
+    emergency_amount: patch.emergency_amount,
+    investment_amount: patch.investment_amount,
+    buffer_amount: patch.buffer_amount,
+  })
+}
+
+function pickAmount(local: number | null | undefined): number | null {
+  if (local == null) return null
+  if (!Number.isFinite(local) || local < 0) return null
+  return Math.round(local)
+}
+
 function mapRow(row: Record<string, unknown>): PyfSettings {
   const hasPlannedNeeds = Object.prototype.hasOwnProperty.call(
     row,
@@ -82,19 +165,29 @@ function mapRow(row: Record<string, unknown>): PyfSettings {
 
   const hasBuffer = Object.prototype.hasOwnProperty.call(row, 'buffer_pct')
   const fromDbBuffer = hasBuffer ? Number(row.buffer_pct ?? NaN) : NaN
-  const bufferPct = Number.isFinite(fromDbBuffer)
+  const fallbackBuffer = Number.isFinite(fromDbBuffer)
     ? fromDbBuffer
     : readLocalBufferPct()
+  const local = readLocalAlloc()
 
   return {
     id: String(row.id),
-    emergency_fund_pct: Number(row.emergency_fund_pct),
-    investment_pct: Number(row.investment_pct),
-    buffer_pct: bufferPct,
+    emergency_fund_pct: pickPct(
+      local.emergency_fund_pct,
+      Number(row.emergency_fund_pct),
+    ),
+    investment_pct: pickPct(local.investment_pct, Number(row.investment_pct)),
+    buffer_pct: pickPct(local.buffer_pct, fallbackBuffer),
     planned_needs_amount: plannedNeeds,
     emergency_fund_target_multiplier: Number(
       row.emergency_fund_target_multiplier ?? 6,
     ),
+    emergency_mode: pickMode(local.emergency_mode),
+    investment_mode: pickMode(local.investment_mode),
+    buffer_mode: pickMode(local.buffer_mode),
+    emergency_amount: pickAmount(local.emergency_amount),
+    investment_amount: pickAmount(local.investment_amount),
+    buffer_amount: pickAmount(local.buffer_amount),
     effective_from: String(row.effective_from),
     created_at: String(row.created_at),
   }
@@ -187,12 +280,14 @@ export async function updatePyfSettings(
     .single()
 
   if (!error && data) {
+    persistAllocFromPatch(patch)
     writeLocalPlannedNeeds(patch.planned_needs_amount)
     writeLocalBufferPct(patch.buffer_pct)
     return mapRow(data as Record<string, unknown>)
   }
 
   if (error && isMissingColumn(error.message, 'buffer_pct')) {
+    persistAllocFromPatch(patch)
     writeLocalBufferPct(patch.buffer_pct)
     writeLocalPlannedNeeds(patch.planned_needs_amount)
     const withoutBuffer = {
@@ -225,6 +320,7 @@ export async function updatePyfSettings(
         .select('*')
         .single()
       if (pctError) throw new Error(pctError.message)
+      persistAllocFromPatch(patch)
       const mapped = mapRow(pctOnly as Record<string, unknown>)
       mapped.planned_needs_amount = patch.planned_needs_amount
       mapped.buffer_pct = patch.buffer_pct
@@ -232,6 +328,7 @@ export async function updatePyfSettings(
     }
 
     if (partialError) throw new Error(partialError.message)
+    persistAllocFromPatch(patch)
     const mapped = mapRow(partial as Record<string, unknown>)
     mapped.planned_needs_amount = patch.planned_needs_amount
     mapped.buffer_pct = patch.buffer_pct
@@ -239,6 +336,7 @@ export async function updatePyfSettings(
   }
 
   if (error && isMissingColumn(error.message, 'planned_needs_amount')) {
+    persistAllocFromPatch(patch)
     writeLocalPlannedNeeds(patch.planned_needs_amount)
     writeLocalBufferPct(patch.buffer_pct)
     const { data: partial, error: partialError } = await supabase

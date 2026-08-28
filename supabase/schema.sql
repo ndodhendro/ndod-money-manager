@@ -152,9 +152,9 @@ for each row execute function set_updated_at();
 -- ============================================================
 create table if not exists pyf_settings (
   id uuid primary key default gen_random_uuid(),
-  emergency_fund_pct numeric(5, 2) not null default 10,
-  investment_pct numeric(5, 2) not null default 15,
-  buffer_pct numeric(5, 2) not null default 10,
+  emergency_fund_pct numeric(12, 6) not null default 10,
+  investment_pct numeric(12, 6) not null default 15,
+  buffer_pct numeric(12, 6) not null default 10,
   planned_needs_amount numeric(14, 2) not null default 0,
   emergency_fund_target_multiplier numeric(4, 1) not null default 3,
   effective_from date not null default current_date,

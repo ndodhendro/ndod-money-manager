@@ -25,7 +25,7 @@ import {
 } from '../lib/collapseState'
 import { plannedNeedsCeiling } from '../lib/freeWants'
 import { FormattedAmountInput } from './FormattedAmountInput'
-import { formatNumber } from '../lib/format'
+import { formatNumber, formatRupiah } from '../lib/format'
 import { emergencyFundTarget } from '../lib/moneyPlan'
 import { currentMonthCursor, monthCursorKey } from '../lib/monthCursor'
 import { isBlankSearch, matchesBucketSearch } from '../lib/listSearch'
@@ -762,6 +762,7 @@ export function BucketManagePanel({
                                 : false
                             }
                             missingTransfer={sinkingMissingTransfer}
+                            emergencyAutoTarget={emergencyAutoTarget}
                             onDelete={(b) => {
                               setOpenSwipeId(b.id)
                               setDeleteTarget(b)
@@ -796,6 +797,7 @@ export function BucketManagePanel({
                           onEdit={openEditForm}
                           disableEdit={false}
                           missingTransfer={sinkingMissingTransfer}
+                          emergencyAutoTarget={emergencyAutoTarget}
                           onDelete={(b) => {
                             setOpenSwipeId(b.id)
                             setDeleteTarget(b)
@@ -1028,6 +1030,27 @@ export function BucketManagePanel({
   )
 }
 
+function ownTargetAmount(bucket: BucketWithBalance): number {
+  if (bucket.target_amount == null || bucket.target_amount <= 0) return 0
+  return Math.round(bucket.target_amount)
+}
+
+/** Amount shown on the settings list: own target, else children total, else none. */
+function listTargetAmount(
+  bucket: BucketWithBalance,
+  children: BucketWithBalance[],
+  emergencyAutoTarget: number,
+): number | null {
+  if (bucket.kind === 'checking' || bucket.kind === 'investment') return null
+  if (bucket.kind === 'emergency') {
+    return emergencyAutoTarget > 0 ? Math.round(emergencyAutoTarget) : null
+  }
+  const own = ownTargetAmount(bucket)
+  if (own > 0) return own
+  const childSum = children.reduce((sum, child) => sum + ownTargetAmount(child), 0)
+  return childSum > 0 ? childSum : null
+}
+
 function BucketTreeRows({
   node,
   openSwipeId,
@@ -1040,6 +1063,7 @@ function BucketTreeRows({
   onDelete,
   disableEdit = false,
   missingTransfer,
+  emergencyAutoTarget,
 }: {
   node: BucketTreeNode
   openSwipeId: string | null
@@ -1053,6 +1077,7 @@ function BucketTreeRows({
   /** Disable tap-to-edit for parent/bank-mirror buckets. */
   disableEdit?: boolean
   missingTransfer: (bucket: BucketWithBalance) => boolean
+  emergencyAutoTarget: number
 }) {
   const hasChildren = node.children.length > 0
   return (
@@ -1061,6 +1086,11 @@ function BucketTreeRows({
         bucket={node.bucket}
         indent={0}
         childCount={node.children.length}
+        targetAmount={listTargetAmount(
+          node.bucket,
+          node.children,
+          emergencyAutoTarget,
+        )}
         openSwipeId={openSwipeId}
         setOpenSwipeId={setOpenSwipeId}
         highlightId={highlightId}
@@ -1079,6 +1109,7 @@ function BucketTreeRows({
                 bucket={child}
                 indent={1}
                 childCount={0}
+                targetAmount={listTargetAmount(child, [], emergencyAutoTarget)}
                 openSwipeId={openSwipeId}
                 setOpenSwipeId={setOpenSwipeId}
                 highlightId={highlightId}
@@ -1098,6 +1129,7 @@ function BucketListRow({
   bucket,
   indent,
   childCount,
+  targetAmount,
   openSwipeId,
   setOpenSwipeId,
   highlightId,
@@ -1112,6 +1144,7 @@ function BucketListRow({
   bucket: BucketWithBalance
   indent: number
   childCount: number
+  targetAmount: number | null
   openSwipeId: string | null
   setOpenSwipeId: (id: string | null) => void
   highlightId: string | null
@@ -1132,6 +1165,7 @@ function BucketListRow({
     <BucketRowContent
       bucket={bucket}
       childCount={childCount}
+      targetAmount={targetAmount}
       expandable={expandable}
       expanded={expanded}
       onToggleExpand={onToggleExpand}
@@ -1194,6 +1228,7 @@ function BucketListRow({
 function BucketRowContent({
   bucket,
   childCount = 0,
+  targetAmount = null,
   expandable = false,
   expanded = false,
   onToggleExpand,
@@ -1201,6 +1236,7 @@ function BucketRowContent({
 }: {
   bucket: BucketWithBalance
   childCount?: number
+  targetAmount?: number | null
   expandable?: boolean
   expanded?: boolean
   onToggleExpand?: () => void
@@ -1231,14 +1267,25 @@ function BucketRowContent({
         {bucket.icon}
       </span>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-neutral-800 dark:text-neutral-100">
-          {bucket.name}
-          {childCount > 0 ? (
-            <span className="ml-1 font-normal text-neutral-400">
-              ({childCount})
-            </span>
+        <div className="flex items-baseline justify-between gap-2">
+          <p className="min-w-0 truncate text-sm font-medium text-neutral-800 dark:text-neutral-100">
+            {bucket.name}
+            {childCount > 0 ? (
+              <span className="ml-1 font-normal text-neutral-400">
+                ({childCount})
+              </span>
+            ) : null}
+          </p>
+          {targetAmount != null ? (
+            <p
+              className="shrink-0 text-sm tabular-nums font-medium text-neutral-800 dark:text-neutral-100"
+              title="Target"
+              aria-label={`Target ${formatRupiah(targetAmount)}`}
+            >
+              {formatRupiah(targetAmount)}
+            </p>
           ) : null}
-        </p>
+        </div>
         {budgetGroup || showNoTransfer ? (
           <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
             {budgetGroup ? <BudgetGroupBadge group={budgetGroup} /> : null}

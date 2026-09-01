@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { BudgetUsedSummary } from '../../components/BudgetUsedSummary'
 import { CollapseChevron } from '../../components/CollapseChevron'
 import { CollapsibleDayGroup } from '../../components/CollapsibleDayGroup'
 import { GroupedListFrame } from '../../components/GroupedListFrame'
@@ -19,10 +20,12 @@ import {
 } from '../../lib/collapseState'
 import {
   buildEstimateProgressRows,
+  computeBudgetUsedBySource,
   upcomingEstimateProgressAmountByBillId,
 } from '../../lib/estimateProgress'
 import { formatRupiah, todayIso } from '../../lib/format'
 import { plannedNeedsCeiling } from '../../lib/freeWants'
+import { checkingBucketIdSet } from '../../lib/freeGuiltyProgress'
 import {
   isBlankSearch,
   matchesBucketSearch,
@@ -589,6 +592,30 @@ export function PlanMonthlyProgress() {
     [occurrenceSkips, viewYm],
   )
 
+  const budgetUsedBySource = useMemo(
+    () =>
+      computeBudgetUsedBySource({
+        bills,
+        overridesByBillId,
+        categoriesById,
+        bucketsById,
+        yearMonth: viewYm,
+        transactions: monthTx,
+        checkingBucketIds: checkingBucketIdSet(buckets),
+        dueBillIdByTxId,
+      }),
+    [
+      bills,
+      overridesByBillId,
+      categoriesById,
+      bucketsById,
+      viewYm,
+      monthTx,
+      buckets,
+      dueBillIdByTxId,
+    ],
+  )
+
   const logByOccurrenceKey = useMemo(() => {
     const map = new Map<string, RecurringBillLog>()
     for (const log of dueLogs) {
@@ -775,7 +802,8 @@ export function PlanMonthlyProgress() {
         )}
 
         {!pageLoading && (
-          <div className="mt-4">
+          <div className="mt-4 space-y-5">
+            <BudgetUsedSummary source={budgetUsedBySource} />
             <GroupedListFrame
               label={PlanTitle.monthlyProgress}
               expanded={searchForceAll ? true : allSectionsExpanded}

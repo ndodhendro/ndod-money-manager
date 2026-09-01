@@ -1,6 +1,7 @@
 import {
   budgetGroupOfActiveSinkingTransfer,
   budgetGroupOfEstimate,
+  budgetGroupOfTransferTo,
   isPlannedNeedsSchedule,
   type BucketBudgetRef,
 } from './freeWants'
@@ -503,6 +504,153 @@ export function buildMonthBudgetEstimateRows(input: {
   })
 
   return rows
+}
+
+export type BudgetUsedSplit = {
+  needs: number
+  wants: number
+}
+
+/** Month Budget used, cut by source so the three rows do not overlap. */
+export type BudgetUsedBySource = {
+  estimates: BudgetUsedSplit
+  unplanned: BudgetUsedSplit
+  sinking: BudgetUsedSplit
+}
+
+export const BUDGET_USED_SOURCE_LABELS = {
+  estimates: 'Estimates',
+  unplanned: 'Unplanned',
+  sinking: 'Sinking Funds',
+  spend: 'Estimates and Unplanned',
+} as const
+
+function emptyBudgetUsedSplit(): BudgetUsedSplit {
+  return { needs: 0, wants: 0 }
+}
+
+function isDueItemTx(
+  tx: TransactionWithCategory,
+  dueBillIdByTxId?: Map<string, string>,
+): boolean {
+  return (
+    tx.recurring_bill_id != null ||
+    tx.is_recurring === true ||
+    (dueBillIdByTxId?.has(tx.id) ?? false)
+  )
+}
+
+/**
+ * Same outflows as Month Budget used: Main/checking Needs/Wants expenses
+ * plus transfers into Needs/Wants sinking. Split by source (Estimates,
+ * Unplanned, Sinking Funds) and Needs/Wants. Grand total matches the
+ * four Month Budget tracks.
+ */
+export function computeBudgetUsedBySource(input: {
+  bills: RecurringBill[]
+  overridesByBillId: Map<string, RecurringBillMonthOverride>
+  categoriesById: Map<string, Category>
+  bucketsById: Map<string, EstimateBucketRef>
+  yearMonth: string
+  transactions: TransactionWithCategory[]
+  checkingBucketIds: Set<string>
+  dueBillIdByTxId?: Map<string, string>
+}): BudgetUsedBySource {
+  const estimates = emptyBudgetUsedSplit()
+  const unplanned = emptyBudgetUsedSplit()
+  const sinking = emptyBudgetUsedSplit()
+  const assignedTxIds = new Set<string>()
+  const matchOpts = {
+    mainCheckingOnly: true as const,
+    checkingBucketIds: input.checkingBucketIds,
+    dueBillIdByTxId: input.dueBillIdByTxId,
+  }
+
+  for (const { bill, group } of monthBudgetEstimateCandidates(
+    input.bills,
+    input.categoriesById,
+    input.bucketsById,
+  )) {
+    const override = input.overridesByBillId.get(bill.id)
+    const count = estimatePlannedOccurrenceCount(
+      bill,
+      input.yearMonth,
+      override,
+    )
+    if (count === 0) continue
+    const matched = transactionsForEstimateBill(
+      bill,
+      input.transactions,
+      input.categoriesById,
+      input.bucketsById,
+      { ...matchOpts, excludeTxIds: assignedTxIds },
+    )
+    for (const tx of matched) {
+      assignedTxIds.add(tx.id)
+      if (tx.type === 'expense') estimates[group] += tx.amount
+      else if (tx.type === 'transfer') sinking[group] += tx.amount
+    }
+  }
+
+  for (const tx of input.transactions) {
+    if (assignedTxIds.has(tx.id) || tx.complete_later) continue
+    if (tx.type === 'expense') {
+      if (!isMainOrCheckingExpenseTx(tx, input.checkingBucketIds)) continue
+      if (isDueItemTx(tx, input.dueBillIdByTxId)) continue
+      const group = budgetGroupOfTx(tx)
+      if (group !== 'needs' && group !== 'wants') continue
+      if (!tx.category_id) continue
+      unplanned[group] += tx.amount
+      continue
+    }
+    if (tx.type !== 'transfer') continue
+    if (!isFromMainOrChecking(tx, input.checkingBucketIds)) continue
+    if (isDueItemTx(tx, input.dueBillIdByTxId)) continue
+    const group = budgetGroupOfTransferTo(
+      tx.to_bucket_id,
+      input.bucketsById,
+      input.categoriesById,
+    )
+    if (group !== 'needs' && group !== 'wants') continue
+    sinking[group] += tx.amount
+  }
+
+  return { estimates, unplanned, sinking }
+}
+
+export function budgetUsedGroupTotal(
+  source: BudgetUsedBySource,
+  group: BudgetGroup,
+): number {
+  return (
+    source.estimates[group] + source.unplanned[group] + source.sinking[group]
+  )
+}
+
+export function budgetUsedGrandTotal(source: BudgetUsedBySource): number {
+  return (
+    budgetUsedGroupTotal(source, 'needs') +
+    budgetUsedGroupTotal(source, 'wants')
+  )
+}
+
+/** Estimates + Unplanned for one Needs/Wants side (excludes Sinking Funds). */
+export function budgetUsedSpendGroupTotal(
+  source: BudgetUsedBySource,
+  group: BudgetGroup,
+): number {
+  return source.estimates[group] + source.unplanned[group]
+}
+
+export function budgetUsedSpendTotal(source: BudgetUsedBySource): number {
+  return (
+    budgetUsedSpendGroupTotal(source, 'needs') +
+    budgetUsedSpendGroupTotal(source, 'wants')
+  )
+}
+
+export function budgetUsedSinkingTotal(source: BudgetUsedBySource): number {
+  return source.sinking.needs + source.sinking.wants
 }
 
 function addTrackDemand(

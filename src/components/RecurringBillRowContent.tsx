@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { BudgetGroupBadge } from './BudgetGroupBadge'
 import { CircleBadge } from './CircleBadge'
 import { OwnerBadge } from './OwnerBadge'
@@ -39,6 +40,8 @@ interface RecurringBillRowContentProps {
   displayAmount?: number
   /** Subcategory is linked to an active sinking fund. */
   linkedToSinkingFund?: boolean
+  /** Row action (edit / restore) shown opposite the budget-group line. */
+  endAction?: ReactNode
 }
 
 export function RecurringBillRowContent({
@@ -55,6 +58,7 @@ export function RecurringBillRowContent({
   budgetGroup = null,
   displayAmount,
   linkedToSinkingFund = false,
+  endAction,
 }: RecurringBillRowContentProps) {
   const amount = displayAmount ?? bill.amount
   const noteText = display.isTransfer
@@ -79,14 +83,21 @@ export function RecurringBillRowContent({
       <span className={`text-xl leading-none ${dim}`} aria-hidden>
         {display.parentIcon}
       </span>
-      <div className={`flex min-w-0 flex-1 flex-col gap-0.5 ${dim}`}>
-        <p
-          className={`truncate text-xs font-semibold leading-none ${titleClass}`}
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <div
+          className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 ${dim}`}
         >
-          {display.parentName}
-        </p>
+          <p
+            className={`truncate text-xs font-semibold leading-none ${titleClass}`}
+          >
+            {display.parentName}
+          </p>
+          <OwnerBadge owner={owner} size="inline" />
+        </div>
 
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
+        <div
+          className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 ${dim}`}
+        >
           {display.childName ? (
             <p className="flex min-w-0 items-center gap-1 text-xs leading-none text-neutral-400">
               <span className="shrink-0" aria-hidden>
@@ -102,27 +113,24 @@ export function RecurringBillRowContent({
           ) : (
             <span className="invisible truncate text-xs leading-none">.</span>
           )}
-          <OwnerBadge owner={owner} size="inline" />
-        </div>
-
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
-          {noteText ? (
-            <p className={`truncate text-xs leading-none ${noteClass}`}>
-              {noteText}
-            </p>
+          {!display.isTransfer ? (
+            <CircleBadge
+              circle={isCircle(display.circle) ? display.circle : 'hd_family'}
+              size="inline"
+            />
           ) : (
-            <span className="invisible truncate text-xs leading-none">.</span>
+            <span className="invisible text-xs leading-none">.</span>
           )}
-          <CircleBadge
-            circle={isCircle(display.circle) ? display.circle : 'hd_family'}
-            size="inline"
-          />
         </div>
 
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
-          {budgetGroup ? (
-            <p className="truncate text-left text-xs leading-none">
-              <BudgetGroupBadge group={budgetGroup} />
+        <div
+          className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 ${dim}`}
+        >
+          {noteText ? (
+            <p
+              className={`line-clamp-2 min-w-0 break-words text-xs leading-none ${noteClass}`}
+            >
+              {noteText}
             </p>
           ) : (
             <span className="invisible truncate text-xs leading-none">.</span>
@@ -144,8 +152,33 @@ export function RecurringBillRowContent({
             {formatRupiah(amount)}
           </p>
         </div>
+
+        {budgetGroup || endAction ? (
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
+            {budgetGroup ? (
+              <p className={`truncate text-left text-xs leading-none ${dim}`}>
+                <BudgetGroupBadge group={budgetGroup} />
+              </p>
+            ) : (
+              <span className="invisible truncate text-xs leading-none">.</span>
+            )}
+            {endAction ? (
+              <div
+                className="relative h-3 w-4 shrink-0"
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
+              >
+                <div className="absolute top-1/2 right-0 -translate-y-1/2">
+                  {endAction}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         {showMeta ? (
-          <p className="min-w-0 truncate text-xs leading-tight text-neutral-400">
+          <p
+            className={`min-w-0 truncate text-xs leading-none text-neutral-400 ${dim}`}
+          >
             {meta}
           </p>
         ) : null}

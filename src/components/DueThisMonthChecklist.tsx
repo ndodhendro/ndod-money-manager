@@ -135,33 +135,6 @@ function groupOccurrencesByDate(
   )
 }
 
-function ChecklistCheckbox({ checked }: { checked: boolean }) {
-  return (
-    <span
-      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 transition-colors ${
-        checked
-          ? 'border-emerald-500 bg-emerald-500 text-white'
-          : 'border-neutral-300 bg-white dark:border-neutral-600 dark:bg-neutral-800'
-      }`}
-      aria-hidden
-    >
-      {checked ? (
-        <svg
-          viewBox="0 0 12 12"
-          className="h-3 w-3"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M2.5 6l2.5 2.5 4.5-5" />
-        </svg>
-      ) : null}
-    </span>
-  )
-}
-
 function resolveLogMap(
   logByOccurrenceKey: Map<string, RecurringBillLog> | undefined,
   logByBillId: Map<string, RecurringBillLog> | undefined,
@@ -1200,41 +1173,64 @@ export function DueThisMonthChecklist({
                       ? done
                       : (currentMonthDoneByBillId?.has(bill.id) ?? false)
                   const rowId = `recurring-bill-${key}`
-                  const showCheckbox = variant !== 'plan' && !skipped
                   const canToggleCheck = variant !== 'plan'
                   const showOccurrenceMeta =
                     variant !== 'plan' || section.status === 'unchecked'
+                  const showEdit =
+                    !done &&
+                    (section.status === 'unchecked' ||
+                      section.status === 'due')
+                  const endAction = skipped ? (
+                    <button
+                      type="button"
+                      disabled={busy || restoring}
+                      onClick={() => setPendingRestore({ bill, occurredOn })}
+                      aria-label={`Restore ${label}`}
+                      title="Restore"
+                      className="rounded-lg text-base leading-none disabled:opacity-60"
+                    >
+                      {ActionEmoji.restore}
+                    </button>
+                  ) : showEdit ? (
+                    <button
+                      type="button"
+                      disabled={busy || savingOverride}
+                      onClick={() => {
+                        openAmountEdit(bill, occurredOn, {
+                          focusAmount: false,
+                          checkAfterSave: false,
+                        })
+                      }}
+                      aria-label={`Edit ${label} for this month`}
+                      title="Edit This Month"
+                      className="rounded-lg text-base leading-none disabled:opacity-60"
+                    >
+                      {ActionEmoji.edit}
+                    </button>
+                  ) : undefined
                   const rowInner = (
-                    <>
-                      {showCheckbox ? (
-                        <span className="shrink-0">
-                          <ChecklistCheckbox checked={done} />
-                        </span>
-                      ) : null}
-                      <div className="flex min-w-0 flex-1 items-center gap-3">
-                        <RecurringBillRowContent
-                          bill={displayBill}
-                          display={display}
-                          displayAmount={amount}
-                          done={done}
-                          inactive={skipped}
-                          linkedToSinkingFund={Boolean(
-                            display.childName &&
-                              bill.category_id &&
-                              sinkingCategoryIds.has(bill.category_id),
-                          )}
-                          showMeta={showOccurrenceMeta}
-                          monthCursor={
-                            showOccurrenceMeta ? cursor : undefined
-                          }
-                          occurredOn={
-                            showOccurrenceMeta ? occurredOn : undefined
-                          }
-                          currentMonthDone={currentMonthDone}
-                          budgetGroup={budgetGroup}
-                        />
-                      </div>
-                    </>
+                    <RecurringBillRowContent
+                      bill={displayBill}
+                      display={display}
+                      displayAmount={amount}
+                      done={done}
+                      inactive={skipped}
+                      linkedToSinkingFund={Boolean(
+                        display.childName &&
+                          bill.category_id &&
+                          sinkingCategoryIds.has(bill.category_id),
+                      )}
+                      showMeta={showOccurrenceMeta}
+                      monthCursor={
+                        showOccurrenceMeta ? cursor : undefined
+                      }
+                      occurredOn={
+                        showOccurrenceMeta ? occurredOn : undefined
+                      }
+                      currentMonthDone={currentMonthDone}
+                      budgetGroup={budgetGroup}
+                      endAction={endAction}
+                    />
                   )
 
                   if (skipped) {
@@ -1242,23 +1238,11 @@ export function DueThisMonthChecklist({
                       <div
                         key={key}
                         id={rowId}
-                        className="relative flex w-full items-center gap-1 rounded-xl border-2 border-transparent bg-white shadow-sm dark:bg-neutral-800"
+                        className="relative flex w-full items-start rounded-xl border-2 border-transparent bg-white shadow-sm dark:bg-neutral-800"
                       >
-                        <div className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5">
+                        <div className="flex min-w-0 flex-1 items-start gap-2.5 px-3 py-2.5">
                           {rowInner}
                         </div>
-                        <button
-                          type="button"
-                          disabled={busy || restoring}
-                          onClick={() =>
-                            setPendingRestore({ bill, occurredOn })
-                          }
-                          aria-label={`Restore ${label}`}
-                          title="Restore"
-                          className="mr-2 shrink-0 rounded-lg px-2 py-2 text-base leading-none disabled:opacity-60"
-                        >
-                          {ActionEmoji.restore}
-                        </button>
                       </div>
                     )
                   }
@@ -1300,23 +1284,6 @@ export function DueThisMonthChecklist({
                               requestCheck(bill, occurredOn)
                             }
                           }}
-                          trailing={
-                            <button
-                              type="button"
-                              disabled={busy || savingOverride}
-                              onClick={() => {
-                                openAmountEdit(bill, occurredOn, {
-                                  focusAmount: false,
-                                  checkAfterSave: false,
-                                })
-                              }}
-                              aria-label={`Edit ${label} for this month`}
-                              title="Edit This Month"
-                              className="rounded-lg px-2 py-2 text-base leading-none disabled:opacity-60"
-                            >
-                              {ActionEmoji.edit}
-                            </button>
-                          }
                         >
                           {rowInner}
                         </SwipeDeleteRow>
@@ -1329,9 +1296,9 @@ export function DueThisMonthChecklist({
                       <div
                         key={key}
                         id={rowId}
-                        className="relative flex w-full items-center gap-1 rounded-xl border-2 border-transparent bg-white shadow-sm dark:bg-neutral-800"
+                        className="relative flex w-full items-start rounded-xl border-2 border-transparent bg-white shadow-sm dark:bg-neutral-800"
                       >
-                        <div className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5">
+                        <div className="flex min-w-0 flex-1 items-start gap-2.5 px-3 py-2.5">
                           {rowInner}
                         </div>
                       </div>
@@ -1342,7 +1309,7 @@ export function DueThisMonthChecklist({
                     <div
                       key={key}
                       id={rowId}
-                      className={`relative flex w-full items-center gap-1 rounded-xl border-2 shadow-sm transition-colors ${
+                      className={`relative flex w-full items-start rounded-xl border-2 shadow-sm transition-colors ${
                         justChecked
                           ? 'border-transparent tx-row-highlight'
                           : 'border-transparent bg-white dark:bg-neutral-800'
@@ -1361,7 +1328,7 @@ export function DueThisMonthChecklist({
                         aria-label={
                           done ? `Uncheck ${label}` : `Check ${label}`
                         }
-                        className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left disabled:opacity-60"
+                        className="flex min-w-0 flex-1 items-start gap-2.5 px-3 py-2.5 text-left disabled:opacity-60"
                       >
                         {rowInner}
                       </button>

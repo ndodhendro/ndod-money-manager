@@ -172,7 +172,7 @@ export function SwipeDeleteRow({
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
         onTouchCancel={handleTouchEnd}
-        className={`relative z-10 flex w-full items-center shadow-sm ${
+        className={`relative z-10 flex w-full items-start shadow-sm ${
           highlighted
             ? 'tx-row-highlight'
             : (surfaceClassName ?? 'bg-white dark:bg-neutral-800')
@@ -200,13 +200,13 @@ export function SwipeDeleteRow({
               handleContentClick()
             }
           }}
-          className="flex min-w-0 flex-1 items-start gap-3 px-3 py-2.5 text-left"
+          className="flex min-w-0 flex-1 items-start gap-2.5 px-3 py-2.5 text-left"
         >
           {children}
         </div>
         {trailing != null ? (
           <div
-            className="shrink-0 pr-2"
+            className="absolute right-0.5 bottom-0.5 z-10"
             onClick={(e) => {
               // Keep trailing actions from toggling the row.
               e.stopPropagation()

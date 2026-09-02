@@ -588,51 +588,87 @@ export function History() {
                       )}
                     </div>
 
-                    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
-                      {note ? (
-                        <p className="truncate text-xs leading-none text-neutral-500 dark:text-neutral-400">
-                          {note}
-                        </p>
-                      ) : (
-                        <span className="invisible truncate text-xs leading-none">
-                          .
-                        </span>
-                      )}
-                      <p
-                        className={`truncate text-xs font-semibold leading-none whitespace-nowrap ${
-                          tx.amount <= 0
-                            ? 'text-neutral-400'
-                            : tx.type === 'expense'
-                              ? AMOUNT_OUT_CLASS
-                              : tx.type === 'income'
-                                ? AMOUNT_IN_CLASS
-                                : 'text-violet-600 dark:text-violet-300'
-                        }`}
-                      >
-                        {amountLabel}
-                      </p>
-                    </div>
-                    {budgetGroup ||
-                    (showOverspend && overspendTxIds.has(tx.id)) ? (
-                      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
-                        {budgetGroup ? (
-                          <p className="truncate text-left text-xs leading-none">
-                            <BudgetGroupBadge group={budgetGroup} />
-                          </p>
-                        ) : (
-                          <span className="invisible truncate text-xs leading-none">
-                            .
-                          </span>
-                        )}
-                        {showOverspend && overspendTxIds.has(tx.id) ? (
-                          <p
-                            className={`truncate text-xs font-medium leading-none whitespace-nowrap ${BUDGET_GROUP_TEXT_CLASS.needs}`}
-                          >
-                            Overspend
+                    {tx.complete_later ? (
+                      <>
+                        {note ? (
+                          <p className="line-clamp-2 min-w-0 break-words text-xs leading-snug text-neutral-500 dark:text-neutral-400">
+                            {note}
                           </p>
                         ) : null}
-                      </div>
-                    ) : null}
+                        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
+                          {budgetGroup ? (
+                            <p className="truncate text-left text-xs leading-none">
+                              <BudgetGroupBadge group={budgetGroup} />
+                            </p>
+                          ) : (
+                            <span className="invisible truncate text-xs leading-none">
+                              .
+                            </span>
+                          )}
+                          <p
+                            className={`truncate text-xs font-semibold leading-none whitespace-nowrap ${
+                              tx.amount <= 0
+                                ? 'text-neutral-400'
+                                : tx.type === 'expense'
+                                  ? AMOUNT_OUT_CLASS
+                                  : tx.type === 'income'
+                                    ? AMOUNT_IN_CLASS
+                                    : 'text-violet-600 dark:text-violet-300'
+                            }`}
+                          >
+                            {amountLabel}
+                          </p>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
+                          {note ? (
+                            <p className="truncate text-xs leading-none text-neutral-500 dark:text-neutral-400">
+                              {note}
+                            </p>
+                          ) : (
+                            <span className="invisible truncate text-xs leading-none">
+                              .
+                            </span>
+                          )}
+                          <p
+                            className={`truncate text-xs font-semibold leading-none whitespace-nowrap ${
+                              tx.amount <= 0
+                                ? 'text-neutral-400'
+                                : tx.type === 'expense'
+                                  ? AMOUNT_OUT_CLASS
+                                  : tx.type === 'income'
+                                    ? AMOUNT_IN_CLASS
+                                    : 'text-violet-600 dark:text-violet-300'
+                            }`}
+                          >
+                            {amountLabel}
+                          </p>
+                        </div>
+                        {budgetGroup ||
+                        (showOverspend && overspendTxIds.has(tx.id)) ? (
+                          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
+                            {budgetGroup ? (
+                              <p className="truncate text-left text-xs leading-none">
+                                <BudgetGroupBadge group={budgetGroup} />
+                              </p>
+                            ) : (
+                              <span className="invisible truncate text-xs leading-none">
+                                .
+                              </span>
+                            )}
+                            {showOverspend && overspendTxIds.has(tx.id) ? (
+                              <p
+                                className={`truncate text-xs font-medium leading-none whitespace-nowrap ${BUDGET_GROUP_TEXT_CLASS.needs}`}
+                              >
+                                Overspend
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </>
+                    )}
                   </div>
                 </HistoryTxSwipeRow>
               )

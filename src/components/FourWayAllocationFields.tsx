@@ -1,5 +1,5 @@
 import { allocationSum, ZERO_CLOSE_ALLOC } from '../lib/closeMonthDefaults'
-import { formatRupiah } from '../lib/format'
+import { formatPctLabel, formatRupiah } from '../lib/format'
 import type { MonthCloseAllocation } from '../lib/types'
 import { FormattedAmountInput } from './FormattedAmountInput'
 
@@ -155,10 +155,10 @@ export function FourWayAllocationFields({
                 : 'text-amber-600 dark:text-amber-400'
             }`}
           >
-            Total {mode === 'percent' ? `${total}%` : formatRupiah(total)}
+            Total {mode === 'percent' ? formatPctLabel(total) : formatRupiah(total)}
             {ok
               ? ' · OK'
-              : ` · need ${mode === 'percent' ? '100%' : formatRupiah(remaining)}`}
+              : ` · need ${mode === 'percent' ? formatPctLabel(100) : formatRupiah(remaining)}`}
           </p>
         </div>
       )}

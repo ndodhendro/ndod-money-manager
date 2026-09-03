@@ -20,6 +20,22 @@ export function formatNumber(amount: number): string {
   return new Intl.NumberFormat('id-ID').format(amount)
 }
 
+/** User-facing percentage: always 2 decimal places (e.g. 12.50). */
+export function formatPct(value: number): string {
+  if (!Number.isFinite(value)) return '0.00'
+  return value.toFixed(2)
+}
+
+/** User-facing percentage with a % suffix (e.g. 12.50%). */
+export function formatPctLabel(value: number): string {
+  return `${formatPct(value)}%`
+}
+
+/** Allow empty / in-progress typing, at most 2 fraction digits. */
+export function isAllowedPctInput(raw: string): boolean {
+  return raw === '' || /^\d*(?:\.\d{0,2})?$/.test(raw)
+}
+
 export function todayIso(): string {
   const now = new Date()
   const offset = now.getTimezoneOffset()

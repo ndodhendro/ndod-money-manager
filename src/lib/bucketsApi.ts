@@ -7,13 +7,24 @@ import {
   type CategorySortRef,
 } from './bucketsGroup'
 import { supabase } from './supabase'
-import type { BudgetGroup, Bucket, BucketKind, Category } from './types'
+import {
+  isSinkingFundingSource,
+  type BudgetGroup,
+  type Bucket,
+  type BucketKind,
+  type Category,
+  type SinkingFundingSource,
+} from './types'
 
 function mapBudgetGroup(value: unknown): BudgetGroup | null {
   if (value === 'needs' || value === 'wants') {
     return value
   }
   return null
+}
+
+function mapFundingSource(value: unknown): SinkingFundingSource {
+  return isSinkingFundingSource(value) ? value : 'monthly_estimate'
 }
 
 function mapBucket(row: Record<string, unknown>): Bucket {
@@ -27,6 +38,7 @@ function mapBucket(row: Record<string, unknown>): Bucket {
     opening_balance: Number(row.opening_balance ?? 0),
     opening_transfers: Number(row.opening_transfers ?? 0),
     budget_group: mapBudgetGroup(row.budget_group),
+    funding_source: mapFundingSource(row.funding_source),
     parent_id:
       row.parent_id == null || row.parent_id === ''
         ? null
@@ -66,6 +78,14 @@ function isMissingCategoryColumn(message: string): boolean {
   )
 }
 
+function isMissingFundingSourceColumn(message: string): boolean {
+  const lower = message.toLowerCase()
+  return (
+    lower.includes('funding_source') ||
+    (lower.includes('schema cache') && lower.includes('funding'))
+  )
+}
+
 function migrateBudgetGroupHint(): Error {
   return new Error(
     'Run migrate_buckets_budget_group.sql in Supabase to enable Needs/Wants on sinking funds',
@@ -84,10 +104,17 @@ function migrateCategoryHint(): Error {
   )
 }
 
+function migrateFundingSourceHint(): Error {
+  return new Error(
+    'Run migrate_buckets_funding_source.sql in Supabase to set sinking fund funding source',
+  )
+}
+
 function throwMappedBucketError(message: string): never {
   if (isMissingBudgetGroupColumn(message)) throw migrateBudgetGroupHint()
   if (isMissingParentColumn(message)) throw migrateParentHint()
   if (isMissingCategoryColumn(message)) throw migrateCategoryHint()
+  if (isMissingFundingSourceColumn(message)) throw migrateFundingSourceHint()
   throw new Error(message)
 }
 
@@ -435,6 +462,7 @@ export type NewSinkingFromCategoryInput = {
   /** Expense subcategory id (must have a parent). */
   category_id: string
   target_amount: number
+  funding_source?: SinkingFundingSource
 }
 
 /**
@@ -464,6 +492,11 @@ export async function createSinkingBucketFromCategory(
     cat.budget_group === 'wants' || cat.budget_group === 'needs'
       ? cat.budget_group
       : 'needs'
+  const funding_source: SinkingFundingSource = isSinkingFundingSource(
+    input.funding_source,
+  )
+    ? input.funding_source
+    : 'monthly_estimate'
 
   const active = await fetchBuckets()
   if (findActiveBucketForCategory(active, cat.id)) {
@@ -497,6 +530,7 @@ export async function createSinkingBucketFromCategory(
         opening_balance: 0,
         opening_transfers: 0,
         budget_group: group,
+        funding_source,
         parent_id: parentBucket.id,
         category_id: cat.id,
       })
@@ -516,6 +550,7 @@ export async function createSinkingBucketFromCategory(
         opening_balance: 0,
         opening_transfers: 0,
         budget_group: group,
+        funding_source,
         parent_id: parentBucket.id,
         category_id: cat.id,
         sort_order: 0,
@@ -543,6 +578,7 @@ export type NewBucketInput = {
   target_amount: number
   opening_balance: number
   budget_group: 'needs' | 'wants'
+  funding_source?: SinkingFundingSource
   parent_id?: string | null
   category_id?: string | null
 }
@@ -552,6 +588,7 @@ export async function createBucket(input: NewBucketInput): Promise<Bucket> {
     return createSinkingBucketFromCategory({
       category_id: input.category_id,
       target_amount: input.target_amount,
+      funding_source: input.funding_source,
     })
   }
   throw new Error('Add sinking funds via subcategory')
@@ -564,6 +601,7 @@ export type UpdateBucketInput = {
   opening_balance?: number
   opening_transfers?: number
   budget_group?: 'needs' | 'wants' | null
+  funding_source?: SinkingFundingSource
   parent_id?: string | null
   is_active?: boolean
 }
@@ -578,6 +616,12 @@ export async function updateBucket(
     patch.budget_group !== 'wants'
   ) {
     throw new Error('Pick Needs or Wants for this sinking fund')
+  }
+  if (
+    patch.funding_source != null &&
+    !isSinkingFundingSource(patch.funding_source)
+  ) {
+    throw new Error('Pick Monthly Estimate or Bonus Income for this sinking fund')
   }
 
   const { data: existing, error: existingError } = await supabase
@@ -610,6 +654,7 @@ export async function updateBucket(
 
   if (current.kind !== 'sinking') {
     delete nextPatch.parent_id
+    delete nextPatch.funding_source
   }
 
   if (current.kind === 'sinking') {

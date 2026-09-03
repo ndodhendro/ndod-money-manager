@@ -1,4 +1,4 @@
-import { formatRupiah } from '../lib/format'
+import { formatPctLabel, formatRupiah } from '../lib/format'
 
 export interface ChartSlice {
   key: string
@@ -131,7 +131,7 @@ export function DonutChart({ slices, centerLabel, centerSub }: DonutChartProps) 
       </svg>
       <ul className="w-full space-y-1.5">
         {slices.map((slice) => {
-          const pct = total > 0 ? Math.round((slice.value / total) * 100) : 0
+          const pct = total > 0 ? (slice.value / total) * 100 : 0
           return (
             <li
               key={slice.key}
@@ -144,7 +144,7 @@ export function DonutChart({ slices, centerLabel, centerSub }: DonutChartProps) 
               {slice.icon && <span aria-hidden>{slice.icon}</span>}
               <span className="min-w-0 flex-1 truncate">{slice.label}</span>
               <span className="shrink-0 tabular-nums text-neutral-500">
-                {pct}%
+                {formatPctLabel(pct)}
               </span>
               <span className="shrink-0 font-medium tabular-nums text-neutral-700 dark:text-neutral-200">
                 {formatRupiah(slice.value)}

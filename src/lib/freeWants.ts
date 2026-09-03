@@ -27,14 +27,15 @@ import {
 /** Minimal bucket fields for Needs/Wants transfer classification + sort. */
 export type BucketBudgetRef = Pick<
   Bucket,
-  'kind' | 'budget_group' | 'name' | 'is_active' | 'category_id'
+  'kind' | 'budget_group' | 'name' | 'is_active' | 'category_id' | 'funding_source'
 >
 
 /**
  * Needs/Wants for a transfer into a sinking fund.
  * Prefers the linked subcategory (and its parent) so Plan progress follows a
  * category move without waiting on a stale bucket stamp.
- * Emergency/investment (and unset sinking) return null.
+ * Emergency/investment, unset sinking, and bonus-funded sinking return null
+ * (THR / Performance Bonus is not monthly envelope spend).
  */
 export function budgetGroupOfTransferTo(
   toBucketId: string | null,
@@ -44,6 +45,7 @@ export function budgetGroupOfTransferTo(
   if (!toBucketId) return null
   const bucket = bucketsById.get(toBucketId)
   if (!bucket || bucket.kind !== 'sinking') return null
+  if (bucket.funding_source === 'bonus') return null
   if (categoriesById && bucket.category_id) {
     const live = budgetGroupOfCategory(bucket.category_id, categoriesById)
     if (live === 'needs' || live === 'wants') return live

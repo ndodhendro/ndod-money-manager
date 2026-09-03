@@ -9,9 +9,11 @@ import {
   BUCKET_KIND_LABELS,
   BUDGET_GROUP_LABELS,
   CIRCLE_LABELS,
+  FUNDED_FROM_BONUS_LABEL,
   MISSED_TRANSFER_LABEL,
   NO_TRANSFER_LABEL,
   OWNER_LABELS,
+  SINKING_FUNDING_SOURCE_LABELS,
   categoryDisplayParts,
   formatTransferLabel,
   formatTransferToLabel,
@@ -131,6 +133,7 @@ export function matchesBucketSearch(
   extras?: {
     parentName?: string | null
     missingTransfer?: boolean
+    fundedFromBonus?: boolean
     missedTransfer?: boolean
     paceStatus?: SinkingPaceStatus
   },
@@ -145,6 +148,10 @@ export function matchesBucketSearch(
     bucket.kind,
     kindLabel,
     extras?.missingTransfer ? NO_TRANSFER_LABEL : undefined,
+    extras?.fundedFromBonus ? FUNDED_FROM_BONUS_LABEL : undefined,
+    extras?.fundedFromBonus
+      ? SINKING_FUNDING_SOURCE_LABELS.bonus
+      : undefined,
     extras?.missedTransfer ? MISSED_TRANSFER_LABEL : undefined,
     ...(extras?.paceStatus ? sinkingPaceSearchParts(extras.paceStatus) : []),
     ...budgetGroupSearchParts(bucket.budget_group),

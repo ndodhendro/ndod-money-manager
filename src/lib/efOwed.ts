@@ -218,6 +218,7 @@ export function computeDerivedEfOwed(input: {
         kind: b.kind,
         icon: b.icon,
         budget_group: b.budget_group,
+        funding_source: b.funding_source,
         balance: 0,
         target_amount: b.target_amount,
         sort_order: b.sort_order,

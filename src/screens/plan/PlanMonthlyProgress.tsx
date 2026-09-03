@@ -23,7 +23,7 @@ import {
   computeBudgetUsedBySource,
   upcomingEstimateProgressAmountByBillId,
 } from '../../lib/estimateProgress'
-import { formatRupiah, todayIso } from '../../lib/format'
+import { formatPctLabel, formatRupiah, todayIso } from '../../lib/format'
 import { plannedNeedsCeiling } from '../../lib/freeWants'
 import { checkingBucketIdSet } from '../../lib/freeGuiltyProgress'
 import {
@@ -116,7 +116,7 @@ function rowForBucket(
   if (monthly && totalIncome > 0 && monthlyPct != null) {
     return {
       bucket: { ...monthly, label: b.name },
-      hint: `${monthlyPct}% of income · via Transfer · ${formatRupiah(b.balance)}`,
+      hint: `${formatPctLabel(monthlyPct)} of income · via Transfer · ${formatRupiah(b.balance)}`,
     }
   }
   return {

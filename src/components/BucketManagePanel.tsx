@@ -19,6 +19,7 @@ import {
   updateBucket,
 } from '../lib/bucketsApi'
 import { groupBucketsByKindAsTree } from '../lib/bucketsGroup'
+import { bonusFundedSinkingTotals } from '../lib/paydayAllocation'
 import {
   getCollapseOpen,
   setCollapseOpen,
@@ -39,10 +40,14 @@ import {
   type BucketKind,
   type BucketTreeNode,
   type BucketWithBalance,
+  type SinkingFundingSource,
 } from '../lib/types'
 import { BudgetGroupBadge } from './BudgetGroupBadge'
 import { CategoryPicker } from './CategoryPicker'
+import { FundedFromBonusLabel } from './FundedFromBonusLabel'
+import { FundedFromBonusTotals } from './FundedFromBonusTotals'
 import { NoTransferLabel } from './NoTransferLabel'
+import { SinkingFundingToggle } from './SinkingFundingToggle'
 import { CollapseChevron } from './CollapseChevron'
 import { ConfirmDialog } from './ConfirmDialog'
 import { GroupedListFrame } from './GroupedListFrame'
@@ -80,6 +85,8 @@ export function BucketManagePanel({
   const [categoryOpen, setCategoryOpen] = useState(false)
   const [targetDigits, setTargetDigits] = useState('')
   const [openingDigits, setOpeningDigits] = useState('')
+  const [fundingSource, setFundingSource] =
+    useState<SinkingFundingSource>('monthly_estimate')
   const [saving, setSaving] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(
     () => routeEditId ?? null,
@@ -159,10 +166,24 @@ export function BucketManagePanel({
     return (
       billsReady &&
       bucket.kind === 'sinking' &&
+      bucket.funding_source !== 'bonus' &&
       !sinkingParentIds.has(bucket.id) &&
       !transferDestIds.has(bucket.id)
     )
   }
+
+  function sinkingFundedFromBonus(bucket: BucketWithBalance): boolean {
+    return (
+      bucket.kind === 'sinking' &&
+      bucket.funding_source === 'bonus' &&
+      !sinkingParentIds.has(bucket.id)
+    )
+  }
+
+  const bonusTotals = useMemo(
+    () => bonusFundedSinkingTotals(buckets),
+    [buckets],
+  )
 
   const filteredSinkingNodes = useMemo(() => {
     if (!searchActive) return sinkingNodes
@@ -170,6 +191,7 @@ export function BucketManagePanel({
       .map((node) => {
         const parentMatch = matchesBucketSearch(searchQuery, node.bucket, {
           missingTransfer: sinkingMissingTransfer(node.bucket),
+          fundedFromBonus: sinkingFundedFromBonus(node.bucket),
         })
         const children = node.children.filter(
           (child) =>
@@ -177,6 +199,7 @@ export function BucketManagePanel({
             matchesBucketSearch(searchQuery, child, {
               parentName: node.bucket.name,
               missingTransfer: sinkingMissingTransfer(child),
+              fundedFromBonus: sinkingFundedFromBonus(child),
             }),
         )
         return { ...node, children }
@@ -185,6 +208,7 @@ export function BucketManagePanel({
         (node) =>
           matchesBucketSearch(searchQuery, node.bucket, {
             missingTransfer: sinkingMissingTransfer(node.bucket),
+            fundedFromBonus: sinkingFundedFromBonus(node.bucket),
           }) || node.children.length > 0,
       )
   }, [
@@ -448,6 +472,7 @@ export function BucketManagePanel({
     setCategoryOpen(false)
     setTargetDigits('')
     setOpeningDigits('')
+    setFundingSource('monthly_estimate')
     setEditingId(null)
     hydratedEditIdRef.current = null
   }
@@ -472,6 +497,11 @@ export function BucketManagePanel({
       b.kind !== 'sinking' && b.opening_balance > 0
         ? String(Math.round(b.opening_balance))
         : '',
+    )
+    setFundingSource(
+      b.kind === 'sinking' && b.funding_source === 'bonus'
+        ? 'bonus'
+        : 'monthly_estimate',
     )
     setOpenSwipeId(null)
   }
@@ -526,6 +556,7 @@ export function BucketManagePanel({
       const created = await createSinkingBucketFromCategory({
         category_id: categoryId,
         target_amount: target,
+        funding_source: fundingSource,
       })
       resetForm()
       setKindGroupsExpanded(true)
@@ -577,6 +608,9 @@ export function BucketManagePanel({
             ? { target_amount: Number(targetDigits) }
             : {}
           : { target_amount: Number(targetDigits) }),
+        ...(current?.kind === 'sinking' && !editingHasChildren
+          ? { funding_source: fundingSource }
+          : {}),
         ...(current?.kind !== 'sinking' && !editingHasChildren
           ? {
               opening_balance: openingDigits ? Number(openingDigits) : 0,
@@ -711,6 +745,12 @@ export function BucketManagePanel({
                       </p>
                     </button>
                     <div className="space-y-2">
+                      {bonusTotals.count > 0 ? (
+                        <FundedFromBonusTotals
+                          target={bonusTotals.target}
+                          remaining={bonusTotals.remaining}
+                        />
+                      ) : null}
                       <div className="flex items-center gap-2">
                         <SearchField
                           value={searchQuery}
@@ -762,6 +802,7 @@ export function BucketManagePanel({
                                 : false
                             }
                             missingTransfer={sinkingMissingTransfer}
+                            fundedFromBonus={sinkingFundedFromBonus}
                             emergencyAutoTarget={emergencyAutoTarget}
                             onDelete={(b) => {
                               setOpenSwipeId(b.id)
@@ -958,6 +999,23 @@ export function BucketManagePanel({
               </label>
             ) : null}
 
+            {isSinkingForm && !editingHasChildren ? (
+              <div className="block">
+                <span className="mb-1 block text-xs text-neutral-500">
+                  Funding source
+                </span>
+                <SinkingFundingToggle
+                  value={fundingSource}
+                  onChange={setFundingSource}
+                />
+                <span className="mt-1 block text-[11px] text-neutral-400">
+                  {fundingSource === 'bonus'
+                    ? 'Filled from Holiday Bonus (THR) and Performance Bonus, not a Monthly Estimate transfer.'
+                    : 'Fund this with a transfer in Monthly Estimates.'}
+                </span>
+              </div>
+            ) : null}
+
             {showOpeningBalance ? (
               <label className="block">
                 <span className="mb-1 block text-xs text-neutral-500">
@@ -1063,6 +1121,7 @@ function BucketTreeRows({
   onDelete,
   disableEdit = false,
   missingTransfer,
+  fundedFromBonus = () => false,
   emergencyAutoTarget,
 }: {
   node: BucketTreeNode
@@ -1077,6 +1136,7 @@ function BucketTreeRows({
   /** Disable tap-to-edit for parent/bank-mirror buckets. */
   disableEdit?: boolean
   missingTransfer: (bucket: BucketWithBalance) => boolean
+  fundedFromBonus?: (bucket: BucketWithBalance) => boolean
   emergencyAutoTarget: number
 }) {
   const hasChildren = node.children.length > 0
@@ -1101,6 +1161,7 @@ function BucketTreeRows({
         onEdit={disableEdit ? undefined : onEdit}
         onDelete={onDelete}
         showNoTransfer={missingTransfer(node.bucket)}
+        showFundedFromBonus={fundedFromBonus(node.bucket)}
       />
       {hasChildren && expanded
         ? node.children.map((child) => (
@@ -1117,6 +1178,7 @@ function BucketTreeRows({
                 onEdit={onEdit}
                 onDelete={onDelete}
                 showNoTransfer={missingTransfer(child)}
+                showFundedFromBonus={fundedFromBonus(child)}
               />
             </div>
           ))
@@ -1140,6 +1202,7 @@ function BucketListRow({
   onEdit,
   onDelete,
   showNoTransfer = false,
+  showFundedFromBonus = false,
 }: {
   bucket: BucketWithBalance
   indent: number
@@ -1155,6 +1218,7 @@ function BucketListRow({
   onEdit?: (b: BucketWithBalance) => void
   onDelete: (b: BucketWithBalance) => void
   showNoTransfer?: boolean
+  showFundedFromBonus?: boolean
 }) {
   const isHighlighted = highlightId === bucket.id
   const isChild = indent > 0
@@ -1170,6 +1234,7 @@ function BucketListRow({
       expanded={expanded}
       onToggleExpand={onToggleExpand}
       showNoTransfer={showNoTransfer}
+      showFundedFromBonus={showFundedFromBonus}
     />
   )
 
@@ -1233,6 +1298,7 @@ function BucketRowContent({
   expanded = false,
   onToggleExpand,
   showNoTransfer = false,
+  showFundedFromBonus = false,
 }: {
   bucket: BucketWithBalance
   childCount?: number
@@ -1241,6 +1307,7 @@ function BucketRowContent({
   expanded?: boolean
   onToggleExpand?: () => void
   showNoTransfer?: boolean
+  showFundedFromBonus?: boolean
 }) {
   const budgetGroup =
     bucket.kind === 'sinking' &&
@@ -1286,9 +1353,10 @@ function BucketRowContent({
             </p>
           ) : null}
         </div>
-        {budgetGroup || showNoTransfer ? (
+        {budgetGroup || showNoTransfer || showFundedFromBonus ? (
           <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
             {budgetGroup ? <BudgetGroupBadge group={budgetGroup} /> : null}
+            {showFundedFromBonus ? <FundedFromBonusLabel /> : null}
             {showNoTransfer ? <NoTransferLabel /> : null}
           </p>
         ) : null}

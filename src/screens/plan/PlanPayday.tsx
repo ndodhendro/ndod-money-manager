@@ -2,10 +2,11 @@ import { useState } from 'react'
 import { GroupedListFrame } from '../../components/GroupedListFrame'
 import { MonthPager } from '../../components/MonthPager'
 import { PlanSubPage } from '../../components/PlanSubPage'
+import { FundedFromBonusTotals } from '../../components/FundedFromBonusTotals'
 import { useFreeGuiltyProgress } from '../../hooks/useFreeGuiltyProgress'
 import { useMonthCursor } from '../../hooks/useMonthCursor'
 import { useTransactions } from '../../hooks/useTransactions'
-import { formatRupiah } from '../../lib/format'
+import { formatPctLabel, formatRupiah } from '../../lib/format'
 import { monthCursorKey } from '../../lib/monthCursor'
 import { PlanIcon, PlanTitle } from '../../lib/planSections'
 
@@ -123,7 +124,7 @@ export function PlanPayday() {
                   amount={allocation.plannedNeeds}
                 />
                 <AmountRow
-                  label={`Buffer (${allocation.bufferPct}%)`}
+                  label={`Buffer (${formatPctLabel(allocation.bufferPct)})`}
                   amount={allocation.buffer}
                 />
                 <AmountRow
@@ -137,6 +138,13 @@ export function PlanPayday() {
                 />
               </div>
             </section>
+
+            {allocation.bonusSinking.count > 0 && (
+              <FundedFromBonusTotals
+                target={allocation.bonusSinking.target}
+                remaining={allocation.bonusSinking.remaining}
+              />
+            )}
 
             {allocation.bonusAllocation && (
               <GroupedListFrame
@@ -152,7 +160,7 @@ export function PlanPayday() {
                     emphasize
                   />
                   <AmountRow
-                    label="To 12-Month Sinking"
+                    label="To Bonus-Funded Sinking"
                     amount={allocation.bonusAllocation.sinkingFilled}
                   />
                   <AmountRow
@@ -172,8 +180,8 @@ export function PlanPayday() {
                 </div>
                 {allocation.bonusAllocation.lines.length === 0 ? (
                   <p className="text-xs text-neutral-400">
-                    No 12-month sinking gaps; remainder goes to Emergency &amp;
-                    Investment
+                    No bonus-funded sinking gaps; remainder goes to Emergency
+                    &amp; Investment
                   </p>
                 ) : (
                   <ul className="space-y-2">

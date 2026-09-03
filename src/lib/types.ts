@@ -103,6 +103,33 @@ export const SINKING_FUND_LABEL_CLASS = BUDGET_GROUP_TEXT_CLASS.wants
 export const NO_TRANSFER_LABEL = 'No Transfer in Monthly Estimate'
 export const NO_TRANSFER_LABEL_CLASS = 'text-amber-600 dark:text-amber-400'
 
+/** How a sinking fund is meant to be filled. */
+export type SinkingFundingSource = 'monthly_estimate' | 'bonus'
+
+export const SINKING_FUNDING_SOURCES: SinkingFundingSource[] = [
+  'monthly_estimate',
+  'bonus',
+]
+
+export const SINKING_FUNDING_SOURCE_LABELS: Record<
+  SinkingFundingSource,
+  string
+> = {
+  monthly_estimate: 'Monthly Estimate',
+  bonus: 'Bonus Income (THR)',
+}
+
+export function isSinkingFundingSource(
+  value: unknown,
+): value is SinkingFundingSource {
+  return value === 'monthly_estimate' || value === 'bonus'
+}
+
+/** Sinking fund filled from THR / Performance Bonus, not a monthly transfer. */
+export const FUNDED_FROM_BONUS_LABEL = 'Funded From Bonus'
+export const FUNDED_FROM_BONUS_LABEL_CLASS =
+  'text-violet-600 dark:text-violet-400'
+
 /** Prefix of the amber missed-transfer hint (`Missed Rp …`). */
 export const MISSED_TRANSFER_LABEL = 'Missed'
 
@@ -126,6 +153,12 @@ export interface Bucket {
    * Null for emergency/investment system buckets.
    */
   budget_group: BudgetGroup | null
+  /**
+   * How a sinking fund is filled. Ignored for emergency/investment.
+   * `monthly_estimate` = transfer in Monthly Estimates;
+   * `bonus` = Holiday Bonus (THR) / Performance Bonus allocation.
+   */
+  funding_source: SinkingFundingSource
   /**
    * Optional parent sinking fund (max depth 2).
    * Null = top-level / bank-mirror bucket.

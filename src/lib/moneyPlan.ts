@@ -1,4 +1,5 @@
 import { sumTransfersInto } from './bucketsApi'
+import { formatPct } from './format'
 import {
   isBudgetGroup,
   type Bucket,
@@ -68,12 +69,11 @@ export function amountToAllocationPct(amount: number, base: number): number {
 
 /**
  * Stable % field string (no binary tails like 2.9900000000000002).
- * Keeps up to 6 decimals so Amount → % → Amount stays exact in rupiah.
+ * Display is always 2 decimal places; Amount mode still saves via
+ * `amountToAllocationPct` so rupiah round-trips stay exact.
  */
 export function formatPctInput(pct: number): string {
-  if (!Number.isFinite(pct)) return '0'
-  const trimmed = pct.toFixed(6).replace(/\.?0+$/, '')
-  return trimmed === '' || trimmed === '-' ? '0' : trimmed
+  return formatPct(pct)
 }
 
 /** DB placeholder when computed is 0 (constraint amount > 0). */

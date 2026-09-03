@@ -13,7 +13,7 @@ import {
   setCollapseOpen,
 } from '../../lib/collapseState'
 import { FormattedAmountInput } from '../../components/FormattedAmountInput'
-import { formatRupiah } from '../../lib/format'
+import { formatPct, formatRupiah, isAllowedPctInput } from '../../lib/format'
 import { plannedNeedsCeiling } from '../../lib/freeWants'
 import {
   currentMonthCursor,
@@ -161,9 +161,16 @@ function MonthlyAllocationField({
           inputMode="decimal"
           min={0}
           max={100}
-          step={isBuffer ? 1 : 0.5}
+          step={0.01}
           value={pct}
-          onChange={(e) => onPctChange(e.target.value)}
+          onChange={(e) => {
+            const next = e.target.value
+            if (isAllowedPctInput(next)) onPctChange(next)
+          }}
+          onBlur={() => {
+            if (pct === '') return
+            onPctChange(formatPct(Number(pct) || 0))
+          }}
           className={INPUT_CLASS}
           aria-label={label}
         />
@@ -183,8 +190,8 @@ function MonthlyAllocationField({
             : 'Add income this month to use Amount mode.'
           : mode === 'amount'
             ? isBuffer
-              ? `Based on planned needs (${formatRupiah(plannedNeeds)}). Saves as ${pct || '0'}%.`
-              : `Based on this month's income (${formatRupiah(monthIncome)}). Saves as ${pct || '0'}%.`
+              ? `Based on planned needs (${formatRupiah(plannedNeeds)}). Saves as ${formatPct(Number(pct) || 0)}%.`
+              : `Based on this month's income (${formatRupiah(monthIncome)}). Saves as ${formatPct(Number(pct) || 0)}%.`
             : isBuffer
               ? `Planned needs: ${formatRupiah(plannedNeeds)}${
                   Number(pct) > 0 ? ` → ${formatRupiah(resolvedAmount)}` : ''
@@ -411,15 +418,15 @@ export function SettingsMoneyPlan() {
     const emergency =
       efMode === 'amount'
         ? amountToAllocationPct(Number(efAmountDigits) || 0, monthIncome)
-        : Number(emergencyPct)
+        : Number(formatPct(Number(emergencyPct) || 0))
     const investment =
       invMode === 'amount'
         ? amountToAllocationPct(Number(invAmountDigits) || 0, monthIncome)
-        : Number(investmentPct)
+        : Number(formatPct(Number(investmentPct) || 0))
     const buffer =
       bufferMode === 'amount'
         ? amountToAllocationPct(Number(bufferAmountDigits) || 0, plannedNeeds)
-        : Number(bufferPct)
+        : Number(formatPct(Number(bufferPct) || 0))
     const multiplier = Number(efMultiplier)
 
     if (

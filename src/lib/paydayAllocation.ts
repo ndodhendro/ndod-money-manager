@@ -79,6 +79,8 @@ export interface PaydayAllocation {
   sinkingTransferTotal: number
   /** Bonus top-up plan; null when there is no bonus income. */
   bonusAllocation: BonusAllocation | null
+  /** All bonus-funded leaf sinking funds (targets / remaining). */
+  bonusSinking: BonusFundedSinkingTotals
 }
 
 export type PaydayBucketRef = Pick<
@@ -88,6 +90,7 @@ export type PaydayBucketRef = Pick<
   | 'kind'
   | 'icon'
   | 'budget_group'
+  | 'funding_source'
   | 'balance'
   | 'target_amount'
   | 'sort_order'
@@ -167,71 +170,56 @@ function isPlannedNeedsOrWantsSinkingTransfer(
   )
 }
 
-function normalizeName(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, '')
-}
-
-function namesLooselyMatch(a: string, b: string): boolean {
-  const left = normalizeName(a)
-  const right = normalizeName(b)
-  if (!left || !right) return false
-  return left === right || left.includes(right) || right.includes(left)
-}
-
 /**
- * Sinking funds for every-12-months obligations:
- * - active sinking with a target, funded by an active recurring transfer, and
- * - transfer itself is every 12 months, or
- * - a yearly (month:12) expense matches the bucket / transfer name.
+ * Sinking funds flagged to be filled from bonus income (THR / Performance Bonus).
  */
-export function isTwelveMonthSinkingBucket(
+export function isBonusFundedSinkingBucket(
   bucket: Pick<
     Bucket,
-    'id' | 'name' | 'kind' | 'target_amount' | 'is_active'
+    'kind' | 'target_amount' | 'is_active' | 'funding_source'
   >,
-  bills: RecurringBill[],
 ): boolean {
   if (!bucket.is_active || bucket.kind !== 'sinking') return false
   if (bucket.target_amount == null || bucket.target_amount <= 0) return false
-
-  const transfersIn = bills.filter(
-    (b) =>
-      b.is_active &&
-      b.type === 'transfer' &&
-      b.is_recurring &&
-      b.to_bucket_id === bucket.id,
-  )
-  if (transfersIn.length === 0) return false
-
-  if (
-    transfersIn.some(
-      (b) => b.interval_unit === 'month' && b.interval_months === 12,
-    )
-  ) {
-    return true
-  }
-
-  const yearlyExpenses = bills.filter(
-    (b) =>
-      b.is_active &&
-      b.type === 'expense' &&
-      b.is_recurring &&
-      b.interval_unit === 'month' &&
-      b.interval_months === 12,
-  )
-  for (const expense of yearlyExpenses) {
-    if (namesLooselyMatch(bucket.name, expense.name)) return true
-    if (transfersIn.some((t) => namesLooselyMatch(t.name, expense.name))) {
-      return true
-    }
-  }
-  return false
+  return bucket.funding_source === 'bonus'
 }
 
 function sinkingGap(bucket: PaydayBucketRef): number {
   const target = bucket.target_amount
   if (target == null || target <= 0) return 0
   return Math.max(0, Math.round(target - bucket.balance))
+}
+
+export type BonusFundedSinkingTotals = {
+  /** Sum of bonus-funded leaf targets. */
+  target: number
+  /** Sum of gaps (target − balance) still to fill from bonus. */
+  remaining: number
+  count: number
+}
+
+/** Leaf sinking funds flagged Funded From Bonus (skips parents with children). */
+export function bonusFundedSinkingTotals(
+  buckets: Iterable<PaydayBucketRef>,
+): BonusFundedSinkingTotals {
+  const list = Array.from(buckets)
+  const parentIdsWithChildren = new Set<string>()
+  for (const b of list) {
+    if (b.parent_id) parentIdsWithChildren.add(b.parent_id)
+  }
+
+  let target = 0
+  let remaining = 0
+  let count = 0
+  for (const b of list) {
+    if (parentIdsWithChildren.has(b.id)) continue
+    if (!isBonusFundedSinkingBucket(b)) continue
+    const amount = Math.round(b.target_amount ?? 0)
+    target += amount
+    remaining += sinkingGap(b)
+    count += 1
+  }
+  return { target, remaining, count }
 }
 
 /** Split leftover bonus across EF / Inv by Money Plan % ratio. */
@@ -254,13 +242,12 @@ export function splitBonusRemainderToPyf(
 }
 
 /**
- * Allocate bonus income: fill 12-month sinking gaps to target, then send
+ * Allocate bonus income: fill bonus-funded sinking gaps to target, then send
  * remainder to Emergency / Investment proportional to Money Plan %.
  * Does not change regular monthly transfers or Guilt-Free Fund.
  */
 export function buildBonusAllocation(input: {
   bonusIncome: number
-  bills: RecurringBill[]
   bucketsById: Map<string, PaydayBucketRef>
   emergencyPct: number
   investmentPct: number
@@ -276,7 +263,7 @@ export function buildBonusAllocation(input: {
 
   const candidates = Array.from(input.bucketsById.values())
     .filter((b) => !parentIdsWithChildren.has(b.id))
-    .filter((b) => isTwelveMonthSinkingBucket(b, input.bills))
+    .filter((b) => isBonusFundedSinkingBucket(b))
     .map((b) => ({ bucket: b, gap: sinkingGap(b) }))
     .filter((row) => row.gap > 0)
     .sort((a, b) => compareBucketsWithinKind(a.bucket, b.bucket))
@@ -453,7 +440,7 @@ export function computeFreeGuilty(input: BuildPaydayAllocationInput) {
  * (THR / Performance Bonus excluded from Guilt-Free Fund).
  * Sinking = transfers into EF / Inv / sinking without Needs/Wants tag
  * (EF & Inv amounts from Money Plan % of regular income).
- * Bonus = fill 12-month sinking gaps, then remainder → EF/Inv by % ratio.
+ * Bonus = fill bonus-funded sinking gaps, then remainder → EF/Inv by % ratio.
  */
 export function buildPaydayAllocation(
   input: BuildPaydayAllocationInput,
@@ -540,11 +527,12 @@ export function buildPaydayAllocation(
     0,
   )
 
+  const bonusSinking = bonusFundedSinkingTotals(input.bucketsById.values())
+
   const bonusAllocation =
     bonusIncome > 0
       ? buildBonusAllocation({
           bonusIncome,
-          bills: input.bills,
           bucketsById: input.bucketsById,
           emergencyPct: input.emergencyPct,
           investmentPct: input.investmentPct,
@@ -568,5 +556,6 @@ export function buildPaydayAllocation(
     sinkingTransfers,
     sinkingTransferTotal,
     bonusAllocation,
+    bonusSinking,
   }
 }

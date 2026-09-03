@@ -1,6 +1,4 @@
-import {
-  formatRupiah,
-} from '../lib/format'
+import { formatPctLabel, formatRupiah } from '../lib/format'
 import type { MoneyPlanBucket } from '../lib/moneyPlan'
 import type { BudgetGroup, Circle, Owner } from '../lib/types'
 import { isCircle, isOwner } from '../lib/types'
@@ -174,7 +172,7 @@ export function PlanBudgetRow({
   )
   const rawPct =
     bucket.target > 0
-      ? Math.round(bucket.ratio * 100)
+      ? bucket.ratio * 100
       : bucket.actual > 0
         ? 100
         : 0
@@ -222,8 +220,8 @@ export function PlanBudgetRow({
       ? 'text-emerald-600 dark:text-emerald-400'
       : 'text-neutral-500 dark:text-neutral-400')
   const ceilingPctLabel = isFundGoal
-    ? `${displayPct}% transferred`
-    : `${displayPct}% used`
+    ? `${formatPctLabel(displayPct)} transferred`
+    : `${formatPctLabel(displayPct)} used`
   const hasDisplayTarget = bucket.target > 0 || showZeroTarget
   const showFloorFooter =
     showMetrics && mode === 'floor' && bucket.target > 0
@@ -586,10 +584,10 @@ export function PlanBudgetRow({
               aria-label={
                 mode === 'ceiling'
                   ? ceilingPctLabel
-                  : `${displayPct}% progress`
+                  : `${formatPctLabel(displayPct)} progress`
               }
             >
-              {mode === 'ceiling' ? ceilingPctLabel : `${displayPct}%`}
+              {mode === 'ceiling' ? ceilingPctLabel : formatPctLabel(displayPct)}
             </span>
           </div>
         </div>

@@ -15,7 +15,7 @@ import { ActionEmoji } from '../lib/actionEmoji'
 import { showAppToast } from '../lib/appToast'
 import { areAllCollapseOpen } from '../lib/collapseState'
 import { FormattedAmountInput } from './FormattedAmountInput'
-import { formatRupiah, todayIso } from '../lib/format'
+import { formatPctLabel, formatRupiah, todayIso } from '../lib/format'
 import { isBlankSearch, matchesRecurringBillSearch } from '../lib/listSearch'
 import {
   getRecurringBillDisplayParts,
@@ -1375,8 +1375,9 @@ export function RecurringBillsPanel({
           </div>
           {isFormPyfAuto ? (
             <p className="mt-1.5 text-xs text-neutral-400">
-              From Money Plan ({formPyfKind === 'emergency' ? emergencyPct : investmentPct}%
-              of this month&apos;s income).
+              {`From Money Plan (${formatPctLabel(
+                formPyfKind === 'emergency' ? emergencyPct : investmentPct,
+              )} of this month's income).`}
             </p>
           ) : null}
         </label>

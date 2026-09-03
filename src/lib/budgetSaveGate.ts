@@ -129,6 +129,7 @@ export type EfLoanEvaluation = {
  * Guilt-Free then EF for Wants overspend / unplanned Wants.
  * Transfers into Needs/Wants sinking funds use the same tracks (planned
  * amount fills Planned; overage / unplanned hits Buffer or Guilt-Free).
+ * Transfers into bonus-funded sinking are excluded (not monthly envelope).
  * Closed month: leftover capacity frozen — new overage → EF only.
  */
 export function evaluateExpenseEfLoan(input: {

@@ -8,7 +8,9 @@ import {
   isMissingRecurringSchema,
   isOccurrenceSkipped,
   isEstimateActiveInMonth,
-  occurrenceLogKey,
+  hasOccurrenceLog,
+  indexLogsByOccurrenceKey,
+  indexSkippedOccurrenceKeys,
   occurrencesInMonth,
   dueBillIdByTxIdFromLogs,
   type RecurringBill,
@@ -86,13 +88,21 @@ export function useRecurringBills(yearMonth: string) {
     })
   }, [reload])
 
-  const logByOccurrenceKey = useMemo(() => {
-    const map = new Map<string, RecurringBillLog>()
-    for (const log of logs) {
-      map.set(occurrenceLogKey(log.bill_id, log.occurred_on), log)
-    }
+  const overrideByBillId = useMemo(() => {
+    const map = new Map<string, RecurringBillMonthOverride>()
+    for (const row of overrides) map.set(row.bill_id, row)
     return map
-  }, [logs])
+  }, [overrides])
+
+  const logByOccurrenceKey = useMemo(
+    () =>
+      indexLogsByOccurrenceKey(logs, {
+        bills,
+        yearMonth,
+        overrideByBillId,
+      }),
+    [logs, bills, yearMonth, overrideByBillId],
+  )
 
   const dueBillIdByTxId = useMemo(
     () => dueBillIdByTxIdFromLogs(logs),
@@ -106,19 +116,15 @@ export function useRecurringBills(yearMonth: string) {
     return map
   }, [logs])
 
-  const overrideByBillId = useMemo(() => {
-    const map = new Map<string, RecurringBillMonthOverride>()
-    for (const row of overrides) map.set(row.bill_id, row)
-    return map
-  }, [overrides])
-
-  const skippedOccurrenceKeys = useMemo(() => {
-    const set = new Set<string>()
-    for (const row of occurrenceSkips) {
-      set.add(occurrenceLogKey(row.bill_id, row.occurred_on))
-    }
-    return set
-  }, [occurrenceSkips])
+  const skippedOccurrenceKeys = useMemo(
+    () =>
+      indexSkippedOccurrenceKeys(occurrenceSkips, {
+        bills,
+        yearMonth,
+        overrideByBillId,
+      }),
+    [occurrenceSkips, bills, yearMonth, overrideByBillId],
+  )
 
   const currentMonthDoneByBillId = useMemo(() => {
     const set = new Set<string>()
@@ -137,6 +143,7 @@ export function useRecurringBills(yearMonth: string) {
             occurredOn,
             skippedOccurrenceKeys,
             override,
+            bill.interval_unit,
           )
         ) {
           continue
@@ -158,11 +165,12 @@ export function useRecurringBills(yearMonth: string) {
             occurredOn,
             skippedOccurrenceKeys,
             override,
+            bill.interval_unit,
           )
         ) {
           continue
         }
-        if (logByOccurrenceKey.has(occurrenceLogKey(bill.id, occurredOn))) {
+        if (hasOccurrenceLog(bill, occurredOn, logByOccurrenceKey)) {
           done += 1
         }
       }
@@ -187,11 +195,12 @@ export function useRecurringBills(yearMonth: string) {
             occurredOn,
             skippedOccurrenceKeys,
             override,
+            bill.interval_unit,
           )
         ) {
           continue
         }
-        if (!logByOccurrenceKey.has(occurrenceLogKey(bill.id, occurredOn))) {
+        if (!hasOccurrenceLog(bill, occurredOn, logByOccurrenceKey)) {
           count += 1
         }
       }

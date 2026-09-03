@@ -1,4 +1,5 @@
 import {
+  HISTORY_OVERSPEND_LABEL,
   HISTORY_PLAN_KIND_LABELS,
   type HistoryPlanKind,
 } from './freeGuiltyProgress'
@@ -156,10 +157,22 @@ function planKindMatchesToken(
   return HISTORY_PLAN_KIND_LABELS[kind].toLowerCase().startsWith(token)
 }
 
+/**
+ * Visible History Overspend badge. Prefix so "spend" does not match every
+ * overspend row via the substring inside "Overspend".
+ */
+function overspendMatchesToken(
+  overspend: boolean | undefined,
+  token: string,
+): boolean {
+  if (!overspend) return false
+  return HISTORY_OVERSPEND_LABEL.toLowerCase().startsWith(token)
+}
+
 export function matchesTransactionSearch(
   query: string,
   tx: TransactionWithCategory,
-  extras?: { planKind?: HistoryPlanKind },
+  extras?: { planKind?: HistoryPlanKind; overspend?: boolean },
 ): boolean {
   if (isBlankSearch(query)) return true
 
@@ -205,6 +218,7 @@ export function matchesTransactionSearch(
   return tokens.every(
     (token) =>
       planKindMatchesToken(extras?.planKind, token) ||
+      overspendMatchesToken(extras?.overspend, token) ||
       tokenMatches(haystack, token),
   )
 }

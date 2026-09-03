@@ -53,7 +53,8 @@ import {
   fetchRecurringBills,
   dueBillIdByTxIdFromLogs,
   isMissingRecurringSchema,
-  occurrenceLogKey,
+  indexLogsByOccurrenceKey,
+  indexSkippedOccurrenceKeys,
   type RecurringBill,
   type RecurringBillLog,
   type RecurringBillMonthOverride,
@@ -584,12 +585,15 @@ export function PlanMonthlyProgress() {
 
   const skippedOccurrenceKeys = useMemo(
     () =>
-      new Set(
-        occurrenceSkips
-          .filter((s) => s.year_month === viewYm)
-          .map((s) => occurrenceLogKey(s.bill_id, s.occurred_on)),
+      indexSkippedOccurrenceKeys(
+        occurrenceSkips.filter((s) => s.year_month === viewYm),
+        {
+          bills,
+          yearMonth: viewYm,
+          overrideByBillId: overridesByBillId,
+        },
       ),
-    [occurrenceSkips, viewYm],
+    [occurrenceSkips, viewYm, bills, overridesByBillId],
   )
 
   const budgetUsedBySource = useMemo(
@@ -616,13 +620,18 @@ export function PlanMonthlyProgress() {
     ],
   )
 
-  const logByOccurrenceKey = useMemo(() => {
-    const map = new Map<string, RecurringBillLog>()
-    for (const log of dueLogs) {
-      map.set(occurrenceLogKey(log.bill_id, log.occurred_on), log)
-    }
-    return map
-  }, [dueLogs])
+  const logByOccurrenceKey = useMemo(
+    () =>
+      indexLogsByOccurrenceKey(
+        dueLogs.filter((log) => log.year_month === viewYm),
+        {
+          bills,
+          yearMonth: viewYm,
+          overrideByBillId: overridesByBillId,
+        },
+      ),
+    [dueLogs, bills, viewYm, overridesByBillId],
+  )
 
   const estimateProgress = useMemo(
     () =>

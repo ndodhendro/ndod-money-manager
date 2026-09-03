@@ -10,7 +10,7 @@ import {
   effectiveAmount,
   estimatePlannedOccurrenceCount,
   isOccurrenceSkipped,
-  occurrenceLogKey,
+  hasOccurrenceLog,
   occurrencesInMonth,
   plannedAmountForUpcomingOccurrence,
   type RecurringBill,
@@ -939,11 +939,12 @@ function upcomingAmountForRecurringBill(
         occurredOn,
         skippedOccurrenceKeys,
         override,
+        bill.interval_unit,
       )
     ) {
       continue
     }
-    if (logByOccurrenceKey.has(occurrenceLogKey(bill.id, occurredOn))) {
+    if (hasOccurrenceLog(bill, occurredOn, logByOccurrenceKey)) {
       continue
     }
     upcoming += unit

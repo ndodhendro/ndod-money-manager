@@ -173,6 +173,9 @@ export const HISTORY_PLAN_KIND_LABELS = {
 
 export type HistoryPlanKind = keyof typeof HISTORY_PLAN_KIND_LABELS
 
+/** Visible History Overspend badge (Buffer / Guilt-Free / sinking fund). */
+export const HISTORY_OVERSPEND_LABEL = 'Overspend'
+
 function isMonthBudgetPlanCandidate(
   tx: TransactionWithCategory,
   input: UnplannedSpendInput,

@@ -22,7 +22,7 @@ import {
   fetchRecurringBillOccurrenceSkipsInRange,
   fetchRecurringBills,
   isEstimateActiveInMonth,
-  occurrenceLogKey,
+  indexSkippedOccurrenceKeys,
   type RecurringBill,
   type RecurringBillLog,
   type RecurringBillMonthOverride,
@@ -250,10 +250,14 @@ export function computeDerivedEfOwed(input: {
     const overrideByBillId = new Map(
       monthOverrides.map((row) => [row.bill_id, row] as const),
     )
-    const skippedOccurrenceKeys = new Set<string>()
-    for (const row of skipsByMonth.get(yearMonth) ?? []) {
-      skippedOccurrenceKeys.add(occurrenceLogKey(row.bill_id, row.occurred_on))
-    }
+    const skippedOccurrenceKeys = indexSkippedOccurrenceKeys(
+      skipsByMonth.get(yearMonth) ?? [],
+      {
+        bills: input.bills,
+        yearMonth,
+        overrideByBillId,
+      },
+    )
     const bills = input.bills.filter((bill) =>
       isEstimateActiveInMonth(bill, yearMonth, overrideByBillId.get(bill.id)),
     )

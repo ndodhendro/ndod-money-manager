@@ -14,6 +14,7 @@ import {
 } from './freeWants'
 import {
   effectiveDueDay,
+  hasOccurrenceLog,
   RECURRING_EVERY_OPTIONS,
   type RecurringBill,
   type RecurringBillLog,
@@ -282,8 +283,8 @@ export function sortRecurringOccurrencesForChecklist(
   bucketsById?: Map<string, BucketBudgetRef>,
 ): RecurringChecklistOccurrence[] {
   return [...items].sort((a, b) => {
-    const aDone = logByOccurrenceKey.has(a.key)
-    const bDone = logByOccurrenceKey.has(b.key)
+    const aDone = hasOccurrenceLog(a.bill, a.occurredOn, logByOccurrenceKey)
+    const bDone = hasOccurrenceLog(b.bill, b.occurredOn, logByOccurrenceKey)
     if (aDone !== bDone) return aDone ? 1 : -1
 
     if (a.occurredOn !== b.occurredOn) {

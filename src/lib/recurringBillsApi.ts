@@ -170,6 +170,13 @@ export function occurrenceLogKey(billId: string, occurredOn: string): string {
   return `${billId}:${occurredOn}`
 }
 
+/** Monthly / yearly templates: one dated occurrence per scheduled month. */
+export function isSingleOccurrenceBill(
+  bill: Pick<RecurringBill, 'interval_unit'>,
+): boolean {
+  return bill.interval_unit !== 'week'
+}
+
 /** Month index for YYYY-MM arithmetic (Jan 0000 = 0). */
 function yearMonthIndex(yearMonth: string): number | null {
   if (!/^\d{4}-\d{2}$/.test(yearMonth)) return null
@@ -251,20 +258,68 @@ export function isRecurringSkipped(
   return override?.skipped === true
 }
 
+function skippedKeyIsActive(
+  skippedOccurrenceKeys: Set<string> | Map<string, boolean>,
+  key: string,
+): boolean {
+  if (skippedOccurrenceKeys instanceof Map) {
+    return skippedOccurrenceKeys.get(key) === true
+  }
+  return skippedOccurrenceKeys.has(key)
+}
+
 /** True when this occurrence is skipped (per-date or legacy whole-month). */
 export function isOccurrenceSkipped(
   billId: string,
   occurredOn: string,
   skippedOccurrenceKeys?: Set<string> | Map<string, boolean> | null,
   override?: RecurringBillMonthOverride | null,
+  intervalUnit?: RecurringIntervalUnit,
 ): boolean {
   if (isRecurringSkipped(override)) return true
   if (!skippedOccurrenceKeys) return false
   const key = occurrenceLogKey(billId, occurredOn)
-  if (skippedOccurrenceKeys instanceof Map) {
-    return skippedOccurrenceKeys.get(key) === true
+  if (skippedKeyIsActive(skippedOccurrenceKeys, key)) return true
+  // Monthly: a due-day edit must not leave last month's skip on the old date.
+  if (intervalUnit !== 'month') return false
+  const yearMonth = yearMonthFromIso(occurredOn)
+  const prefix = `${billId}:`
+  const keys =
+    skippedOccurrenceKeys instanceof Map
+      ? skippedOccurrenceKeys.keys()
+      : skippedOccurrenceKeys
+  for (const skipKey of keys) {
+    if (!skipKey.startsWith(prefix)) continue
+    const skipOn = skipKey.slice(prefix.length)
+    if (yearMonthFromIso(skipOn) !== yearMonth) continue
+    if (skippedKeyIsActive(skippedOccurrenceKeys, skipKey)) return true
   }
-  return skippedOccurrenceKeys.has(key)
+  return false
+}
+
+/**
+ * Whether this checklist date is already paid.
+ * Weekly: exact (bill, date). Monthly: any log for that bill in the same month
+ * (due-day edits must not orphan a checked instance).
+ */
+export function hasOccurrenceLog(
+  bill: Pick<RecurringBill, 'id' | 'interval_unit'>,
+  occurredOn: string,
+  logByOccurrenceKey: Map<string, RecurringBillLog>,
+): boolean {
+  if (logByOccurrenceKey.has(occurrenceLogKey(bill.id, occurredOn))) return true
+  if (!isSingleOccurrenceBill(bill)) return false
+  const yearMonth = yearMonthFromIso(occurredOn)
+  for (const log of logByOccurrenceKey.values()) {
+    if (log.bill_id !== bill.id) continue
+    if (
+      log.year_month === yearMonth ||
+      yearMonthFromIso(log.occurred_on) === yearMonth
+    ) {
+      return true
+    }
+  }
+  return false
 }
 
 export function effectiveAmount(
@@ -360,6 +415,84 @@ export function occurrencesInMonth(
   if (!cursor) return []
   const dueDay = effectiveDueDay(bill, override)
   return [recurringOccurredOn(cursor, dueDay)]
+}
+
+/**
+ * Index logs by bill+date. For monthly bills, also alias a same-month log
+ * onto the current occurrence date so a due-day edit does not orphan a check.
+ */
+export function indexLogsByOccurrenceKey(
+  logs: RecurringBillLog[],
+  options?: {
+    bills?: RecurringBill[]
+    yearMonth?: string
+    overrideByBillId?: Map<string, RecurringBillMonthOverride>
+  },
+): Map<string, RecurringBillLog> {
+  const map = new Map<string, RecurringBillLog>()
+  for (const log of logs) {
+    map.set(occurrenceLogKey(log.bill_id, log.occurred_on), log)
+  }
+  const bills = options?.bills
+  const yearMonth = options?.yearMonth
+  if (!bills || !yearMonth) return map
+  for (const bill of bills) {
+    if (!isSingleOccurrenceBill(bill)) continue
+    const dates = occurrencesInMonth(
+      bill,
+      yearMonth,
+      options.overrideByBillId?.get(bill.id),
+    )
+    const canonical = dates[0]
+    if (!canonical) continue
+    const canonicalKey = occurrenceLogKey(bill.id, canonical)
+    if (map.has(canonicalKey)) continue
+    const alias = logs.find(
+      (row) =>
+        row.bill_id === bill.id &&
+        (row.year_month === yearMonth ||
+          yearMonthFromIso(row.occurred_on) === yearMonth),
+    )
+    if (alias) map.set(canonicalKey, alias)
+  }
+  return map
+}
+
+/** Index skip keys; monthly aliases a same-month skip onto the current date. */
+export function indexSkippedOccurrenceKeys(
+  skips: Array<{ bill_id: string; occurred_on: string }>,
+  options?: {
+    bills?: RecurringBill[]
+    yearMonth?: string
+    overrideByBillId?: Map<string, RecurringBillMonthOverride>
+  },
+): Set<string> {
+  const set = new Set<string>()
+  for (const row of skips) {
+    set.add(occurrenceLogKey(row.bill_id, row.occurred_on))
+  }
+  const bills = options?.bills
+  const yearMonth = options?.yearMonth
+  if (!bills || !yearMonth) return set
+  for (const bill of bills) {
+    if (!isSingleOccurrenceBill(bill)) continue
+    const dates = occurrencesInMonth(
+      bill,
+      yearMonth,
+      options.overrideByBillId?.get(bill.id),
+    )
+    const canonical = dates[0]
+    if (!canonical) continue
+    const canonicalKey = occurrenceLogKey(bill.id, canonical)
+    if (set.has(canonicalKey)) continue
+    const alias = skips.find(
+      (row) =>
+        row.bill_id === bill.id &&
+        yearMonthFromIso(row.occurred_on) === yearMonth,
+    )
+    if (alias) set.add(canonicalKey)
+  }
+  return set
 }
 
 function parseEndsYearMonth(value: unknown): string | null {
@@ -482,12 +615,13 @@ export function countDueOrOverdueUnchecked(
           occurredOn,
           skippedOccurrenceKeys,
           override,
+          bill.interval_unit,
         )
       ) {
         continue
       }
       if (occurredOn > today) continue
-      if (logByOccurrenceKey.has(occurrenceLogKey(bill.id, occurredOn))) {
+      if (hasOccurrenceLog(bill, occurredOn, logByOccurrenceKey)) {
         continue
       }
       count += 1
@@ -516,12 +650,13 @@ export function countUpcomingUnchecked(
           occurredOn,
           skippedOccurrenceKeys,
           override,
+          bill.interval_unit,
         )
       ) {
         continue
       }
       if (occurredOn <= today) continue
-      if (logByOccurrenceKey.has(occurrenceLogKey(bill.id, occurredOn))) {
+      if (hasOccurrenceLog(bill, occurredOn, logByOccurrenceKey)) {
         continue
       }
       count += 1
@@ -569,7 +704,13 @@ export function estimateOccurrenceCount(
   let count = 0
   for (const occurredOn of occurrencesInMonth(bill, yearMonth, override)) {
     if (
-      isOccurrenceSkipped(bill.id, occurredOn, skippedOccurrenceKeys, override)
+      isOccurrenceSkipped(
+        bill.id,
+        occurredOn,
+        skippedOccurrenceKeys,
+        override,
+        bill.interval_unit,
+      )
     ) {
       continue
     }
@@ -1039,6 +1180,150 @@ async function upsertMonthOverrideRow(
   return mapOverride(data as Record<string, unknown>)
 }
 
+async function fetchBillIntervalUnit(
+  billId: string,
+): Promise<RecurringIntervalUnit | null> {
+  const { data, error } = await supabase
+    .from('recurring_bills')
+    .select('interval_unit')
+    .eq('id', billId)
+    .maybeSingle()
+  if (error || !data) return null
+  return data.interval_unit === 'week' ? 'week' : 'month'
+}
+
+async function moveOccurredOnInTable(
+  table: 'recurring_bill_logs' | 'recurring_bill_occurrence_skips',
+  billId: string,
+  yearMonth: string,
+  newOccurredOn: string,
+): Promise<void> {
+  const { data, error } = await supabase
+    .from(table)
+    .select('id, occurred_on')
+    .eq('bill_id', billId)
+    .eq('year_month', yearMonth)
+  if (error) {
+    if (
+      table === 'recurring_bill_occurrence_skips' &&
+      isMissingOccurrenceSkipsSchema(error.message)
+    ) {
+      return
+    }
+    if (
+      table === 'recurring_bill_logs' &&
+      isMissingOccurredOnColumn(error.message)
+    ) {
+      return
+    }
+    throw new Error(error.message)
+  }
+  const rows = (data ?? []).map((row) => ({
+    id: String(row.id),
+    occurred_on: String(row.occurred_on).slice(0, 10),
+  }))
+  if (rows.length === 0) return
+  if (rows.some((row) => row.occurred_on === newOccurredOn)) return
+  const { error: updateError } = await supabase
+    .from(table)
+    .update({ occurred_on: newOccurredOn })
+    .eq('id', rows[0]!.id)
+  if (updateError) throw new Error(updateError.message)
+}
+
+/**
+ * Move this month's checklist log/skip onto the new due date.
+ * Does not change History transaction dates.
+ */
+export async function remapOccurrenceDateInMonth(
+  billId: string,
+  yearMonth: string,
+  newDueDay: number,
+  intervalUnit?: RecurringIntervalUnit | null,
+): Promise<void> {
+  const unit = intervalUnit ?? (await fetchBillIntervalUnit(billId))
+  if (unit !== 'month') return
+  const cursor = cursorFromYearMonth(yearMonth)
+  if (!cursor) return
+  const newOccurredOn = recurringOccurredOn(cursor, newDueDay)
+  await moveOccurredOnInTable(
+    'recurring_bill_logs',
+    billId,
+    yearMonth,
+    newOccurredOn,
+  )
+  await moveOccurredOnInTable(
+    'recurring_bill_occurrence_skips',
+    billId,
+    yearMonth,
+    newOccurredOn,
+  )
+}
+
+/** Keep paid/skipped months attached after a template due-day change. */
+async function remapLoggedMonthsToEffectiveDueDay(
+  bill: RecurringBill,
+): Promise<void> {
+  if (!bill.is_recurring || !isSingleOccurrenceBill(bill)) return
+
+  const [logsRes, skipsRes, overridesRes] = await Promise.all([
+    supabase
+      .from('recurring_bill_logs')
+      .select('year_month')
+      .eq('bill_id', bill.id),
+    supabase
+      .from('recurring_bill_occurrence_skips')
+      .select('year_month')
+      .eq('bill_id', bill.id),
+    supabase
+      .from('recurring_bill_month_overrides')
+      .select('*')
+      .eq('bill_id', bill.id),
+  ])
+
+  if (logsRes.error) {
+    if (!isMissingOccurredOnColumn(logsRes.error.message)) {
+      throw new Error(logsRes.error.message)
+    }
+    return
+  }
+
+  const months = new Set<string>()
+  for (const row of logsRes.data ?? []) {
+    months.add(String(row.year_month))
+  }
+  if (
+    !skipsRes.error ||
+    !isMissingOccurrenceSkipsSchema(skipsRes.error.message)
+  ) {
+    if (skipsRes.error) throw new Error(skipsRes.error.message)
+    for (const row of skipsRes.data ?? []) {
+      months.add(String(row.year_month))
+    }
+  }
+
+  const overrideByMonth = new Map<string, RecurringBillMonthOverride>()
+  if (
+    !overridesRes.error ||
+    !isMissingMonthOverridesSchema(overridesRes.error.message)
+  ) {
+    if (overridesRes.error) throw new Error(overridesRes.error.message)
+    for (const row of overridesRes.data ?? []) {
+      const mapped = mapOverride(row as Record<string, unknown>)
+      overrideByMonth.set(mapped.year_month, mapped)
+    }
+  }
+
+  for (const yearMonth of months) {
+    await remapOccurrenceDateInMonth(
+      bill.id,
+      yearMonth,
+      effectiveDueDay(bill, overrideByMonth.get(yearMonth)),
+      bill.interval_unit,
+    )
+  }
+}
+
 /**
  * Upsert this-month amount/due_day. Clears the row when both match the template
  * and the item is not skipped.
@@ -1059,6 +1344,14 @@ export async function upsertRecurringBillMonthOverride(
   const dueMatches = input.dueDay === input.templateDueDay
   const existing = await fetchMonthOverrideRow(input.billId, input.yearMonth)
   const skipped = existing?.skipped === true
+  const oldDueDay = existing?.due_day ?? input.templateDueDay
+  if (oldDueDay !== input.dueDay) {
+    await remapOccurrenceDateInMonth(
+      input.billId,
+      input.yearMonth,
+      input.dueDay,
+    )
+  }
 
   if (amountMatches && dueMatches) {
     if (!skipped) {
@@ -1282,11 +1575,16 @@ export async function setRecurringBillOccurrenceSkipped(
     return
   }
 
-  const { error } = await supabase
+  const intervalUnit = await fetchBillIntervalUnit(billId)
+  let skipDelete = supabase
     .from('recurring_bill_occurrence_skips')
     .delete()
     .eq('bill_id', billId)
-    .eq('occurred_on', occurredOn)
+  skipDelete =
+    intervalUnit === 'month'
+      ? skipDelete.eq('year_month', yearMonth)
+      : skipDelete.eq('occurred_on', occurredOn)
+  const { error } = await skipDelete
   if (error) {
     if (isMissingOccurrenceSkipsSchema(error.message)) {
       throw new Error(
@@ -1761,6 +2059,17 @@ export async function updateRecurringBill(
   }>,
 ): Promise<RecurringBill> {
   const nextPatch = { ...patch }
+  let previous: RecurringBill | null = null
+  if (typeof nextPatch.due_day === 'number') {
+    const { data: prevRow, error: prevError } = await supabase
+      .from('recurring_bills')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle()
+    if (!prevError && prevRow) {
+      previous = mapBill(prevRow as Record<string, unknown>)
+    }
+  }
   if (nextPatch.type === 'income' || nextPatch.type === 'transfer') {
     nextPatch.budget_group = null
   } else if (
@@ -1852,7 +2161,17 @@ export async function updateRecurringBill(
     }
     throw new Error(error.message)
   }
-  return mapBill(data as Record<string, unknown>)
+  const updated = mapBill(data as Record<string, unknown>)
+  if (
+    previous &&
+    previous.due_day !== updated.due_day &&
+    isSingleOccurrenceBill(previous) &&
+    isSingleOccurrenceBill(updated) &&
+    updated.is_recurring
+  ) {
+    await remapLoggedMonthsToEffectiveDueDay(updated)
+  }
+  return updated
 }
 
 export type DueItemTransactionRef = {
@@ -2080,7 +2399,7 @@ export async function unmarkBillPaid(
 ): Promise<{ transactionId: string | null }> {
   const { data: existing, error: fetchError } = await supabase
     .from('recurring_bill_logs')
-    .select('transaction_id')
+    .select('id, transaction_id')
     .eq('bill_id', billId)
     .eq('occurred_on', occurredOn)
     .maybeSingle()
@@ -2107,16 +2426,43 @@ export async function unmarkBillPaid(
   }
   if (fetchError) throw new Error(fetchError.message)
 
+  if (existing) {
+    const { error } = await supabase
+      .from('recurring_bill_logs')
+      .delete()
+      .eq('id', existing.id)
+    if (error) throw new Error(error.message)
+    notifyRecurringBillsChanged()
+    return {
+      transactionId: (existing.transaction_id as string | null) ?? null,
+    }
+  }
+
+  const intervalUnit = await fetchBillIntervalUnit(billId)
+  if (intervalUnit !== 'month') {
+    return { transactionId: null }
+  }
+
+  // Monthly: due-day edit may have left the log on the previous date.
+  const { data: monthLogs, error: monthError } = await supabase
+    .from('recurring_bill_logs')
+    .select('id, transaction_id')
+    .eq('bill_id', billId)
+    .eq('year_month', yearMonth)
+  if (monthError) throw new Error(monthError.message)
+  const rows = monthLogs ?? []
+  if (rows.length === 0) {
+    return { transactionId: null }
+  }
   const { error } = await supabase
     .from('recurring_bill_logs')
     .delete()
     .eq('bill_id', billId)
-    .eq('occurred_on', occurredOn)
+    .eq('year_month', yearMonth)
   if (error) throw new Error(error.message)
-
   notifyRecurringBillsChanged()
   return {
-    transactionId: (existing?.transaction_id as string | null) ?? null,
+    transactionId: (rows[0]?.transaction_id as string | null) ?? null,
   }
 }
 

@@ -27,6 +27,8 @@ import {
   setRecurringBillOccurrenceSkipped,
   unmarkBillPaid,
   upsertRecurringBillMonthOverride,
+  hasOccurrenceLog,
+  indexLogsByOccurrenceKey,
   type RecurringBill,
   type RecurringBillLog,
   type RecurringBillMonthOverride,
@@ -142,25 +144,25 @@ function resolveLogMap(
   yearMonth: string,
   overrideByBillId: Map<string, RecurringBillMonthOverride>,
 ): Map<string, RecurringBillLog> {
-  if (logByOccurrenceKey) return logByOccurrenceKey
+  if (logByOccurrenceKey) {
+    return indexLogsByOccurrenceKey([...logByOccurrenceKey.values()], {
+      bills,
+      yearMonth,
+      overrideByBillId,
+    })
+  }
   if (!logByBillId) return EMPTY_LOG_BY_OCCURRENCE
-  const map = new Map<string, RecurringBillLog>()
+  const logs: RecurringBillLog[] = []
   for (const bill of bills) {
     const log = logByBillId.get(bill.id)
     if (!log) continue
-    const dates = occurrencesInMonth(
-      bill,
-      yearMonth,
-      overrideByBillId.get(bill.id),
-    )
-    const occurredOn = log.occurred_on || dates[0]
-    if (!occurredOn) continue
-    map.set(occurrenceLogKey(bill.id, occurredOn), {
-      ...log,
-      occurred_on: occurredOn,
-    })
+    logs.push(log)
   }
-  return map
+  return indexLogsByOccurrenceKey(logs, {
+    bills,
+    yearMonth,
+    overrideByBillId,
+  })
 }
 
 export function DueThisMonthChecklist({
@@ -359,6 +361,7 @@ export function DueThisMonthChecklist({
           occurredOn,
           skippedOccurrenceKeys,
           overrideByBillId.get(billId),
+          bills.find((row) => row.id === billId)?.interval_unit,
         )
         if (serverSkipped === skipped) {
           next.delete(key)
@@ -367,7 +370,7 @@ export function DueThisMonthChecklist({
       }
       return changed ? next : prev
     })
-  }, [overrideByBillId, skippedOccurrenceKeys])
+  }, [bills, overrideByBillId, skippedOccurrenceKeys])
 
   const effectiveLogByOccurrenceKey = useMemo(() => {
     if (pendingDone.size === 0) return baseLogByOccurrenceKey
@@ -396,11 +399,13 @@ export function DueThisMonthChecklist({
   function isSkipped(billId: string, occurredOn: string): boolean {
     const key = occurrenceLogKey(billId, occurredOn)
     if (pendingSkipped.has(key)) return pendingSkipped.get(key) === true
+    const bill = bills.find((row) => row.id === billId)
     return isOccurrenceSkipped(
       billId,
       occurredOn,
       skippedOccurrenceKeys,
       overrideByBillId.get(billId),
+      bill?.interval_unit,
     )
   }
 
@@ -432,7 +437,11 @@ export function DueThisMonthChecklist({
         byId,
         bucketsById,
       )
-      const amount = effectiveLogByOccurrenceKey.has(item.key)
+      const amount = hasOccurrenceLog(
+        item.bill,
+        item.occurredOn,
+        effectiveLogByOccurrenceKey,
+      )
         ? resolvedAmount(item.bill, overrideByBillId.get(item.bill.id))
         : planAmountForOccurrence(
             item.bill,
@@ -440,7 +449,14 @@ export function DueThisMonthChecklist({
           )
       let statusLabel: string | null = null
       if (isSkipped(item.bill.id, item.occurredOn)) statusLabel = 'skipped'
-      else if (effectiveLogByOccurrenceKey.has(item.key)) statusLabel = 'checked'
+      else if (
+        hasOccurrenceLog(
+          item.bill,
+          item.occurredOn,
+          effectiveLogByOccurrenceKey,
+        )
+      )
+        statusLabel = 'checked'
       else if (item.occurredOn <= todayIso()) statusLabel = 'due'
       else statusLabel = 'unchecked'
 
@@ -475,7 +491,8 @@ export function DueThisMonthChecklist({
         skipped.push(item)
         continue
       }
-      if (effectiveLogByOccurrenceKey.has(item.key)) continue
+      if (hasOccurrenceLog(item.bill, item.occurredOn, effectiveLogByOccurrenceKey))
+        continue
       if (item.occurredOn <= today) due.push(item)
       else unchecked.push(item)
     }
@@ -1103,8 +1120,10 @@ export function DueThisMonthChecklist({
   const editingOccurrenceDone =
     editingBill != null &&
     editingOccurredOn != null &&
-    effectiveLogByOccurrenceKey.has(
-      occurrenceLogKey(editingBill.id, editingOccurredOn),
+    hasOccurrenceLog(
+      editingBill,
+      editingOccurredOn,
+      effectiveLogByOccurrenceKey,
     )
   const editingInitialAmount = editingBill
     ? editingOccurrenceDone
@@ -1134,7 +1153,12 @@ export function DueThisMonthChecklist({
                   const { bill, occurredOn, key } = item
                   const skipped = section.status === 'skipped'
                   const done =
-                    !skipped && effectiveLogByOccurrenceKey.has(key)
+                    !skipped &&
+                    hasOccurrenceLog(
+                      bill,
+                      occurredOn,
+                      effectiveLogByOccurrenceKey,
+                    )
                   const busy = busyKey === key
                   const override = overrideByBillId.get(bill.id)
                   const amount = done

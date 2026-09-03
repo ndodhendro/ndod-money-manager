@@ -42,6 +42,7 @@ import { compareHistoryDayDisplay } from '../lib/estimateProgress'
 import {
   checkingBucketIdSet,
   estimateExpenseCoverageKeys,
+  HISTORY_OVERSPEND_LABEL,
   HISTORY_PLAN_KIND_LABELS,
   historyPlanKindByTxId,
   monthBudgetCeilingOverspendTransactionIds,
@@ -53,8 +54,8 @@ import {
 import { useFreeGuiltyProgress } from '../hooks/useFreeGuiltyProgress'
 import {
   countDueOrOverdueUnchecked,
+  hasOccurrenceLog,
   isOccurrenceSkipped,
-  occurrenceLogKey,
   occurrencesInMonth,
 } from '../lib/recurringBillsApi'
 import { deleteTransaction, reorderTransactions } from '../lib/transactionsApi'
@@ -354,6 +355,7 @@ export function History() {
   const filtered = transactions.filter((tx) =>
     matchesTransactionSearch(searchQuery, tx, {
       planKind: planKindByTxId.get(tx.id),
+      overspend: overspendTxIds.has(tx.id),
     }),
   )
   const searchActive = !isBlankSearch(searchQuery)
@@ -412,11 +414,12 @@ export function History() {
             occurredOn,
             skippedOccurrenceKeys,
             override,
+            bill.interval_unit,
           )
         ) {
           continue
         }
-        if (logByOccurrenceKey.has(occurrenceLogKey(bill.id, occurredOn))) {
+        if (hasOccurrenceLog(bill, occurredOn, logByOccurrenceKey)) {
           continue
         }
         if (occurredOn > today) continue
@@ -708,7 +711,7 @@ export function History() {
                                 <p
                                   className={`truncate text-xs font-medium leading-none whitespace-nowrap ${BUDGET_GROUP_TEXT_CLASS.needs}`}
                                 >
-                                  Overspend
+                                  {HISTORY_OVERSPEND_LABEL}
                                 </p>
                               ) : null}
                             </div>
@@ -720,7 +723,7 @@ export function History() {
                                 <p
                                   className={`truncate text-xs font-medium leading-none whitespace-nowrap ${BUDGET_GROUP_TEXT_CLASS.needs}`}
                                 >
-                                  Overspend
+                                  {HISTORY_OVERSPEND_LABEL}
                                 </p>
                               </div>
                             ) : null}

@@ -29,14 +29,18 @@ export const CIRCLE_LABELS: Record<Circle, string> = {
   friends: 'Friends',
 }
 
+/** Text tone for circle labels (inline badges, History Planned, etc.). */
+export const CIRCLE_TEXT_CLASS: Record<Circle, string> = {
+  hd_family: 'text-emerald-700 dark:text-emerald-300',
+  extended_family: 'text-sky-700 dark:text-sky-300',
+  friends: 'text-pink-700 dark:text-pink-300',
+}
+
 /** Warna chip circle — soft, konsisten di seluruh app. */
 export const CIRCLE_BADGE_CLASS: Record<Circle, string> = {
-  hd_family:
-    'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
-  extended_family:
-    'bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300',
-  friends:
-    'bg-pink-100 text-pink-700 dark:bg-pink-950 dark:text-pink-300',
+  hd_family: `bg-emerald-100 dark:bg-emerald-950 ${CIRCLE_TEXT_CLASS.hd_family}`,
+  extended_family: `bg-sky-100 dark:bg-sky-950 ${CIRCLE_TEXT_CLASS.extended_family}`,
+  friends: `bg-pink-100 dark:bg-pink-950 ${CIRCLE_TEXT_CLASS.friends}`,
 }
 
 export function isCircle(value: unknown): value is Circle {

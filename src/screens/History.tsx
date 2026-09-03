@@ -42,6 +42,8 @@ import { compareHistoryDayDisplay } from '../lib/estimateProgress'
 import {
   checkingBucketIdSet,
   estimateExpenseCoverageKeys,
+  HISTORY_PLAN_KIND_LABELS,
+  historyPlanKindByTxId,
   monthBudgetCeilingOverspendTransactionIds,
 } from '../lib/freeGuiltyProgress'
 import {
@@ -60,6 +62,7 @@ import { sinkingLinkedCategoryIds } from '../lib/bucketsApi'
 import {
   BUDGET_GROUP_TEXT_CLASS,
   categoryDisplayParts,
+  CIRCLE_TEXT_CLASS,
   formatTransferLabel,
   formatTransferToLabel,
   isBudgetGroup,
@@ -283,22 +286,26 @@ export function History() {
   const historyTxs = filtered.filter((tx) => !tx.complete_later)
   const dayReorderEnabled = !searchActive
 
+  const checkingIds = useMemo(() => checkingBucketIdSet(buckets), [buckets])
+
+  const estimateCoverageKeys = useMemo(() => {
+    const isExpenseNeedsOrWantsEstimate = (bill: (typeof bills)[number]) => {
+      if (!isPlannedNeedsSchedule(bill)) return false
+      if (bill.type !== 'expense') return false
+      const g = budgetGroupOfEstimate(bill, categoriesById)
+      return g === 'needs' || g === 'wants'
+    }
+    return estimateExpenseCoverageKeys(
+      bills,
+      categoriesById,
+      isExpenseNeedsOrWantsEstimate,
+      bucketsById,
+    )
+  }, [bills, categoriesById, bucketsById])
+
   const overspendTxIds = useMemo(() => {
     const ids = new Set<string>()
     if (allocation) {
-      const checkingIds = checkingBucketIdSet(buckets)
-      const isExpenseNeedsOrWantsEstimate = (bill: (typeof bills)[number]) => {
-        if (!isPlannedNeedsSchedule(bill)) return false
-        if (bill.type !== 'expense') return false
-        const g = budgetGroupOfEstimate(bill, categoriesById)
-        return g === 'needs' || g === 'wants'
-      }
-      const coverageKeys = estimateExpenseCoverageKeys(
-        bills,
-        categoriesById,
-        isExpenseNeedsOrWantsEstimate,
-        bucketsById,
-      )
       for (const id of monthBudgetCeilingOverspendTransactionIds({
         bills,
         overridesByBillId: overrideByBillId,
@@ -308,7 +315,7 @@ export function History() {
         yearMonth,
         transactions,
         checkingBucketIds: checkingIds,
-        estimateCoverageKeys: coverageKeys,
+        estimateCoverageKeys,
         bufferAllowance: allocation.buffer,
         guiltFreeAllowance: allocation.guiltFree,
         dueBillIdByTxId,
@@ -336,8 +343,30 @@ export function History() {
     movements,
     yearMonth,
     transactions,
+    checkingIds,
+    estimateCoverageKeys,
     dueBillIdByTxId,
   ])
+
+  const planKindByTxId = useMemo(
+    () =>
+      historyPlanKindByTxId({
+        transactions,
+        estimateCoverageKeys,
+        checkingBucketIds: checkingIds,
+        dueBillIdByTxId,
+        bucketsById,
+        categoriesById,
+      }),
+    [
+      transactions,
+      estimateCoverageKeys,
+      checkingIds,
+      dueBillIdByTxId,
+      bucketsById,
+      categoriesById,
+    ],
+  )
 
   function groupByDate(items: TransactionWithCategory[]) {
     const grouped = items.reduce<Record<string, TransactionWithCategory[]>>(
@@ -521,6 +550,11 @@ export function History() {
                       isBudgetGroup(tx.to_bucket.budget_group)
                     ? tx.to_bucket.budget_group
                     : null
+              const planKind = showOverspend
+                ? planKindByTxId.get(tx.id)
+                : undefined
+              const showOverspendLabel =
+                showOverspend && overspendTxIds.has(tx.id)
 
               return (
                 <HistoryTxSwipeRow
@@ -646,26 +680,49 @@ export function History() {
                             {amountLabel}
                           </p>
                         </div>
-                        {budgetGroup ||
-                        (showOverspend && overspendTxIds.has(tx.id)) ? (
-                          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
-                            {budgetGroup ? (
-                              <p className="truncate text-left text-xs leading-none">
-                                <BudgetGroupBadge group={budgetGroup} />
-                              </p>
-                            ) : (
-                              <span className="invisible truncate text-xs leading-none">
-                                .
-                              </span>
-                            )}
-                            {showOverspend && overspendTxIds.has(tx.id) ? (
-                              <p
-                                className={`truncate text-xs font-medium leading-none whitespace-nowrap ${BUDGET_GROUP_TEXT_CLASS.needs}`}
-                              >
-                                Overspend
-                              </p>
+                        {budgetGroup || planKind || showOverspendLabel ? (
+                          <>
+                            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
+                              {budgetGroup ? (
+                                <p className="truncate text-left text-xs leading-none">
+                                  <BudgetGroupBadge group={budgetGroup} />
+                                </p>
+                              ) : (
+                                <span className="invisible truncate text-xs leading-none">
+                                  .
+                                </span>
+                              )}
+                              {planKind ? (
+                                <p
+                                  className={`truncate text-xs font-medium leading-none whitespace-nowrap ${
+                                    planKind === 'unplanned'
+                                      ? 'text-amber-600 dark:text-amber-400'
+                                      : CIRCLE_TEXT_CLASS.hd_family
+                                  }`}
+                                >
+                                  {HISTORY_PLAN_KIND_LABELS[planKind]}
+                                </p>
+                              ) : showOverspendLabel ? (
+                                <p
+                                  className={`truncate text-xs font-medium leading-none whitespace-nowrap ${BUDGET_GROUP_TEXT_CLASS.needs}`}
+                                >
+                                  Overspend
+                                </p>
+                              ) : null}
+                            </div>
+                            {planKind && showOverspendLabel ? (
+                              <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
+                                <span className="invisible truncate text-xs leading-none">
+                                  .
+                                </span>
+                                <p
+                                  className={`truncate text-xs font-medium leading-none whitespace-nowrap ${BUDGET_GROUP_TEXT_CLASS.needs}`}
+                                >
+                                  Overspend
+                                </p>
+                              </div>
                             ) : null}
-                          </div>
+                          </>
                         ) : null}
                       </>
                     )}

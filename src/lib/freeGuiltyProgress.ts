@@ -166,6 +166,54 @@ export function unplannedWantsTransactionIds(
   return ids
 }
 
+export const HISTORY_PLAN_KIND_LABELS = {
+  planned: 'Planned',
+  unplanned: 'Unplanned',
+} as const
+
+export type HistoryPlanKind = keyof typeof HISTORY_PLAN_KIND_LABELS
+
+function isMonthBudgetPlanCandidate(
+  tx: TransactionWithCategory,
+  input: UnplannedSpendInput,
+): boolean {
+  if (tx.complete_later) return false
+  if (tx.type === 'expense') {
+    if (!isMainOrCheckingExpense(tx, input.checkingBucketIds)) return false
+    const group = budgetGroupOfTx(tx)
+    return (group === 'needs' || group === 'wants') && Boolean(tx.category_id)
+  }
+  if (tx.type !== 'transfer' || !tx.to_bucket_id) return false
+  if (!isFromMainOrChecking(tx, input.checkingBucketIds)) return false
+  if (!input.bucketsById) return false
+  const destGroup = budgetGroupOfTransferTo(
+    tx.to_bucket_id,
+    input.bucketsById,
+    input.categoriesById,
+  )
+  return destGroup === 'needs' || destGroup === 'wants'
+}
+
+/**
+ * History row kind under the amount: due-item / estimate coverage = Planned,
+ * Buffer / Guilt-Free Quick Add = Unplanned. Income and non–Needs/Wants
+ * outflows are omitted.
+ */
+export function historyPlanKindByTxId(
+  input: UnplannedSpendInput,
+): Map<string, HistoryPlanKind> {
+  const unplanned = new Set<string>([
+    ...unplannedNeedsTransactionIds(input),
+    ...unplannedWantsTransactionIds(input),
+  ])
+  const byId = new Map<string, HistoryPlanKind>()
+  for (const tx of input.transactions) {
+    if (!isMonthBudgetPlanCandidate(tx, input)) continue
+    byId.set(tx.id, unplanned.has(tx.id) ? 'unplanned' : 'planned')
+  }
+  return byId
+}
+
 /**
  * Wants outflows outside non-recurring Monthly Estimate coverage (Main/checking):
  * expenses plus Quick Add transfers into Wants sinking funds.

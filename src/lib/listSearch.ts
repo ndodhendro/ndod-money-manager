@@ -1,3 +1,7 @@
+import {
+  HISTORY_PLAN_KIND_LABELS,
+  type HistoryPlanKind,
+} from './freeGuiltyProgress'
 import { formatNumber, formatRupiah } from './format'
 import { budgetGroupOfTx } from './moneyPlan'
 import {
@@ -140,9 +144,22 @@ export function matchesBucketSearch(
   )
 }
 
+/**
+ * Visible History Planned / Unplanned badge. Prefix on the label (not a
+ * joined haystack) so "planned" does not also hit Unplanned.
+ */
+function planKindMatchesToken(
+  kind: HistoryPlanKind | undefined,
+  token: string,
+): boolean {
+  if (!kind) return false
+  return HISTORY_PLAN_KIND_LABELS[kind].toLowerCase().startsWith(token)
+}
+
 export function matchesTransactionSearch(
   query: string,
   tx: TransactionWithCategory,
+  extras?: { planKind?: HistoryPlanKind },
 ): boolean {
   if (isBlankSearch(query)) return true
 
@@ -163,8 +180,9 @@ export function matchesTransactionSearch(
     ? CIRCLE_LABELS[tx.circle]
     : (tx.circle ?? '')
 
-  return matchesSearchText(
-    query,
+  const q = normalizeSearchQuery(query)
+  const tokens = q.split(/\s+/).filter(Boolean)
+  const haystack = [
     display.parentName,
     display.childName,
     display.note,
@@ -176,6 +194,18 @@ export function matchesTransactionSearch(
     tx.occurred_on,
     ...budgetGroupSearchParts(budgetGroupOfTx(tx)),
     ...amountSearchParts(tx.amount),
+  ]
+    .flatMap((p) => {
+      if (p == null) return []
+      return [String(p)]
+    })
+    .join(' ')
+    .toLowerCase()
+
+  return tokens.every(
+    (token) =>
+      planKindMatchesToken(extras?.planKind, token) ||
+      tokenMatches(haystack, token),
   )
 }
 

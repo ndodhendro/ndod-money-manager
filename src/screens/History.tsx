@@ -269,23 +269,6 @@ export function History() {
     }
   }
 
-  const filtered = transactions.filter((tx) =>
-    matchesTransactionSearch(searchQuery, tx),
-  )
-  const searchActive = !isBlankSearch(searchQuery)
-
-  const monthIncome = filtered
-    .filter((tx) => tx.type === 'income' && !tx.complete_later)
-    .reduce((sum, tx) => sum + tx.amount, 0)
-  const monthExpense = filtered
-    .filter((tx) => tx.type === 'expense' && !tx.complete_later)
-    .reduce((sum, tx) => sum + tx.amount, 0)
-  const monthNet = monthIncome - monthExpense
-
-  const completeLaterTxs = filtered.filter((tx) => tx.complete_later)
-  const historyTxs = filtered.filter((tx) => !tx.complete_later)
-  const dayReorderEnabled = !searchActive
-
   const checkingIds = useMemo(() => checkingBucketIdSet(buckets), [buckets])
 
   const estimateCoverageKeys = useMemo(() => {
@@ -367,6 +350,25 @@ export function History() {
       categoriesById,
     ],
   )
+
+  const filtered = transactions.filter((tx) =>
+    matchesTransactionSearch(searchQuery, tx, {
+      planKind: planKindByTxId.get(tx.id),
+    }),
+  )
+  const searchActive = !isBlankSearch(searchQuery)
+
+  const monthIncome = filtered
+    .filter((tx) => tx.type === 'income' && !tx.complete_later)
+    .reduce((sum, tx) => sum + tx.amount, 0)
+  const monthExpense = filtered
+    .filter((tx) => tx.type === 'expense' && !tx.complete_later)
+    .reduce((sum, tx) => sum + tx.amount, 0)
+  const monthNet = monthIncome - monthExpense
+
+  const completeLaterTxs = filtered.filter((tx) => tx.complete_later)
+  const historyTxs = filtered.filter((tx) => !tx.complete_later)
+  const dayReorderEnabled = !searchActive
 
   function groupByDate(items: TransactionWithCategory[]) {
     const grouped = items.reduce<Record<string, TransactionWithCategory[]>>(
@@ -683,24 +685,24 @@ export function History() {
                         {budgetGroup || planKind || showOverspendLabel ? (
                           <>
                             <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
-                              {budgetGroup ? (
-                                <p className="truncate text-left text-xs leading-none">
-                                  <BudgetGroupBadge group={budgetGroup} />
-                                </p>
-                              ) : (
-                                <span className="invisible truncate text-xs leading-none">
-                                  .
-                                </span>
-                              )}
                               {planKind ? (
                                 <p
-                                  className={`truncate text-xs font-medium leading-none whitespace-nowrap ${
+                                  className={`truncate text-left text-xs font-medium leading-none ${
                                     planKind === 'unplanned'
                                       ? 'text-amber-600 dark:text-amber-400'
                                       : CIRCLE_TEXT_CLASS.hd_family
                                   }`}
                                 >
                                   {HISTORY_PLAN_KIND_LABELS[planKind]}
+                                </p>
+                              ) : (
+                                <span className="invisible truncate text-xs leading-none">
+                                  .
+                                </span>
+                              )}
+                              {budgetGroup ? (
+                                <p className="truncate text-xs leading-none whitespace-nowrap">
+                                  <BudgetGroupBadge group={budgetGroup} />
                                 </p>
                               ) : showOverspendLabel ? (
                                 <p
@@ -710,7 +712,7 @@ export function History() {
                                 </p>
                               ) : null}
                             </div>
-                            {planKind && showOverspendLabel ? (
+                            {budgetGroup && showOverspendLabel ? (
                               <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
                                 <span className="invisible truncate text-xs leading-none">
                                   .

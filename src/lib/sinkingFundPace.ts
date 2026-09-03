@@ -38,6 +38,12 @@ export function sinkingPaceLabel(status: SinkingPaceStatus): string {
   return 'On Track'
 }
 
+/** Visible badge plus slug forms so search matches `on track` / `safe` / `at risk`. */
+export function sinkingPaceSearchParts(status: SinkingPaceStatus): string[] {
+  const label = sinkingPaceLabel(status)
+  return [label, status, status.replaceAll('_', ' '), label.replaceAll(' ', '')]
+}
+
 /** Funded vs linear expected: ahead / behind / on expected. */
 export function sinkingPaceDeltaLabel(
   funded: number,

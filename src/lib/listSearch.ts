@@ -22,6 +22,10 @@ import {
   type TransactionWithCategory,
 } from './types'
 import type { RecurringBillDisplayParts } from './recurringBillDisplay'
+import {
+  sinkingPaceSearchParts,
+  type SinkingPaceStatus,
+} from './sinkingFundPace'
 
 export function normalizeSearchQuery(query: string): string {
   return query.trim().toLowerCase()
@@ -128,6 +132,7 @@ export function matchesBucketSearch(
     parentName?: string | null
     missingTransfer?: boolean
     missedTransfer?: boolean
+    paceStatus?: SinkingPaceStatus
   },
 ): boolean {
   const kind = bucket.kind as BucketKind
@@ -141,6 +146,7 @@ export function matchesBucketSearch(
     kindLabel,
     extras?.missingTransfer ? NO_TRANSFER_LABEL : undefined,
     extras?.missedTransfer ? MISSED_TRANSFER_LABEL : undefined,
+    ...(extras?.paceStatus ? sinkingPaceSearchParts(extras.paceStatus) : []),
     ...budgetGroupSearchParts(bucket.budget_group),
   )
 }

@@ -37,6 +37,7 @@ import {
 import {
   buildSinkingGoalsRow,
   computeSinkingFundPace,
+  type SinkingPaceStatus,
 } from '../../lib/sinkingFundPace'
 import {
   missedTransferHint,
@@ -275,10 +276,33 @@ export function PlanEmergency() {
     return map
   }, [buckets, bills, movements, viewYm])
 
+  const paceStatusByBucketId = useMemo(() => {
+    const map = new Map<string, SinkingPaceStatus>()
+    for (const b of buckets) {
+      if (b.kind !== 'sinking') continue
+      const target = b.target_amount ?? 0
+      if (target <= 0) continue
+      const pace = computeSinkingFundPace({
+        destinationIds: [b.id],
+        target,
+        balance: b.balance,
+        openingTransfers: b.opening_transfers,
+        movements,
+        ledgerBalance: b.own_balance,
+        sinkingBorrowByTxId,
+        yearMonth: viewYm,
+        bills,
+      })
+      if (pace) map.set(b.id, pace.status)
+    }
+    return map
+  }, [buckets, bills, movements, sinkingBorrowByTxId, viewYm])
+
   const filteredSinkingNodes = useMemo(() => {
     if (!searchActive) return sinkingNodes
     const hasMissed = (bucketId: string) =>
       (missedByBucketId.get(bucketId) ?? 0) > 0
+    const paceStatus = (bucketId: string) => paceStatusByBucketId.get(bucketId)
     return withoutEmptySinkingCategoryNodes(
       sinkingNodes
         .map((node) => {
@@ -289,6 +313,7 @@ export function PlanEmergency() {
               matchesBucketSearch(searchQuery, child, {
                 parentName: node.bucket.name,
                 missedTransfer: hasMissed(child.id),
+                paceStatus: paceStatus(child.id),
               }),
           )
           return { ...node, children }
@@ -297,10 +322,17 @@ export function PlanEmergency() {
           (node) =>
             matchesBucketSearch(searchQuery, node.bucket, {
               missedTransfer: hasMissed(node.bucket.id),
+              paceStatus: paceStatus(node.bucket.id),
             }) || node.children.length > 0,
         ),
     )
-  }, [sinkingNodes, searchActive, searchQuery, missedByBucketId])
+  }, [
+    sinkingNodes,
+    searchActive,
+    searchQuery,
+    missedByBucketId,
+    paceStatusByBucketId,
+  ])
 
   const expandableSinkingParentIds = useMemo(
     () =>

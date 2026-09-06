@@ -2,6 +2,7 @@ import {
   budgetGroupOfActiveSinkingTransfer,
   budgetGroupOfEstimate,
   budgetGroupOfTransferTo,
+  countsTowardPlannedNeedsWants,
   isPlannedNeedsSchedule,
   type BucketBudgetRef,
 } from './freeWants'
@@ -289,7 +290,8 @@ function billMatchesCommittedWants(
 
 /**
  * Per Monthly Estimate line: planned vs actual for Needs/Wants this month.
- * Same inclusion rules as sumPlannedNeeds / sumCommittedWants.
+ * Same inclusion rules as sumPlannedNeeds / sumCommittedWants except
+ * sinking-linked expense estimates stay here for envelope tracking.
  * Planned = this-month amount (override or template) × occurrences
  * (skips do not shrink the ceiling); actual = History transactions.
  */
@@ -396,7 +398,7 @@ function monthBudgetEstimateCandidates(
   const out: MonthBudgetEstimateCandidate[] = []
   for (const bill of bills) {
     if (!bill.is_active) continue
-    if (!isPlannedNeedsSchedule(bill)) continue
+    if (!countsTowardPlannedNeedsWants(bill, bucketsById.values())) continue
     let group: BudgetGroup | null = null
     if (bill.type === 'expense') {
       group = budgetGroupOfEstimate(bill, categoriesById)
@@ -422,9 +424,10 @@ function monthBudgetEstimateCandidates(
 }
 
 /**
- * Month Budget used: Needs/Wants expense lines plus transfers into
- * Needs/Wants sinking funds, Main/checking History only. Each
- * transaction counted at most once (first matching line wins).
+ * Month Budget used: Needs/Wants cash expense lines plus transfers into
+ * Needs/Wants sinking funds, Main/checking History only. Sinking-linked
+ * expense estimates are omitted (those are spent from the envelope).
+ * Each transaction counted at most once (first matching line wins).
  */
 export function buildMonthBudgetEstimateRows(input: {
   bills: RecurringBill[]

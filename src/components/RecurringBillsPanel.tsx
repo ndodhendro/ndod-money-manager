@@ -407,8 +407,9 @@ export function RecurringBillsPanel({
         settingsThisMonthYm,
         undefined,
         amountCtx,
+        bucketsById.values(),
       ),
-    [bills, filteredBills, searchActive, amountCtx, settingsThisMonthYm],
+    [bills, filteredBills, searchActive, amountCtx, settingsThisMonthYm, bucketsById],
   )
   const dayPersistKeys = useMemo(
     () =>

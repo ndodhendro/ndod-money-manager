@@ -334,6 +334,8 @@ export function buildBonusAllocation(input: {
  *
  * Planned Needs/Wants ceilings ignore skips so Close Month leftover stays
  * on those tracks (skipped due items are operational, not a smaller plan).
+ * Expense estimates on a sinking-linked subcategory are excluded from
+ * Planned cash — spend from that envelope does not use this month's budget.
  * Buffer = round(Planned Needs × bufferPct / 100) + opening Buffer carry.
  * Guilt-Free = income − Needs − buffer − Wants − sinking
  *   + opening Guilt-Free carry.

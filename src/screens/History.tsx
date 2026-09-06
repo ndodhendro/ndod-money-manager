@@ -47,10 +47,7 @@ import {
   historyPlanKindByTxId,
   monthBudgetCeilingOverspendTransactionIds,
 } from '../lib/freeGuiltyProgress'
-import {
-  budgetGroupOfEstimate,
-  isPlannedNeedsSchedule,
-} from '../lib/freeWants'
+import { isPlannedCashNeedsOrWantsExpense } from '../lib/freeWants'
 import { useFreeGuiltyProgress } from '../hooks/useFreeGuiltyProgress'
 import {
   countDueOrOverdueUnchecked,
@@ -273,16 +270,15 @@ export function History() {
   const checkingIds = useMemo(() => checkingBucketIdSet(buckets), [buckets])
 
   const estimateCoverageKeys = useMemo(() => {
-    const isExpenseNeedsOrWantsEstimate = (bill: (typeof bills)[number]) => {
-      if (!isPlannedNeedsSchedule(bill)) return false
-      if (bill.type !== 'expense') return false
-      const g = budgetGroupOfEstimate(bill, categoriesById)
-      return g === 'needs' || g === 'wants'
-    }
     return estimateExpenseCoverageKeys(
       bills,
       categoriesById,
-      isExpenseNeedsOrWantsEstimate,
+      (bill) =>
+        isPlannedCashNeedsOrWantsExpense(
+          bill,
+          categoriesById,
+          bucketsById.values(),
+        ),
       bucketsById,
     )
   }, [bills, categoriesById, bucketsById])

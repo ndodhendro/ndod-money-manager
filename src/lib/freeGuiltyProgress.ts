@@ -18,6 +18,7 @@ import {
   budgetGroupOfActiveSinkingTransfer,
   budgetGroupOfEstimate,
   budgetGroupOfTransferTo,
+  categoryHasActiveSinkingFund,
   type BucketBudgetRef,
 } from './freeWants'
 import { budgetGroupOfTx } from './moneyPlan'
@@ -105,9 +106,26 @@ function isDueItemTx(
 }
 
 /**
+ * Due items fill Planned cash lines — except sinking-linked categories,
+ * whose envelopes already hold the budget. Main/checking spend there is
+ * unplanned Buffer / Guilt-Free.
+ */
+function skipDueItemAsPlanned(
+  tx: TransactionWithCategory,
+  input: UnplannedSpendInput,
+): boolean {
+  if (!isDueItemTx(tx, input.dueBillIdByTxId)) return false
+  return !categoryHasActiveSinkingFund(
+    tx.category_id,
+    input.bucketsById?.values(),
+  )
+}
+
+/**
  * Needs outflows outside non-recurring Monthly Estimate coverage (Main/checking):
  * expenses plus Quick Add transfers into Needs sinking funds.
- * Due-item checks are excluded — they fill Planned via the estimate line.
+ * Due-item checks on Planned cash lines are excluded; sinking-linked
+ * categories count as unplanned (those envelopes already hold the budget).
  */
 export function sumUnplannedNeedsSpent(input: UnplannedSpendInput): number {
   let sum = 0
@@ -117,7 +135,7 @@ export function sumUnplannedNeedsSpent(input: UnplannedSpendInput): number {
       continue
     }
     if (!isMainOrCheckingExpense(tx, input.checkingBucketIds)) continue
-    if (isDueItemTx(tx, input.dueBillIdByTxId)) continue
+    if (skipDueItemAsPlanned(tx, input)) continue
     const group = budgetGroupOfTx(tx)
     if (group !== 'needs' || !tx.category_id) continue
     if (input.estimateCoverageKeys.has(`${tx.category_id}:needs`)) continue
@@ -137,7 +155,7 @@ export function unplannedNeedsTransactionIds(
       continue
     }
     if (!isMainOrCheckingExpense(tx, input.checkingBucketIds)) continue
-    if (isDueItemTx(tx, input.dueBillIdByTxId)) continue
+    if (skipDueItemAsPlanned(tx, input)) continue
     const group = budgetGroupOfTx(tx)
     if (group !== 'needs' || !tx.category_id) continue
     if (input.estimateCoverageKeys.has(`${tx.category_id}:needs`)) continue
@@ -157,7 +175,7 @@ export function unplannedWantsTransactionIds(
       continue
     }
     if (!isMainOrCheckingExpense(tx, input.checkingBucketIds)) continue
-    if (isDueItemTx(tx, input.dueBillIdByTxId)) continue
+    if (skipDueItemAsPlanned(tx, input)) continue
     const group = budgetGroupOfTx(tx)
     if (group !== 'wants' || !tx.category_id) continue
     if (input.estimateCoverageKeys.has(`${tx.category_id}:wants`)) continue
@@ -220,7 +238,8 @@ export function historyPlanKindByTxId(
 /**
  * Wants outflows outside non-recurring Monthly Estimate coverage (Main/checking):
  * expenses plus Quick Add transfers into Wants sinking funds.
- * Due-item checks are excluded — they fill Planned via the estimate line.
+ * Due-item checks on Planned cash lines are excluded; sinking-linked
+ * categories count as unplanned (those envelopes already hold the budget).
  * Full amount uses Guilt-Free Fund (not Planned Wants).
  */
 export function sumUnplannedWantsSpent(input: UnplannedSpendInput): number {
@@ -231,7 +250,7 @@ export function sumUnplannedWantsSpent(input: UnplannedSpendInput): number {
       continue
     }
     if (!isMainOrCheckingExpense(tx, input.checkingBucketIds)) continue
-    if (isDueItemTx(tx, input.dueBillIdByTxId)) continue
+    if (skipDueItemAsPlanned(tx, input)) continue
     const group = budgetGroupOfTx(tx)
     if (group !== 'wants' || !tx.category_id) continue
     if (input.estimateCoverageKeys.has(`${tx.category_id}:wants`)) continue

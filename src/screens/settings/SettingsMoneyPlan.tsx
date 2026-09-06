@@ -539,10 +539,12 @@ export function SettingsMoneyPlan() {
                       {formatRupiah(plannedNeeds)}
                     </div>
                     <span className="mt-1 block text-[11px] text-neutral-400">
-                      Includes both Needs expenses (non-recurring, weekly /
-                      every 2 weeks, or monthly) and transfers into Needs
-                      sinking funds. Multi-month Needs expenses (e.g. yearly
-                      tax) are excluded — covered by sinking transfers.
+                      Includes both Needs expenses paid from this month's
+                      cash (non-recurring, weekly / every 2 weeks, or
+                      monthly) and transfers into Needs sinking funds.
+                      Expenses on a subcategory with a sinking fund, and
+                      multi-month Needs expenses (e.g. yearly tax), are
+                      excluded — covered by sinking transfers.
                       Emergency Fund and Investment transfers use Money Plan %
                       separately and are not included here.
                     </span>

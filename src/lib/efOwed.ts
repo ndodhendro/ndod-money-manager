@@ -10,7 +10,7 @@ import {
   estimateExpenseCoverageKeys,
   monthBudgetTrackDemandByTxId,
 } from './freeGuiltyProgress'
-import { budgetGroupOfEstimate, isPlannedNeedsSchedule } from './freeWants'
+import { isPlannedCashNeedsOrWantsExpense } from './freeWants'
 import { fetchAllMonthCloses } from './monthClosesApi'
 import { sumMonthIncomeParts } from './moneyPlan'
 import { computeGuiltFreePools, type PaydayBucketRef } from './paydayAllocation'
@@ -66,16 +66,6 @@ export type DerivedEfLoan = {
 export type DerivedEfOwed = {
   loans: DerivedEfLoan[]
   bySource: EfOwedBySource
-}
-
-function isExpenseNeedsOrWantsEstimateBill(
-  bill: RecurringBill,
-  categoriesById: Map<string, Category>,
-): boolean {
-  if (!isPlannedNeedsSchedule(bill)) return false
-  if (bill.type !== 'expense') return false
-  const g = budgetGroupOfEstimate(bill, categoriesById)
-  return g === 'needs' || g === 'wants'
 }
 
 function nextYearMonth(yearMonth: string): string {
@@ -281,7 +271,12 @@ export function computeDerivedEfOwed(input: {
     const estimateCoverageKeys = estimateExpenseCoverageKeys(
       bills,
       input.categoriesById,
-      (bill) => isExpenseNeedsOrWantsEstimateBill(bill, input.categoriesById),
+      (bill) =>
+        isPlannedCashNeedsOrWantsExpense(
+          bill,
+          input.categoriesById,
+          bucketsById.values(),
+        ),
       bucketsById,
     )
     const demand = monthBudgetTrackDemandByTxId({

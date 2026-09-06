@@ -13,10 +13,7 @@ import {
   type MonthBudgetProgress,
 } from '../lib/freeGuiltyProgress'
 import { todayIso } from '../lib/format'
-import {
-  budgetGroupOfEstimate,
-  isPlannedNeedsSchedule,
-} from '../lib/freeWants'
+import { isPlannedCashNeedsOrWantsExpense } from '../lib/freeWants'
 import { sumMonthIncomeParts } from '../lib/moneyPlan'
 import { fetchOpeningCarryForMonth } from '../lib/monthClosesApi'
 import {
@@ -25,16 +22,6 @@ import {
 } from '../lib/paydayAllocation'
 import type { RecurringBill } from '../lib/recurringBillsApi'
 import type { Category, TransactionWithCategory } from '../lib/types'
-
-function isExpenseNeedsOrWantsEstimateBill(
-  bill: RecurringBill,
-  categoriesById: Map<string, Category>,
-): boolean {
-  if (!isPlannedNeedsSchedule(bill)) return false
-  if (bill.type !== 'expense') return false
-  const g = budgetGroupOfEstimate(bill, categoriesById)
-  return g === 'needs' || g === 'wants'
-}
 
 /**
  * Payday allocation + month budget tracks (Needs, Buffer, Wants, Guilt-Free).
@@ -178,7 +165,12 @@ export function useFreeGuiltyProgress(
     const estimateCoverageKeys = estimateExpenseCoverageKeys(
       bills,
       categoriesById,
-      (bill) => isExpenseNeedsOrWantsEstimateBill(bill, categoriesById),
+      (bill) =>
+        isPlannedCashNeedsOrWantsExpense(
+          bill,
+          categoriesById,
+          bucketsById.values(),
+        ),
       bucketsById,
     )
     const spend = computeMonthBudgetSpend({

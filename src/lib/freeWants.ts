@@ -80,6 +80,8 @@ export function budgetGroupOfActiveSinkingTransfer(
  * Multi-month recurring expenses (2m, 6m, yearly, …) are excluded — those
  * are funded via sinking-fund transfer estimates instead.
  * Transfers always pass (caller still requires Needs/Wants sinking destination).
+ * Expense estimates on a sinking-linked subcategory are a separate gate —
+ * see `countsTowardPlannedNeedsWants`.
  */
 export function isPlannedNeedsSchedule(bill: RecurringBill): boolean {
   if (bill.type === 'transfer') return true
@@ -89,6 +91,65 @@ export function isPlannedNeedsSchedule(bill: RecurringBill): boolean {
     return bill.interval_months === 1 || bill.interval_months === 2
   }
   return bill.interval_months <= 1
+}
+
+type SinkingLinkBucket = Pick<Bucket, 'kind' | 'is_active' | 'category_id'>
+
+/** True when an active sinking fund is linked to this expense category. */
+export function categoryHasActiveSinkingFund(
+  categoryId: string | null | undefined,
+  buckets?: Iterable<SinkingLinkBucket>,
+): boolean {
+  if (!categoryId || !buckets) return false
+  for (const bucket of buckets) {
+    if (
+      bucket.is_active &&
+      bucket.kind === 'sinking' &&
+      bucket.category_id === categoryId
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * Expense estimates on a subcategory with a linked sinking fund are spent
+ * from that envelope, not this month's Planned Needs/Wants cash.
+ */
+export function isSinkingFundedExpenseEstimate(
+  bill: Pick<RecurringBill, 'type' | 'category_id'>,
+  buckets?: Iterable<SinkingLinkBucket>,
+): boolean {
+  return (
+    bill.type === 'expense' &&
+    categoryHasActiveSinkingFund(bill.category_id, buckets)
+  )
+}
+
+/**
+ * Whether this estimate consumes Planned Needs / Planned Wants cash.
+ * Same schedule as `isPlannedNeedsSchedule`, plus sinking-linked expenses
+ * are excluded (the monthly hit is the transfer into that sinking fund).
+ */
+export function countsTowardPlannedNeedsWants(
+  bill: RecurringBill,
+  buckets?: Iterable<SinkingLinkBucket>,
+): boolean {
+  if (!isPlannedNeedsSchedule(bill)) return false
+  return !isSinkingFundedExpenseEstimate(bill, buckets)
+}
+
+/** Needs/Wants expense estimates that fill Planned cash lines. */
+export function isPlannedCashNeedsOrWantsExpense(
+  bill: RecurringBill,
+  categoriesById: Map<string, Category>,
+  buckets?: Iterable<SinkingLinkBucket>,
+): boolean {
+  if (bill.type !== 'expense') return false
+  if (!countsTowardPlannedNeedsWants(bill, buckets)) return false
+  const group = budgetGroupOfEstimate(bill, categoriesById)
+  return group === 'needs' || group === 'wants'
 }
 
 /** YYYY-MM-DD of the Monday that starts the week containing `isoDate`. */
@@ -258,7 +319,8 @@ export function estimatePlanTag(
  *
  * Ceiling uses template amount × occurrences. Skips do not shrink Month
  * Budget leftover; pass `undefined` to ignore skips.
- * Multi-month recurring Wants expenses (every 2+ months) are excluded.
+ * Multi-month recurring Wants expenses (every 2+ months) and expenses on a
+ * sinking-linked subcategory are excluded — those use the sinking envelope.
  */
 export function sumCommittedWants(
   bills: RecurringBill[],
@@ -271,7 +333,7 @@ export function sumCommittedWants(
   let sum = 0
   for (const bill of bills) {
     if (!bill.is_active) continue
-    if (!isPlannedNeedsSchedule(bill)) continue
+    if (!countsTowardPlannedNeedsWants(bill, bucketsById?.values())) continue
     let matches = false
     if (bill.type === 'expense') {
       matches = budgetGroupOfEstimate(bill, categoriesById) === 'wants'
@@ -310,7 +372,8 @@ export function sumCommittedWants(
  * total (Month Budget leftover stays on Planned Needs). Pass
  * `skippedOccurrenceKeys` only if a caller still needs a skip-shrunk
  * operational sum. Pass `undefined` to ignore skips (payday / Settings).
- * Multi-month recurring Needs expenses (every 2+ months) are excluded.
+ * Multi-month recurring Needs expenses (every 2+ months) and expenses on a
+ * sinking-linked subcategory are excluded — those use the sinking envelope.
  * Income, Wants, and PYF (emergency/investment) transfers are excluded.
  */
 export function sumPlannedNeeds(
@@ -324,7 +387,7 @@ export function sumPlannedNeeds(
   let sum = 0
   for (const bill of bills) {
     if (!bill.is_active) continue
-    if (!isPlannedNeedsSchedule(bill)) continue
+    if (!countsTowardPlannedNeedsWants(bill, bucketsById?.values())) continue
     let matches = false
     if (bill.type === 'expense') {
       matches = budgetGroupOfEstimate(bill, categoriesById) === 'needs'
@@ -424,7 +487,7 @@ export type EstimateMonthTotals = {
  * Monthly estimate totals by transaction type (occurrence-weighted).
  * Expense lines use the same short schedule as Payday Planned Needs/Wants
  * (non-recurring / weekly / biweekly / monthly) so multi-month expenses
- * funded by sinking are not double-counted against income in the due month.
+ * and sinking-linked expenses are not double-counted against income.
  * Income and transfer lines are unchanged (transfers still include sinking).
  */
 export function sumEstimateTotalsByType(
@@ -433,6 +496,7 @@ export function sumEstimateTotalsByType(
   yearMonth: string,
   skippedOccurrenceKeys?: Set<string>,
   amountCtx?: ResolveEstimateAmountCtx,
+  buckets?: Iterable<SinkingLinkBucket>,
 ): EstimateMonthTotals {
   const totals: EstimateMonthTotals = {
     expense: 0,
@@ -442,7 +506,12 @@ export function sumEstimateTotalsByType(
   for (const bill of bills) {
     if (!bill.is_active) continue
     // Align expense aggregate with Payday — list rows still show all due items.
-    if (bill.type === 'expense' && !isPlannedNeedsSchedule(bill)) continue
+    if (
+      bill.type === 'expense' &&
+      !countsTowardPlannedNeedsWants(bill, buckets)
+    ) {
+      continue
+    }
     const override = overridesByBillId.get(bill.id)
     const count = estimateOccurrenceCount(
       bill,

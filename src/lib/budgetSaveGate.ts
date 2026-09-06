@@ -6,8 +6,7 @@ import {
   estimateExpenseCoverageKeys,
 } from './freeGuiltyProgress'
 import {
-  isPlannedNeedsSchedule,
-  budgetGroupOfEstimate,
+  isPlannedCashNeedsOrWantsExpense,
   budgetGroupOfTransferTo,
   type BucketBudgetRef,
 } from './freeWants'
@@ -77,16 +76,6 @@ export async function resolveMonthWritePolicy(
 
   const monthClosed = await isMonthClosed(yearMonth)
   return { allowed: true, monthClosed, yearMonth }
-}
-
-function isExpenseNeedsOrWantsEstimateBill(
-  bill: RecurringBill,
-  categoriesById: Map<string, Category>,
-): boolean {
-  if (!isPlannedNeedsSchedule(bill)) return false
-  if (bill.type !== 'expense') return false
-  const g = budgetGroupOfEstimate(bill, categoriesById)
-  return g === 'needs' || g === 'wants'
 }
 
 function syntheticDraftTx(
@@ -183,7 +172,12 @@ export function evaluateExpenseEfLoan(input: {
   const estimateCoverageKeys = estimateExpenseCoverageKeys(
     input.bills,
     input.categoriesById,
-    (bill) => isExpenseNeedsOrWantsEstimateBill(bill, input.categoriesById),
+    (bill) =>
+      isPlannedCashNeedsOrWantsExpense(
+        bill,
+        input.categoriesById,
+        input.bucketsById.values(),
+      ),
     input.bucketsById,
   )
   const category =

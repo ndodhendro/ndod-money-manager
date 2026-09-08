@@ -460,11 +460,24 @@ export function DueThisMonthChecklist({
       else if (item.occurredOn <= todayIso()) statusLabel = 'due'
       else statusLabel = 'unchecked'
 
+      const toBucket = item.bill.to_bucket_id
+        ? bucketsById.get(item.bill.to_bucket_id)
+        : undefined
+      const fromBucket = item.bill.from_bucket_id
+        ? bucketsById.get(item.bill.from_bucket_id)
+        : undefined
       return matchesRecurringBillSearch(searchQuery, item.bill, display, {
         amount,
         planTag: estimatePlanTag(item.bill, byId, bucketsById),
         occurredOn: item.occurredOn,
         statusLabel,
+        sinkingFund:
+          Boolean(
+            item.bill.category_id &&
+              sinkingCategoryIds.has(item.bill.category_id),
+          ) ||
+          toBucket?.kind === 'sinking' ||
+          fromBucket?.kind === 'sinking',
       })
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- isSkipped/pendingSkipped via deps below
@@ -474,6 +487,7 @@ export function DueThisMonthChecklist({
     searchQuery,
     byId,
     bucketsById,
+    sinkingCategoryIds,
     overrideByBillId,
     amountCtx,
     effectiveLogByOccurrenceKey,
@@ -1239,11 +1253,19 @@ export function DueThisMonthChecklist({
                       displayAmount={amount}
                       done={done}
                       inactive={skipped}
-                      linkedToSinkingFund={Boolean(
-                        display.childName &&
-                          bill.category_id &&
-                          sinkingCategoryIds.has(bill.category_id),
-                      )}
+                      linkedToSinkingFund={
+                        display.isTransfer
+                          ? Boolean(
+                              bill.to_bucket_id &&
+                                bucketsById.get(bill.to_bucket_id)?.kind ===
+                                  'sinking',
+                            )
+                          : Boolean(
+                              display.childName &&
+                                bill.category_id &&
+                                sinkingCategoryIds.has(bill.category_id),
+                            )
+                      }
                       showMeta={showOccurrenceMeta}
                       monthCursor={
                         showOccurrenceMeta ? cursor : undefined

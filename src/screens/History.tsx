@@ -42,6 +42,7 @@ import { compareHistoryDayDisplay } from '../lib/estimateProgress'
 import {
   checkingBucketIdSet,
   estimateExpenseCoverageKeys,
+  estimateSinkingExpenseCoverageKeys,
   HISTORY_OVERSPEND_LABEL,
   HISTORY_PLAN_KIND_LABELS,
   historyPlanKindByTxId,
@@ -283,6 +284,16 @@ export function History() {
     )
   }, [bills, categoriesById, bucketsById])
 
+  const sinkingExpenseCoverageKeys = useMemo(
+    () =>
+      estimateSinkingExpenseCoverageKeys(
+        bills,
+        categoriesById,
+        bucketsById.values(),
+      ),
+    [bills, categoriesById, bucketsById],
+  )
+
   const overspendTxIds = useMemo(() => {
     const ids = new Set<string>()
     if (allocation) {
@@ -333,6 +344,7 @@ export function History() {
       historyPlanKindByTxId({
         transactions,
         estimateCoverageKeys,
+        sinkingExpenseCoverageKeys,
         checkingBucketIds: checkingIds,
         dueBillIdByTxId,
         bucketsById,
@@ -341,6 +353,7 @@ export function History() {
     [
       transactions,
       estimateCoverageKeys,
+      sinkingExpenseCoverageKeys,
       checkingIds,
       dueBillIdByTxId,
       bucketsById,
@@ -352,6 +365,9 @@ export function History() {
     matchesTransactionSearch(searchQuery, tx, {
       planKind: planKindByTxId.get(tx.id),
       overspend: overspendTxIds.has(tx.id),
+      sinkingFund: Boolean(
+        tx.category_id && sinkingCategoryIds.has(tx.category_id),
+      ),
     }),
   )
   const searchActive = !isBlankSearch(searchQuery)
@@ -532,6 +548,9 @@ export function History() {
               const note = isTransfer
                 ? formatTransferToLabel(tx.to_bucket)
                 : tx.description?.trim() || null
+              const transferToSinking = Boolean(
+                isTransfer && tx.to_bucket?.kind === 'sinking',
+              )
               const isHighlighted = highlightId === tx.id
               const amountLabel =
                 tx.amount > 0
@@ -626,8 +645,11 @@ export function History() {
                     {tx.complete_later ? (
                       <>
                         {note ? (
-                          <p className="line-clamp-2 min-w-0 break-words text-xs leading-snug text-neutral-500 dark:text-neutral-400">
-                            {note}
+                          <p className="flex min-w-0 items-center gap-1 text-xs leading-snug text-neutral-500 dark:text-neutral-400">
+                            <span className="min-w-0 line-clamp-2 break-words">
+                              {note}
+                            </span>
+                            {transferToSinking ? <SinkingFundLabel /> : null}
                           </p>
                         ) : null}
                         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
@@ -659,8 +681,11 @@ export function History() {
                       <>
                         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
                           {note ? (
-                            <p className="truncate text-xs leading-none text-neutral-500 dark:text-neutral-400">
-                              {note}
+                            <p className="flex min-w-0 items-center gap-1 text-xs leading-none text-neutral-500 dark:text-neutral-400">
+                              <span className="truncate">{note}</span>
+                              {transferToSinking ? (
+                                <SinkingFundLabel />
+                              ) : null}
                             </p>
                           ) : (
                             <span className="invisible truncate text-xs leading-none">

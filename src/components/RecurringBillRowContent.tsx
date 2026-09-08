@@ -38,7 +38,7 @@ interface RecurringBillRowContentProps {
   budgetGroup?: BudgetGroup | null
   /** When set, show this instead of bill.amount (e.g. PYF auto from Money Plan). */
   displayAmount?: number
-  /** Subcategory is linked to an active sinking fund. */
+  /** Expense subcategory or transfer destination is a sinking fund. */
   linkedToSinkingFund?: boolean
   /** Row action (edit / restore) shown opposite the budget-group line. */
   endAction?: ReactNode
@@ -128,9 +128,20 @@ export function RecurringBillRowContent({
         >
           {noteText ? (
             <p
-              className={`line-clamp-2 min-w-0 break-words text-xs leading-none ${noteClass}`}
+              className={`flex min-w-0 items-center gap-1 text-xs leading-none ${noteClass}`}
             >
-              {noteText}
+              <span
+                className={
+                  display.isTransfer
+                    ? 'truncate'
+                    : 'line-clamp-2 min-w-0 break-words'
+                }
+              >
+                {noteText}
+              </span>
+              {display.isTransfer && linkedToSinkingFund ? (
+                <SinkingFundLabel />
+              ) : null}
             </p>
           ) : (
             <span className="invisible truncate text-xs leading-none">.</span>

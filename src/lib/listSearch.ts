@@ -182,10 +182,30 @@ function overspendMatchesToken(
   return HISTORY_OVERSPEND_LABEL.toLowerCase().startsWith(token)
 }
 
+/** Visible SF badge plus kind label so `sinking fund` / `sf` match. */
+export function sinkingFundSearchParts(
+  isSinkingFund: boolean | undefined,
+): string[] {
+  if (!isSinkingFund) return []
+  return [BUCKET_KIND_LABELS.sinking, 'sf']
+}
+
+function isSinkingFundTransaction(
+  tx: TransactionWithCategory,
+  extras?: { sinkingFund?: boolean },
+): boolean {
+  if (extras?.sinkingFund) return true
+  return tx.from_bucket?.kind === 'sinking' || tx.to_bucket?.kind === 'sinking'
+}
+
 export function matchesTransactionSearch(
   query: string,
   tx: TransactionWithCategory,
-  extras?: { planKind?: HistoryPlanKind; overspend?: boolean },
+  extras?: {
+    planKind?: HistoryPlanKind
+    overspend?: boolean
+    sinkingFund?: boolean
+  },
 ): boolean {
   if (isBlankSearch(query)) return true
 
@@ -220,6 +240,7 @@ export function matchesTransactionSearch(
     tx.occurred_on,
     ...budgetGroupSearchParts(budgetGroupOfTx(tx)),
     ...amountSearchParts(tx.amount),
+    ...sinkingFundSearchParts(isSinkingFundTransaction(tx, extras)),
   ]
     .flatMap((p) => {
       if (p == null) return []
@@ -254,6 +275,7 @@ export function matchesRecurringBillSearch(
     meta?: string | null
     occurredOn?: string | null
     statusLabel?: string | null
+    sinkingFund?: boolean
   },
 ): boolean {
   if (isBlankSearch(query)) return true
@@ -281,5 +303,6 @@ export function matchesRecurringBillSearch(
     extras?.occurredOn,
     extras?.statusLabel,
     ...amountSearchParts(amount),
+    ...sinkingFundSearchParts(extras?.sinkingFund),
   )
 }

@@ -1307,11 +1307,21 @@ export function RecurringBillsPanel({
                                 )}
                                 thisMonthYearMonth={settingsThisMonthYm}
                                 budgetGroup={budgetGroup}
-                                linkedToSinkingFund={Boolean(
-                                  display.childName &&
-                                    bill.category_id &&
-                                    sinkingCategoryIds.has(bill.category_id),
-                                )}
+                                linkedToSinkingFund={
+                                  display.isTransfer
+                                    ? Boolean(
+                                        bill.to_bucket_id &&
+                                          bucketsById.get(bill.to_bucket_id)
+                                            ?.kind === 'sinking',
+                                      )
+                                    : Boolean(
+                                        display.childName &&
+                                          bill.category_id &&
+                                          sinkingCategoryIds.has(
+                                            bill.category_id,
+                                          ),
+                                      )
+                                }
                               />
                             </SwipeDeleteRow>
                           )

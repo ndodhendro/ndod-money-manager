@@ -19,6 +19,7 @@ import {
   budgetGroupOfEstimate,
   budgetGroupOfTransferTo,
   categoryHasActiveSinkingFund,
+  isSinkingFundedExpenseEstimate,
   type BucketBudgetRef,
 } from './freeWants'
 import { budgetGroupOfTx } from './moneyPlan'
@@ -69,6 +70,11 @@ type UnplannedSpendInput = {
   dueBillIdByTxId?: Map<string, string>
   bucketsById?: Map<string, BucketBudgetRef>
   categoriesById?: Map<string, Category>
+  /**
+   * Non-recurring sinking-funded expense estimates. History labels only —
+   * not Buffer / Guilt-Free (those envelopes already hold the cash).
+   */
+  sinkingExpenseCoverageKeys?: Set<string>
 }
 
 function isUnplannedSinkingTransfer(
@@ -194,18 +200,38 @@ export type HistoryPlanKind = keyof typeof HISTORY_PLAN_KIND_LABELS
 /** Visible History Overspend badge (Buffer / Guilt-Free / sinking fund). */
 export const HISTORY_OVERSPEND_LABEL = 'Overspend'
 
+function isSinkingEnvelopeExpense(
+  tx: TransactionWithCategory,
+  bucketsById?: Map<string, BucketBudgetRef>,
+): boolean {
+  if (tx.type !== 'expense' || tx.complete_later) return false
+  if (!tx.from_bucket_id || !bucketsById) {
+    return tx.from_bucket?.kind === 'sinking'
+  }
+  return (
+    bucketsById.get(tx.from_bucket_id)?.kind === 'sinking' ||
+    tx.from_bucket?.kind === 'sinking'
+  )
+}
+
+function isNeedsOrWantsExpenseCandidate(tx: TransactionWithCategory): boolean {
+  const group = budgetGroupOfTx(tx)
+  return (group === 'needs' || group === 'wants') && Boolean(tx.category_id)
+}
+
 function isMonthBudgetPlanCandidate(
   tx: TransactionWithCategory,
   input: UnplannedSpendInput,
 ): boolean {
   if (tx.complete_later) return false
   if (tx.type === 'expense') {
+    if (isSinkingEnvelopeExpense(tx, input.bucketsById)) {
+      return isNeedsOrWantsExpenseCandidate(tx)
+    }
     if (!isMainOrCheckingExpense(tx, input.checkingBucketIds)) return false
-    const group = budgetGroupOfTx(tx)
-    return (group === 'needs' || group === 'wants') && Boolean(tx.category_id)
+    return isNeedsOrWantsExpenseCandidate(tx)
   }
   if (tx.type !== 'transfer' || !tx.to_bucket_id) return false
-  if (!isFromMainOrChecking(tx, input.checkingBucketIds)) return false
   if (!input.bucketsById) return false
   const destGroup = budgetGroupOfTransferTo(
     tx.to_bucket_id,
@@ -215,22 +241,61 @@ function isMonthBudgetPlanCandidate(
   return destGroup === 'needs' || destGroup === 'wants'
 }
 
+function historyRowIsUnplanned(
+  tx: TransactionWithCategory,
+  input: UnplannedSpendInput,
+  cashUnplanned: Set<string>,
+): boolean {
+  if (isSinkingEnvelopeExpense(tx, input.bucketsById)) {
+    if (isDueItemTx(tx, input.dueBillIdByTxId)) return false
+    const group = budgetGroupOfTx(tx)
+    if ((group !== 'needs' && group !== 'wants') || !tx.category_id) {
+      return true
+    }
+    return !input.sinkingExpenseCoverageKeys?.has(`${tx.category_id}:${group}`)
+  }
+  if (
+    tx.type === 'transfer' &&
+    !isFromMainOrChecking(tx, input.checkingBucketIds)
+  ) {
+    if (isDueItemTx(tx, input.dueBillIdByTxId)) return false
+    if (!tx.to_bucket_id || !input.bucketsById) return true
+    const destGroup = budgetGroupOfTransferTo(
+      tx.to_bucket_id,
+      input.bucketsById,
+      input.categoriesById,
+    )
+    if (destGroup !== 'needs' && destGroup !== 'wants') return true
+    return !input.estimateCoverageKeys.has(
+      transferCoverageKey(tx.to_bucket_id, destGroup),
+    )
+  }
+  return cashUnplanned.has(tx.id)
+}
+
 /**
  * History row kind under the amount: due-item / estimate coverage = Planned,
- * Buffer / Guilt-Free Quick Add = Unplanned. Income and non–Needs/Wants
+ * otherwise Unplanned. Applies to Main/checking Needs/Wants, sinking-envelope
+ * expenses, and transfers into Needs/Wants sinking funds (any source).
+ * Cash Buffer / Guilt-Free math is unchanged. Income and non–Needs/Wants
  * outflows are omitted.
  */
 export function historyPlanKindByTxId(
   input: UnplannedSpendInput,
 ): Map<string, HistoryPlanKind> {
-  const unplanned = new Set<string>([
+  const cashUnplanned = new Set<string>([
     ...unplannedNeedsTransactionIds(input),
     ...unplannedWantsTransactionIds(input),
   ])
   const byId = new Map<string, HistoryPlanKind>()
   for (const tx of input.transactions) {
     if (!isMonthBudgetPlanCandidate(tx, input)) continue
-    byId.set(tx.id, unplanned.has(tx.id) ? 'unplanned' : 'planned')
+    byId.set(
+      tx.id,
+      historyRowIsUnplanned(tx, input, cashUnplanned)
+        ? 'unplanned'
+        : 'planned',
+    )
   }
   return byId
 }
@@ -419,6 +484,34 @@ export function estimateExpenseCoverageKeys(
       )
       if (group !== 'needs' && group !== 'wants') continue
       keys.add(transferCoverageKey(bill.to_bucket_id, group))
+    }
+  }
+  return keys
+}
+
+/**
+ * Non-recurring expense estimates on sinking-linked categories. Used only
+ * for History Planned / Unplanned on envelope spends — not payday cash.
+ */
+export function estimateSinkingExpenseCoverageKeys(
+  bills: RecurringBill[],
+  categoriesById: Map<string, Category>,
+  buckets?: Iterable<BucketBudgetRef>,
+): Set<string> {
+  const keys = new Set<string>()
+  for (const bill of bills) {
+    if (!bill.is_active || bill.type !== 'expense' || !bill.category_id) {
+      continue
+    }
+    if (bill.is_recurring) continue
+    if (!isSinkingFundedExpenseEstimate(bill, buckets)) continue
+    const group = budgetGroupOfEstimate(bill, categoriesById)
+    if (group !== 'needs' && group !== 'wants') continue
+    keys.add(`${bill.category_id}:${group}`)
+    for (const cat of categoriesById.values()) {
+      if (cat.parent_id === bill.category_id) {
+        keys.add(`${cat.id}:${group}`)
+      }
     }
   }
   return keys

@@ -16,7 +16,8 @@ export function useEfOwed() {
     try {
       const derived = await fetchDerivedEfOwed()
       setOwed(derived.bySource)
-    } catch {
+    } catch (err) {
+      console.error('Failed to load Emergency Fund owed', err)
       setOwed(EMPTY_EF_OWED)
     } finally {
       if (!options?.silent) setLoading(false)

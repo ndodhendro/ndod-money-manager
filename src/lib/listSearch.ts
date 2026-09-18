@@ -17,6 +17,7 @@ import {
   categoryDisplayParts,
   formatTransferLabel,
   formatTransferToLabel,
+  isBudgetGroup,
   isCircle,
   isOwner,
   type BudgetGroup,
@@ -80,6 +81,24 @@ export function budgetGroupSearchParts(
 ): string[] {
   if (group !== 'needs' && group !== 'wants') return []
   return [group, BUDGET_GROUP_LABELS[group]]
+}
+
+/**
+ * Needs / Wants badge on History rows: expense inherit, or destination
+ * sinking fund on transfers (`transfer needs` / `transfer wants`).
+ */
+export function historyBudgetGroupOfTx(
+  tx: TransactionWithCategory,
+): BudgetGroup | null {
+  if (tx.type === 'expense') return budgetGroupOfTx(tx)
+  if (
+    tx.type === 'transfer' &&
+    tx.to_bucket?.kind === 'sinking' &&
+    isBudgetGroup(tx.to_bucket.budget_group)
+  ) {
+    return tx.to_bucket.budget_group
+  }
+  return null
 }
 
 /**
@@ -238,7 +257,7 @@ export function matchesTransactionSearch(
     owner,
     circle,
     tx.occurred_on,
-    ...budgetGroupSearchParts(budgetGroupOfTx(tx)),
+    ...budgetGroupSearchParts(historyBudgetGroupOfTx(tx)),
     ...amountSearchParts(tx.amount),
     ...sinkingFundSearchParts(isSinkingFundTransaction(tx, extras)),
   ]

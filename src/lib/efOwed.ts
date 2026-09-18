@@ -100,43 +100,57 @@ function openingCarryByMonth(closes: MonthClose[]): Map<
   return map
 }
 
-function compareDerivedLoans(a: DerivedEfLoan, b: DerivedEfLoan): number {
-  return compareTransactionsChrono(
-    {
-      id: a.transactionId,
-      occurred_on: a.occurredOn,
-      sort_order: a.sortOrder,
-      created_at: a.createdAt,
-    } as TransactionWithCategory,
-    {
-      id: b.transactionId,
-      occurred_on: b.occurredOn,
-      sort_order: b.sortOrder,
-      created_at: b.createdAt,
-    } as TransactionWithCategory,
-  )
+function loanAsTx(loan: DerivedEfLoan): TransactionWithCategory {
+  return {
+    id: loan.transactionId,
+    occurred_on: loan.occurredOn,
+    sort_order: loan.sortOrder,
+    created_at: loan.createdAt,
+  } as TransactionWithCategory
 }
 
+/**
+ * Walk loans and EF inflows in chronological order.
+ * A transfer to EF only repays loans that already exist at that moment.
+ * Earlier PYF / payday funding is savings in the jar — not a prepayment of
+ * later overspend — otherwise Dashboard owed stays 0 whenever EF was funded.
+ * Leftover inflow after paying open loans is savings, not credit for future loans.
+ */
 function applyFifoRepayments(
   loans: DerivedEfLoan[],
   repayments: TransactionWithCategory[],
 ): DerivedEfLoan[] {
   const next = loans.map((loan) => ({ ...loan, outstanding: loan.amount }))
-  next.sort(compareDerivedLoans)
-  const pays = repayments.slice().sort(compareTransactionsChrono)
-  let payIndex = 0
-  let payLeft = 0
-  for (const loan of next) {
-    while (loan.outstanding > 0) {
-      if (payLeft <= 0) {
-        if (payIndex >= pays.length) return next
-        payLeft = Math.max(0, Math.round(pays[payIndex].amount))
-        payIndex += 1
-        continue
-      }
-      const take = Math.min(loan.outstanding, payLeft)
+  type Event =
+    | { kind: 'loan'; loan: DerivedEfLoan; tx: TransactionWithCategory }
+    | { kind: 'repay'; tx: TransactionWithCategory; amount: number }
+  const events: Event[] = [
+    ...next.map((loan) => ({
+      kind: 'loan' as const,
+      loan,
+      tx: loanAsTx(loan),
+    })),
+    ...repayments.map((tx) => ({
+      kind: 'repay' as const,
+      tx,
+      amount: Math.max(0, Math.round(tx.amount)),
+    })),
+  ]
+  events.sort((a, b) => compareTransactionsChrono(a.tx, b.tx))
+
+  const open: DerivedEfLoan[] = []
+  for (const event of events) {
+    if (event.kind === 'loan') {
+      open.push(event.loan)
+      continue
+    }
+    let left = event.amount
+    for (const loan of open) {
+      if (left <= 0) break
+      if (loan.outstanding <= 0) continue
+      const take = Math.min(loan.outstanding, left)
       loan.outstanding -= take
-      payLeft -= take
+      left -= take
     }
   }
   return next

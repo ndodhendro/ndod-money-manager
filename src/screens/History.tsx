@@ -16,7 +16,11 @@ import { PageTitle } from '../components/PageTitle'
 import { SearchField } from '../components/SearchField'
 import { SinkingFundLabel } from '../components/SinkingFundLabel'
 import { NavIcon } from '../lib/navTabs'
-import { isBlankSearch, matchesTransactionSearch } from '../lib/listSearch'
+import {
+  historyBudgetGroupOfTx,
+  isBlankSearch,
+  matchesTransactionSearch,
+} from '../lib/listSearch'
 import { useCategories } from '../hooks/useCategories'
 import { useBuckets } from '../hooks/useBuckets'
 import { useRecurringBills } from '../hooks/useRecurringBills'
@@ -37,7 +41,6 @@ import {
 } from '../lib/format'
 import { requestAmountFocus } from '../lib/keyboardFocus'
 import { monthCursorKey } from '../lib/monthCursor'
-import { budgetGroupOfTx } from '../lib/moneyPlan'
 import { compareHistoryDayDisplay } from '../lib/estimateProgress'
 import {
   checkingBucketIdSet,
@@ -64,7 +67,6 @@ import {
   CIRCLE_TEXT_CLASS,
   formatTransferLabel,
   formatTransferToLabel,
-  isBudgetGroup,
   isCircle,
   TRANSFER_TYPE_ICON,
   type TransactionWithCategory,
@@ -562,14 +564,7 @@ export function History() {
                           : ''
                     }${formatRupiah(tx.amount)}`
                   : '—'
-              const budgetGroup =
-                tx.type === 'expense'
-                  ? budgetGroupOfTx(tx)
-                  : tx.type === 'transfer' &&
-                      tx.to_bucket?.kind === 'sinking' &&
-                      isBudgetGroup(tx.to_bucket.budget_group)
-                    ? tx.to_bucket.budget_group
-                    : null
+              const budgetGroup = historyBudgetGroupOfTx(tx)
               const planKind = showOverspend
                 ? planKindByTxId.get(tx.id)
                 : undefined

@@ -84,13 +84,17 @@ export function budgetGroupSearchParts(
 }
 
 /**
- * Needs / Wants badge on History rows: expense inherit, or destination
+ * Needs / Wants badge on History rows: expense inherit, transfer into EF
+ * (Emergency shows as Needs, same as Monthly Estimates), or destination
  * sinking fund on transfers (`transfer needs` / `transfer wants`).
  */
 export function historyBudgetGroupOfTx(
   tx: TransactionWithCategory,
 ): BudgetGroup | null {
   if (tx.type === 'expense') return budgetGroupOfTx(tx)
+  if (tx.type === 'transfer' && tx.to_bucket?.kind === 'emergency') {
+    return 'needs'
+  }
   if (
     tx.type === 'transfer' &&
     tx.to_bucket?.kind === 'sinking' &&

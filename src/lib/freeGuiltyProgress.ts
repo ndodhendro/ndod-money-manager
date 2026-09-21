@@ -23,10 +23,11 @@ import {
   type BucketBudgetRef,
 } from './freeWants'
 import { budgetGroupOfTx } from './moneyPlan'
-import type {
-  Bucket,
-  Category,
-  TransactionWithCategory,
+import {
+  isBudgetGroup,
+  type Bucket,
+  type Category,
+  type TransactionWithCategory,
 } from './types'
 
 export type CheckingBucketRef = Pick<Bucket, 'id' | 'name' | 'kind'>
@@ -219,6 +220,57 @@ function isNeedsOrWantsExpenseCandidate(tx: TransactionWithCategory): boolean {
   return (group === 'needs' || group === 'wants') && Boolean(tx.category_id)
 }
 
+function destBucketKind(
+  tx: TransactionWithCategory,
+  bucketsById?: Map<string, BucketBudgetRef>,
+): Bucket['kind'] | undefined {
+  if (tx.to_bucket_id && bucketsById) {
+    const kind = bucketsById.get(tx.to_bucket_id)?.kind
+    if (kind) return kind
+  }
+  return tx.to_bucket?.kind
+}
+
+/**
+ * History-only dest group: include bonus-funded sinking and fall back to the
+ * joined bucket stamp when the dest is missing from the active list.
+ * Payday Buffer / Guilt-Free still use `budgetGroupOfTransferTo` (bonus excluded).
+ */
+function historySinkingDestGroup(
+  tx: TransactionWithCategory,
+  input: UnplannedSpendInput,
+): 'needs' | 'wants' | null {
+  if (tx.to_bucket_id && input.bucketsById) {
+    const live = budgetGroupOfTransferTo(
+      tx.to_bucket_id,
+      input.bucketsById,
+      input.categoriesById,
+      { includeBonusFunded: true },
+    )
+    if (live) return live
+  }
+  if (
+    tx.to_bucket?.kind === 'sinking' &&
+    isBudgetGroup(tx.to_bucket.budget_group)
+  ) {
+    return tx.to_bucket.budget_group
+  }
+  return null
+}
+
+/** Due-item PYF transfer Main/checking → Emergency Fund or Investment. */
+function isPyfSavingsHistoryCandidate(
+  tx: TransactionWithCategory,
+  input: UnplannedSpendInput,
+): boolean {
+  if (tx.complete_later) return false
+  if (tx.type !== 'transfer' || !tx.to_bucket_id) return false
+  if (!isFromMainOrChecking(tx, input.checkingBucketIds)) return false
+  if (!isDueItemTx(tx, input.dueBillIdByTxId)) return false
+  const kind = destBucketKind(tx, input.bucketsById)
+  return kind === 'emergency' || kind === 'investment'
+}
+
 function isMonthBudgetPlanCandidate(
   tx: TransactionWithCategory,
   input: UnplannedSpendInput,
@@ -232,12 +284,8 @@ function isMonthBudgetPlanCandidate(
     return isNeedsOrWantsExpenseCandidate(tx)
   }
   if (tx.type !== 'transfer' || !tx.to_bucket_id) return false
-  if (!input.bucketsById) return false
-  const destGroup = budgetGroupOfTransferTo(
-    tx.to_bucket_id,
-    input.bucketsById,
-    input.categoriesById,
-  )
+  if (isPyfSavingsHistoryCandidate(tx, input)) return true
+  const destGroup = historySinkingDestGroup(tx, input)
   return destGroup === 'needs' || destGroup === 'wants'
 }
 
@@ -254,18 +302,15 @@ function historyRowIsUnplanned(
     }
     return !input.sinkingExpenseCoverageKeys?.has(`${tx.category_id}:${group}`)
   }
+  if (isPyfSavingsHistoryCandidate(tx, input)) return false
   if (
     tx.type === 'transfer' &&
     !isFromMainOrChecking(tx, input.checkingBucketIds)
   ) {
     if (isDueItemTx(tx, input.dueBillIdByTxId)) return false
-    if (!tx.to_bucket_id || !input.bucketsById) return true
-    const destGroup = budgetGroupOfTransferTo(
-      tx.to_bucket_id,
-      input.bucketsById,
-      input.categoriesById,
-    )
+    const destGroup = historySinkingDestGroup(tx, input)
     if (destGroup !== 'needs' && destGroup !== 'wants') return true
+    if (!tx.to_bucket_id) return true
     return !input.estimateCoverageKeys.has(
       transferCoverageKey(tx.to_bucket_id, destGroup),
     )
@@ -276,9 +321,10 @@ function historyRowIsUnplanned(
 /**
  * History row kind under the amount: due-item / estimate coverage = Planned,
  * otherwise Unplanned. Applies to Main/checking Needs/Wants, sinking-envelope
- * expenses, and transfers into Needs/Wants sinking funds (any source).
- * Cash Buffer / Guilt-Free math is unchanged. Income and non–Needs/Wants
- * outflows are omitted.
+ * expenses, transfers into Needs/Wants sinking (any source, including
+ * bonus-funded), and due-item PYF transfers into Emergency Fund / Investment.
+ * Cash Buffer / Guilt-Free math is unchanged. Income and other outflows
+ * are omitted.
  */
 export function historyPlanKindByTxId(
   input: UnplannedSpendInput,

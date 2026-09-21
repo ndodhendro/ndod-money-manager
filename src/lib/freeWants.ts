@@ -34,18 +34,22 @@ export type BucketBudgetRef = Pick<
  * Needs/Wants for a transfer into a sinking fund.
  * Prefers the linked subcategory (and its parent) so Plan progress follows a
  * category move without waiting on a stale bucket stamp.
- * Emergency/investment, unset sinking, and bonus-funded sinking return null
- * (THR / Performance Bonus is not monthly envelope spend).
+ * Emergency/investment, unset sinking, and (by default) bonus-funded sinking
+ * return null — THR / Performance Bonus is not monthly envelope spend.
+ * Pass `includeBonusFunded` for History Planned/Unplanned only.
  */
 export function budgetGroupOfTransferTo(
   toBucketId: string | null,
   bucketsById: Map<string, BucketBudgetRef>,
   categoriesById?: Map<string, Category>,
+  options?: { includeBonusFunded?: boolean },
 ): 'needs' | 'wants' | null {
   if (!toBucketId) return null
   const bucket = bucketsById.get(toBucketId)
   if (!bucket || bucket.kind !== 'sinking') return null
-  if (bucket.funding_source === 'bonus') return null
+  if (!options?.includeBonusFunded && bucket.funding_source === 'bonus') {
+    return null
+  }
   if (categoriesById && bucket.category_id) {
     const live = budgetGroupOfCategory(bucket.category_id, categoriesById)
     if (live === 'needs' || live === 'wants') return live

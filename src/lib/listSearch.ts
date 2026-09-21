@@ -3,7 +3,7 @@ import {
   HISTORY_PLAN_KIND_LABELS,
   type HistoryPlanKind,
 } from './freeGuiltyProgress'
-import { formatNumber, formatRupiah } from './format'
+import { formatNumber, formatRupiah, noteOrDefault } from './format'
 import { budgetGroupOfTx } from './moneyPlan'
 import {
   BUCKET_KIND_LABELS,
@@ -232,8 +232,8 @@ export function matchesTransactionSearch(
   const display = isTransfer
     ? {
         parentName: formatTransferLabel(tx.from_bucket),
-        childName: null as string | null,
-        note: formatTransferToLabel(tx.to_bucket),
+        childName: formatTransferToLabel(tx.to_bucket),
+        note: noteOrDefault(tx.description),
       }
     : {
         ...categoryDisplayParts(tx.category),

@@ -23,7 +23,7 @@ import {
   computeBudgetUsedBySource,
   upcomingEstimateProgressAmountByBillId,
 } from '../../lib/estimateProgress'
-import { formatPctLabel, formatRupiah, todayIso } from '../../lib/format'
+import { formatPctLabel, formatRupiah, noteOrDefault, todayIso } from '../../lib/format'
 import { plannedNeedsCeiling } from '../../lib/freeWants'
 import { checkingBucketIdSet } from '../../lib/freeGuiltyProgress'
 import {
@@ -1001,9 +1001,7 @@ export function PlanMonthlyProgress() {
                               detailStack={{
                                 childIcon: display.childIcon,
                                 childName: display.childName,
-                                note:
-                                  bill.name.trim() ||
-                                  display.transferToLabel,
+                                note: noteOrDefault(bill.name),
                                 budgetGroup: row.group,
                                 owner: bill.owner,
                                 circle: display.circle,

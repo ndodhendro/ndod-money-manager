@@ -38,6 +38,7 @@ import {
   formatRupiah,
   monthRange,
   todayIso,
+  noteOrDefault,
 } from '../lib/format'
 import { requestAmountFocus } from '../lib/keyboardFocus'
 import { monthCursorKey } from '../lib/monthCursor'
@@ -544,11 +545,11 @@ export function History() {
                       parentIcon: TRANSFER_TYPE_ICON,
                       parentName: formatTransferLabel(tx.from_bucket),
                       childIcon: null as string | null,
-                      childName: null as string | null,
+                      childName: formatTransferToLabel(tx.to_bucket),
                     }
                   : categoryDisplayParts(tx.category)
               const note = isTransfer
-                ? formatTransferToLabel(tx.to_bucket)
+                ? noteOrDefault(tx.description)
                 : tx.description?.trim() || null
               const transferToSinking = Boolean(
                 isTransfer && tx.to_bucket?.kind === 'sinking',
@@ -605,46 +606,36 @@ export function History() {
                     <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
                       {childName ? (
                         <p className="flex min-w-0 items-center gap-1 text-xs leading-none text-neutral-400">
-                          <span className="shrink-0" aria-hidden>
-                            {childIcon}
-                          </span>
+                          {childIcon ? (
+                            <span className="shrink-0" aria-hidden>
+                              {childIcon}
+                            </span>
+                          ) : null}
                           <span className="truncate">{childName}</span>
-                          {tx.category_id &&
-                          sinkingCategoryIds.has(tx.category_id) ? (
+                          {(tx.category_id &&
+                            sinkingCategoryIds.has(tx.category_id)) ||
+                          transferToSinking ? (
                             <SinkingFundLabel />
                           ) : null}
-                        </p>
-                      ) : isTransfer ? (
-                        <p className="truncate text-xs leading-none text-neutral-400">
-                          Transfer
                         </p>
                       ) : (
                         <span className="invisible truncate text-xs leading-none">
                           .
                         </span>
                       )}
-                      {!isTransfer ? (
-                        <CircleBadge
-                          circle={
-                            isCircle(tx.circle) ? tx.circle : 'hd_family'
-                          }
-                          size="inline"
-                        />
-                      ) : (
-                        <span className="invisible text-xs leading-none">
-                          .
-                        </span>
-                      )}
+                      <CircleBadge
+                        circle={
+                          isCircle(tx.circle) ? tx.circle : 'hd_family'
+                        }
+                        size="inline"
+                      />
                     </div>
 
                     {tx.complete_later ? (
                       <>
                         {note ? (
-                          <p className="flex min-w-0 items-center gap-1 text-xs leading-snug text-neutral-500 dark:text-neutral-400">
-                            <span className="min-w-0 line-clamp-2 break-words">
-                              {note}
-                            </span>
-                            {transferToSinking ? <SinkingFundLabel /> : null}
+                          <p className="min-w-0 line-clamp-2 break-words text-xs leading-snug text-neutral-500 dark:text-neutral-400">
+                            {note}
                           </p>
                         ) : null}
                         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
@@ -676,11 +667,8 @@ export function History() {
                       <>
                         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
                           {note ? (
-                            <p className="flex min-w-0 items-center gap-1 text-xs leading-none text-neutral-500 dark:text-neutral-400">
-                              <span className="truncate">{note}</span>
-                              {transferToSinking ? (
-                                <SinkingFundLabel />
-                              ) : null}
+                            <p className="truncate text-xs leading-none text-neutral-500 dark:text-neutral-400">
+                              {note}
                             </p>
                           ) : (
                             <span className="invisible truncate text-xs leading-none">

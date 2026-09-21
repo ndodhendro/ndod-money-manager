@@ -6,6 +6,15 @@ export function formatRupiah(amount: number): string {
   }).format(amount)
 }
 
+/** Stored/shown when a note is left blank. */
+export const DEFAULT_EMPTY_NOTE = '-'
+
+export function noteOrDefault(
+  description: string | null | undefined,
+): string {
+  return description?.trim() || DEFAULT_EMPTY_NOTE
+}
+
 /** TradingView candle green (#26a69a) — income / positive. */
 export const AMOUNT_IN_CLASS = 'text-tv-green'
 

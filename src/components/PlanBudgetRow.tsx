@@ -396,11 +396,7 @@ export function PlanBudgetRow({
                   .
                 </span>
               )}
-              {!stackIsTransfer ? (
-                <CircleBadge circle={stackCircle} size="inline" />
-              ) : (
-                <span className="invisible text-xs leading-none">.</span>
-              )}
+              <CircleBadge circle={stackCircle} size="inline" />
             </div>
             {stackGroup || showCeilingOnGroupRow ? (
               <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">

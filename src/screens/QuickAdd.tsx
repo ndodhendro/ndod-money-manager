@@ -32,11 +32,10 @@ import {
   yearMonthFromOccurredOn,
 } from '../lib/budgetSaveGate'
 import { resolveExpenseFromBucketId } from '../lib/bucketsApi'
-import { isExpenseOtherCategory } from '../lib/categoriesApi'
 import { budgetGroupOfCategory } from '../lib/freeWants'
 import { deleteEfLoanForTransaction } from '../lib/efLoansApi'
 import { FormattedAmountInput } from '../components/FormattedAmountInput'
-import { monthRange, todayIso } from '../lib/format'
+import { monthRange, noteOrDefault, todayIso } from '../lib/format'
 import {
   bumpCategoryUsage,
   getStoredCircle,
@@ -577,11 +576,6 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
 
   async function handleSave() {
     if (completeLater) {
-      if (!description.trim()) {
-        showAppToast('Enter a note first')
-        descriptionRef.current?.focus()
-        return
-      }
       if (
         type === 'transfer' &&
         fromBucket !== undefined &&
@@ -626,16 +620,10 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
     } else if (!categoryId) {
       focusCategoryField('Pick a category')
       return
-    } else if (
-      isExpenseOtherCategory(categoryId, byId) &&
-      !description.trim()
-    ) {
-      showAppToast('Enter a note first')
-      descriptionRef.current?.focus()
-      return
     }
 
     const numericAmount = Number(amountDigits) || 0
+    const note = noteOrDefault(description)
     const resolvedCircle: Circle =
       type === 'income'
         ? 'hd_family'
@@ -653,7 +641,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
             from_bucket_id: fromBucket ?? null,
             to_bucket_id: toBucket ?? null,
             amount: numericAmount,
-            description,
+            description: note,
             owner,
             circle: resolvedCircle,
             occurred_on: occurredOn,
@@ -671,7 +659,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
                 : null,
             to_bucket_id: null,
             amount: numericAmount,
-            description,
+            description: note,
             owner,
             circle: resolvedCircle,
             occurred_on: occurredOn,
@@ -1005,12 +993,7 @@ export function QuickAdd({ isActive = true }: QuickAddProps) {
           categoryId={isTransfer ? null : categoryId}
           owner={owner}
           onKeyDown={handleDescriptionKeyDown}
-          placeholder={
-            completeLater ||
-            (type === 'expense' && isExpenseOtherCategory(categoryId, byId))
-              ? 'Note (required)'
-              : 'Note (optional)'
-          }
+          placeholder="Note (optional)"
         />
       </div>
 

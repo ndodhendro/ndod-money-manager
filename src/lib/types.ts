@@ -280,7 +280,7 @@ export function formatTransferLabel(
   return formatBucketSideLabel(from)
 }
 
-/** Transfer row note line: destination bucket. */
+/** Transfer row destination line. */
 export function formatTransferToLabel(
   to: Bucket | null | undefined,
 ): string {

@@ -11,8 +11,6 @@ import {
 } from '../components/SimpleCharts'
 import { useMonthCursor } from '../hooks/useMonthCursor'
 import { useTransactions } from '../hooks/useTransactions'
-import { useEfOwed } from '../hooks/useEfOwed'
-import { useBuckets } from '../hooks/useBuckets'
 import {
   AMOUNT_IN_CLASS,
   AMOUNT_OUT_CLASS,
@@ -38,8 +36,6 @@ export function Dashboard() {
     handleTouchEnd,
   } = useMonthCursor()
   const { transactions, loading, error } = useTransactions(range)
-  const { owed: efOwed } = useEfOwed()
-  const { emergency } = useBuckets()
   const [circleFilter, setCircleFilter] = useState<Circle | 'semua'>('semua')
 
   const filtered = useMemo(
@@ -162,34 +158,6 @@ export function Dashboard() {
 
       {!loading && (
         <>
-          {efOwed.total > 0 && (
-            <section className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/40">
-              <p className="text-sm font-semibold text-amber-900 dark:text-amber-100">
-                Owed to Emergency Fund
-              </p>
-              <p className="mt-1 text-lg font-semibold tabular-nums text-amber-950 dark:text-amber-50">
-                {formatRupiah(efOwed.total)}
-              </p>
-              <p className="mt-1 text-xs text-amber-800 dark:text-amber-200">
-                Buffer {formatRupiah(efOwed.buffer)} · Guilt-Free{' '}
-                {formatRupiah(efOwed.guiltFree)}
-                {efOwed.sinkingFund > 0
-                  ? ` · Sinking ${formatRupiah(efOwed.sinkingFund)}`
-                  : ''}
-              </p>
-              <p className="mt-2 text-xs text-amber-800 dark:text-amber-200">
-                Available{' '}
-                {formatRupiah(
-                  Math.max(
-                    0,
-                    Math.round(emergency?.balance ?? 0) - efOwed.total,
-                  ),
-                )}{' '}
-                of Emergency Fund cash
-              </p>
-            </section>
-          )}
-
           <div className="mt-4 grid grid-cols-2 gap-3">
             <div className="rounded-xl bg-white p-3 shadow-sm dark:bg-neutral-800">
               <p className="text-xs text-neutral-400">Income</p>

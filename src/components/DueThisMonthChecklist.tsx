@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { ActionEmoji } from '../lib/actionEmoji'
 import { showAppToast } from '../lib/appToast'
 import { areAllCollapseOpen } from '../lib/collapseState'
-import { formatDateLabel, formatRupiah, todayIso } from '../lib/format'
+import { formatDateLabel, formatRupiah, noteOrDefault, todayIso } from '../lib/format'
 import {
   getRecurringBillDisplayParts,
   sortRecurringOccurrencesForChecklist,
@@ -733,7 +733,7 @@ export function DueThisMonthChecklist({
                 from_bucket_id: bill.from_bucket_id,
                 to_bucket_id: bill.to_bucket_id,
                 amount,
-                description: bill.name,
+                description: noteOrDefault(bill.name),
                 owner,
                 circle,
                 occurred_on: occurredOn,
@@ -751,7 +751,7 @@ export function DueThisMonthChecklist({
                     : null,
                 to_bucket_id: null,
                 amount,
-                description: bill.name,
+                description: noteOrDefault(bill.name),
                 owner,
                 circle,
                 occurred_on: occurredOn,

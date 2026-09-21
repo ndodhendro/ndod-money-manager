@@ -27,7 +27,7 @@ export type RecurringBillDisplayParts = {
   childIcon: string | null
   childName: string | null
   isTransfer: boolean
-  /** Shown in the note slot for transfers (destination bucket). */
+  /** Transfer destination (also on childName). */
   transferToLabel: string | null
   circle: RecurringBill['circle']
 }
@@ -44,13 +44,14 @@ export function getRecurringBillDisplayParts(
     const to = bill.to_bucket_id
       ? bucketsById.get(bill.to_bucket_id)
       : null
+    const transferToLabel = formatTransferToLabel(to)
     return {
       parentIcon: TRANSFER_TYPE_ICON,
       parentName: formatTransferLabel(from),
       childIcon: null,
-      childName: null,
+      childName: transferToLabel,
       isTransfer: true,
-      transferToLabel: formatTransferToLabel(to),
+      transferToLabel,
       circle: bill.circle,
     }
   }

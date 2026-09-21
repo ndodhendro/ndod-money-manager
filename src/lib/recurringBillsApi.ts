@@ -9,6 +9,7 @@ import {
 } from './monthCursor'
 import { notifyRecurringBillsChanged } from './recurringBillsEvents'
 import { supabase } from './supabase'
+import { noteOrDefault } from './format'
 import {
   isBudgetGroup,
   isOwner,
@@ -1657,7 +1658,7 @@ function toInsertRow(
     ? clampIntervalEvery(unit, input.interval_months)
     : 1
   const base: Record<string, unknown> = {
-    name: input.name.trim(),
+    name: noteOrDefault(input.name),
     amount: input.amount,
     category_id: input.type === 'transfer' ? null : input.category_id,
     budget_group:
@@ -2069,6 +2070,9 @@ export async function updateRecurringBill(
     if (!prevError && prevRow) {
       previous = mapBill(prevRow as Record<string, unknown>)
     }
+  }
+  if (typeof nextPatch.name === 'string') {
+    nextPatch.name = noteOrDefault(nextPatch.name)
   }
   if (nextPatch.type === 'income' || nextPatch.type === 'transfer') {
     nextPatch.budget_group = null

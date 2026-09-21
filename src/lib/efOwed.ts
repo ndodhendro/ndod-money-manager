@@ -113,7 +113,7 @@ function loanAsTx(loan: DerivedEfLoan): TransactionWithCategory {
  * Walk loans and EF inflows in chronological order.
  * A transfer to EF only repays loans that already exist at that moment.
  * Earlier PYF / payday funding is savings in the jar — not a prepayment of
- * later overspend — otherwise Dashboard owed stays 0 whenever EF was funded.
+ * later overspend — otherwise owed stays 0 whenever EF was funded.
  * Leftover inflow after paying open loans is savings, not credit for future loans.
  */
 function applyFifoRepayments(

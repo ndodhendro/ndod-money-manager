@@ -3,10 +3,12 @@ import { BudgetGroupBadge } from './BudgetGroupBadge'
 import { CircleBadge } from './CircleBadge'
 import { OwnerBadge } from './OwnerBadge'
 import { SinkingFundLabel } from './SinkingFundLabel'
+import { HISTORY_PLAN_KIND_LABELS } from '../lib/freeGuiltyProgress'
 import {
   AMOUNT_IN_CLASS,
   AMOUNT_OUT_CLASS,
   formatRupiah,
+  noteOrDefault,
 } from '../lib/format'
 import type { RecurringBillDisplayParts } from '../lib/recurringBillDisplay'
 import type { MonthCursor } from '../lib/monthCursor'
@@ -14,7 +16,7 @@ import {
   formatRecurringMeta,
   type RecurringBill,
 } from '../lib/recurringBillsApi'
-import { isCircle, isOwner, type BudgetGroup } from '../lib/types'
+import { CIRCLE_TEXT_CLASS, isCircle, isOwner, type BudgetGroup } from '../lib/types'
 
 interface RecurringBillRowContentProps {
   bill: RecurringBill
@@ -61,9 +63,7 @@ export function RecurringBillRowContent({
   endAction,
 }: RecurringBillRowContentProps) {
   const amount = displayAmount ?? bill.amount
-  const noteText = display.isTransfer
-    ? display.transferToLabel
-    : (note ?? (bill.name.trim() || null))
+  const noteText = noteOrDefault(note ?? bill.name)
   const dim = inactive ? 'opacity-50' : done ? 'opacity-60' : ''
   const titleClass = done
     ? 'text-neutral-500 dark:text-neutral-400'
@@ -100,52 +100,29 @@ export function RecurringBillRowContent({
         >
           {display.childName ? (
             <p className="flex min-w-0 items-center gap-1 text-xs leading-none text-neutral-400">
-              <span className="shrink-0" aria-hidden>
-                {display.childIcon}
-              </span>
+              {display.childIcon ? (
+                <span className="shrink-0" aria-hidden>
+                  {display.childIcon}
+                </span>
+              ) : null}
               <span className="truncate">{display.childName}</span>
               {linkedToSinkingFund ? <SinkingFundLabel /> : null}
-            </p>
-          ) : display.isTransfer ? (
-            <p className="truncate text-xs leading-none text-neutral-400">
-              Transfer
             </p>
           ) : (
             <span className="invisible truncate text-xs leading-none">.</span>
           )}
-          {!display.isTransfer ? (
-            <CircleBadge
-              circle={isCircle(display.circle) ? display.circle : 'hd_family'}
-              size="inline"
-            />
-          ) : (
-            <span className="invisible text-xs leading-none">.</span>
-          )}
+          <CircleBadge
+            circle={isCircle(display.circle) ? display.circle : 'hd_family'}
+            size="inline"
+          />
         </div>
 
         <div
           className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 ${dim}`}
         >
-          {noteText ? (
-            <p
-              className={`flex min-w-0 items-center gap-1 text-xs leading-none ${noteClass}`}
-            >
-              <span
-                className={
-                  display.isTransfer
-                    ? 'truncate'
-                    : 'line-clamp-2 min-w-0 break-words'
-                }
-              >
-                {noteText}
-              </span>
-              {display.isTransfer && linkedToSinkingFund ? (
-                <SinkingFundLabel />
-              ) : null}
-            </p>
-          ) : (
-            <span className="invisible truncate text-xs leading-none">.</span>
-          )}
+          <p className={`truncate text-xs leading-none ${noteClass}`}>
+            {noteText}
+          </p>
           <p
             className={`truncate text-xs font-semibold leading-none whitespace-nowrap ${
               bill.type === 'expense'
@@ -167,23 +144,34 @@ export function RecurringBillRowContent({
         {budgetGroup || endAction ? (
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
             {budgetGroup ? (
-              <p className={`truncate text-left text-xs leading-none ${dim}`}>
-                <BudgetGroupBadge group={budgetGroup} />
+              <p
+                className={`truncate text-left text-xs font-medium leading-none ${CIRCLE_TEXT_CLASS.hd_family} ${dim}`}
+              >
+                {HISTORY_PLAN_KIND_LABELS.planned}
               </p>
             ) : (
-              <span className="invisible truncate text-xs leading-none">.</span>
+              <span className="invisible truncate text-xs leading-none">
+                .
+              </span>
             )}
-            {endAction ? (
-              <div
-                className="relative h-3 w-4 shrink-0"
-                onClick={(e) => e.stopPropagation()}
-                onKeyDown={(e) => e.stopPropagation()}
-              >
-                <div className="absolute top-1/2 right-0 -translate-y-1/2">
-                  {endAction}
+            <div className="flex items-center justify-end gap-x-3">
+              {budgetGroup ? (
+                <p className={`truncate text-xs leading-none whitespace-nowrap ${dim}`}>
+                  <BudgetGroupBadge group={budgetGroup} />
+                </p>
+              ) : null}
+              {endAction ? (
+                <div
+                  className="relative h-3 w-4 shrink-0"
+                  onClick={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => e.stopPropagation()}
+                >
+                  <div className="absolute top-1/2 right-0 -translate-y-1/2">
+                    {endAction}
+                  </div>
                 </div>
-              </div>
-            ) : null}
+              ) : null}
+            </div>
           </div>
         ) : null}
         {showMeta ? (

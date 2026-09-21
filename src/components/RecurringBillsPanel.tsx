@@ -10,12 +10,11 @@ import { useBuckets } from '../hooks/useBuckets'
 import { useCategories } from '../hooks/useCategories'
 import { usePyfSettings } from '../hooks/usePyfSettings'
 import { useTransactions } from '../hooks/useTransactions'
-import { isExpenseOtherCategory } from '../lib/categoriesApi'
 import { ActionEmoji } from '../lib/actionEmoji'
 import { showAppToast } from '../lib/appToast'
 import { areAllCollapseOpen } from '../lib/collapseState'
 import { FormattedAmountInput } from './FormattedAmountInput'
-import { formatPctLabel, formatRupiah, todayIso } from '../lib/format'
+import { formatPctLabel, formatRupiah, noteOrDefault, todayIso } from '../lib/format'
 import { isBlankSearch, matchesRecurringBillSearch } from '../lib/listSearch'
 import {
   getRecurringBillDisplayParts,
@@ -823,11 +822,6 @@ export function RecurringBillsPanel({
         focusCategoryField('Pick a category')
         return
       }
-      if (isExpenseOtherCategory(categoryId, byId) && !note.trim()) {
-        showAppToast('Enter a note first')
-        noteRef.current?.focus()
-        return
-      }
     }
 
     const resolvedCircle = type === 'income' ? 'hd_family' : circle!
@@ -838,7 +832,7 @@ export function RecurringBillsPanel({
       const created = await createRecurringBill(
         type === 'transfer'
           ? {
-              name: note.trim(),
+              name: noteOrDefault(note),
               amount,
               type: 'transfer',
               category_id: null,
@@ -851,7 +845,7 @@ export function RecurringBillsPanel({
               ...intervalFields,
             }
           : {
-              name: note.trim(),
+              name: noteOrDefault(note),
               amount,
               type,
               category_id: categoryId!,
@@ -929,18 +923,13 @@ export function RecurringBillsPanel({
         focusCategoryField('Pick a category')
         return
       }
-      if (isExpenseOtherCategory(categoryId, byId) && !note.trim()) {
-        showAppToast('Enter a note first')
-        noteRef.current?.focus()
-        return
-      }
     }
 
     const resolvedCircle = type === 'income' ? 'hd_family' : circle!
     const updatedId = editingId
     const intervalFields = buildIntervalFields()
     const patch: Parameters<typeof updateRecurringBill>[1] = {
-      name: note.trim(),
+      name: noteOrDefault(note),
       amount,
       type,
       category_id: type === 'transfer' ? null : categoryId,
@@ -965,7 +954,7 @@ export function RecurringBillsPanel({
     try {
       if (destChanged) {
         const linked = await fetchLinkedDueItemTransactions(updatedId, {
-          name: note.trim() || baseline?.name || '',
+          name: noteOrDefault(note) || baseline?.name || '',
           type,
         })
         const count = countDueItemsNotOnTarget(linked, {
@@ -1010,7 +999,7 @@ export function RecurringBillsPanel({
           to_bucket_id: patch.to_bucket_id ?? null,
           budget_group: patch.budget_group ?? null,
         },
-        { name: patch.name?.trim() || note.trim(), type: nextType },
+        { name: patch.name?.trim() || noteOrDefault(note), type: nextType },
       )
     }
     await updateRecurringBill(updatedId, patch)
@@ -1610,11 +1599,7 @@ export function RecurringBillsPanel({
             owner={owner}
             onKeyDown={handleNoteKeyDown}
             enterKeyHint={isRecurring ? 'next' : 'done'}
-            placeholder={
-              type === 'expense' && isExpenseOtherCategory(categoryId, byId)
-                ? 'Note (required)'
-                : 'Note (optional)'
-            }
+            placeholder="Note (optional)"
           />
         </div>
 

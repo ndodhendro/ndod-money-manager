@@ -15,6 +15,7 @@ import type {
   TransactionWithCategory,
 } from './types'
 import { isBudgetGroup } from './types'
+import { noteOrDefault } from './format'
 
 function attachCategoryParents(
   rows: Array<Record<string, unknown>>,
@@ -234,7 +235,7 @@ function toBaseRow(input: NewTransactionInput): Record<string, unknown> {
       type: input.type,
       category_id: null,
       amount: input.amount,
-      description: input.description || null,
+      description: noteOrDefault(input.description),
       owner: input.owner,
       circle: input.circle,
       occurred_on: input.occurred_on,
@@ -476,7 +477,7 @@ export async function fetchNoteSuggestions(
   const suggestions: string[] = []
   for (const row of data ?? []) {
     const note = (row.description ?? '').trim()
-    if (!note) continue
+    if (!note || note === '-') continue
     const key = note.toLowerCase()
     if (seen.has(key)) continue
     seen.add(key)

@@ -11,11 +11,13 @@ import { BottomNav } from './components/BottomNav'
 import { UpdateRequired } from './components/UpdateRequired'
 import { useBackButtonTrap } from './hooks/useBackButton'
 import { isDeviceUnlocked } from './lib/deviceUnlock'
+import { MONTH_BUDGET_DETAIL_ROUTE } from './lib/monthBudgetDetail'
 import { getStoredProfile } from './lib/profile'
 import { History } from './screens/History'
 import { MoneyPlanScreen } from './screens/MoneyPlan'
 import { PlanCloseMonth } from './screens/plan/PlanCloseMonth'
 import { PlanEmergency } from './screens/plan/PlanEmergency'
+import { PlanMonthBudgetDetail } from './screens/plan/PlanMonthBudgetDetail'
 import { PlanMonthlyProgress } from './screens/plan/PlanMonthlyProgress'
 import { PlanPayday } from './screens/plan/PlanPayday'
 import { PlanRecurring } from './screens/plan/PlanRecurring'
@@ -79,6 +81,10 @@ function AppShell({ onProfileReset }: { onProfileReset: () => void }) {
         <Route path="/rencana/payday" element={<PlanPayday />} />
         <Route path="/rencana/close-month" element={<PlanCloseMonth />} />
         <Route path="/rencana/recurring" element={<PlanRecurring />} />
+        <Route
+          path={MONTH_BUDGET_DETAIL_ROUTE}
+          element={<PlanMonthBudgetDetail />}
+        />
         <Route
           path="/rencana/monthly-progress"
           element={<PlanMonthlyProgress />}

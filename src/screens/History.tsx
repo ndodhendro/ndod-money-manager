@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type TouchEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { CircleBadge } from '../components/CircleBadge'
-import { BudgetGroupBadge } from '../components/BudgetGroupBadge'
 import { DueThisMonthChecklist } from '../components/DueThisMonthChecklist'
 import { GroupedListFrame } from '../components/GroupedListFrame'
 import { CollapsibleDayGroup } from '../components/CollapsibleDayGroup'
@@ -10,22 +8,16 @@ import {
   HistoryDaySortableList,
   HistoryTxSwipeRow,
 } from '../components/HistoryDaySortableList'
+import { HistoryTxRowBody } from '../components/HistoryTxRowBody'
 import { MonthPager } from '../components/MonthPager'
-import { OwnerBadge } from '../components/OwnerBadge'
 import { PageTitle } from '../components/PageTitle'
 import { SearchField } from '../components/SearchField'
-import { SinkingFundLabel } from '../components/SinkingFundLabel'
 import { NavIcon } from '../lib/navTabs'
-import {
-  historyBudgetGroupOfTx,
-  isBlankSearch,
-  matchesTransactionSearch,
-} from '../lib/listSearch'
+import { isBlankSearch, matchesTransactionSearch } from '../lib/listSearch'
 import { useCategories } from '../hooks/useCategories'
 import { useBuckets } from '../hooks/useBuckets'
 import { useRecurringBills } from '../hooks/useRecurringBills'
 import { useTransactions } from '../hooks/useTransactions'
-import { sinkingFundOverspendTransactionIds } from '../lib/budgetSaveGate'
 import { showAppToast } from '../lib/appToast'
 import { ActionEmoji } from '../lib/actionEmoji'
 import { areAllCollapseOpen } from '../lib/collapseState'
@@ -38,22 +30,12 @@ import {
   formatRupiah,
   monthRange,
   todayIso,
-  noteOrDefault,
 } from '../lib/format'
 import { requestAmountFocus } from '../lib/keyboardFocus'
 import { monthCursorKey } from '../lib/monthCursor'
 import { compareHistoryDayDisplay } from '../lib/estimateProgress'
-import {
-  checkingBucketIdSet,
-  estimateExpenseCoverageKeys,
-  estimateSinkingExpenseCoverageKeys,
-  HISTORY_OVERSPEND_LABEL,
-  HISTORY_PLAN_KIND_LABELS,
-  historyPlanKindByTxId,
-  monthBudgetCeilingOverspendTransactionIds,
-} from '../lib/freeGuiltyProgress'
-import { isPlannedCashNeedsOrWantsExpense } from '../lib/freeWants'
 import { useFreeGuiltyProgress } from '../hooks/useFreeGuiltyProgress'
+import { useHistoryTxMeta } from '../hooks/useHistoryTxMeta'
 import {
   countDueOrOverdueUnchecked,
   hasOccurrenceLog,
@@ -62,16 +44,7 @@ import {
 } from '../lib/recurringBillsApi'
 import { deleteTransaction, reorderTransactions } from '../lib/transactionsApi'
 import { sinkingLinkedCategoryIds } from '../lib/bucketsApi'
-import {
-  BUDGET_GROUP_TEXT_CLASS,
-  categoryDisplayParts,
-  CIRCLE_TEXT_CLASS,
-  formatTransferLabel,
-  formatTransferToLabel,
-  isCircle,
-  TRANSFER_TYPE_ICON,
-  type TransactionWithCategory,
-} from '../lib/types'
+import type { TransactionWithCategory } from '../lib/types'
 
 type MonthCursor = { year: number; month: number }
 type HistoryLocationState = { highlightTxId?: string }
@@ -271,98 +244,19 @@ export function History() {
     }
   }
 
-  const checkingIds = useMemo(() => checkingBucketIdSet(buckets), [buckets])
-
-  const estimateCoverageKeys = useMemo(() => {
-    return estimateExpenseCoverageKeys(
-      bills,
-      categoriesById,
-      (bill) =>
-        isPlannedCashNeedsOrWantsExpense(
-          bill,
-          categoriesById,
-          bucketsById.values(),
-        ),
-      bucketsById,
-    )
-  }, [bills, categoriesById, bucketsById])
-
-  const sinkingExpenseCoverageKeys = useMemo(
-    () =>
-      estimateSinkingExpenseCoverageKeys(
-        bills,
-        categoriesById,
-        bucketsById.values(),
-      ),
-    [bills, categoriesById, bucketsById],
-  )
-
-  const overspendTxIds = useMemo(() => {
-    const ids = new Set<string>()
-    if (allocation) {
-      for (const id of monthBudgetCeilingOverspendTransactionIds({
-        bills,
-        overridesByBillId: overrideByBillId,
-        skippedOccurrenceKeys,
-        categoriesById,
-        bucketsById,
-        yearMonth,
-        transactions,
-        checkingBucketIds: checkingIds,
-        estimateCoverageKeys,
-        bufferAllowance: allocation.buffer,
-        guiltFreeAllowance: allocation.guiltFree,
-        dueBillIdByTxId,
-      })) {
-        ids.add(id)
-      }
-    }
-    for (const id of sinkingFundOverspendTransactionIds({
-      buckets,
-      movements,
-      transactions,
-      yearMonth,
-    })) {
-      ids.add(id)
-    }
-    return ids
-  }, [
-    allocation,
+  const { overspendTxIds, planKindByTxId } = useHistoryTxMeta({
+    transactions,
     bills,
     overrideByBillId,
     skippedOccurrenceKeys,
+    dueBillIdByTxId,
     categoriesById,
     bucketsById,
     buckets,
     movements,
     yearMonth,
-    transactions,
-    checkingIds,
-    estimateCoverageKeys,
-    dueBillIdByTxId,
-  ])
-
-  const planKindByTxId = useMemo(
-    () =>
-      historyPlanKindByTxId({
-        transactions,
-        estimateCoverageKeys,
-        sinkingExpenseCoverageKeys,
-        checkingBucketIds: checkingIds,
-        dueBillIdByTxId,
-        bucketsById,
-        categoriesById,
-      }),
-    [
-      transactions,
-      estimateCoverageKeys,
-      sinkingExpenseCoverageKeys,
-      checkingIds,
-      dueBillIdByTxId,
-      bucketsById,
-      categoriesById,
-    ],
-  )
+    allocation,
+  })
 
   const filtered = transactions.filter((tx) =>
     matchesTransactionSearch(searchQuery, tx, {
@@ -538,207 +432,37 @@ export function History() {
       }, 0)
       const showDayTotal = items.some((tx) => !tx.complete_later)
       const rows = items.map((tx) => {
-              const isTransfer = tx.type === 'transfer'
-              const { parentIcon, parentName, childIcon, childName } =
-                isTransfer
-                  ? {
-                      parentIcon: TRANSFER_TYPE_ICON,
-                      parentName: formatTransferLabel(tx.from_bucket),
-                      childIcon: null as string | null,
-                      childName: formatTransferToLabel(tx.to_bucket),
-                    }
-                  : categoryDisplayParts(tx.category)
-              const note = isTransfer
-                ? noteOrDefault(tx.description)
-                : tx.description?.trim() || null
-              const transferToSinking = Boolean(
-                isTransfer && tx.to_bucket?.kind === 'sinking',
-              )
-              const isHighlighted = highlightId === tx.id
-              const amountLabel =
-                tx.amount > 0
-                  ? `${
-                      tx.type === 'expense'
-                        ? '-'
-                        : tx.type === 'income'
-                          ? '+'
-                          : ''
-                    }${formatRupiah(tx.amount)}`
-                  : '—'
-              const budgetGroup = historyBudgetGroupOfTx(tx)
-              const planKind = showOverspend
-                ? planKindByTxId.get(tx.id)
-                : undefined
-              const showOverspendLabel =
-                showOverspend && overspendTxIds.has(tx.id)
+        const isHighlighted = highlightId === tx.id
+        const planKind = showOverspend ? planKindByTxId.get(tx.id) : undefined
+        const showOverspendLabel = showOverspend && overspendTxIds.has(tx.id)
 
-              return (
-                <HistoryTxSwipeRow
-                  key={tx.id}
-                  id={tx.id}
-                  sortable={canReorder}
-                  open={openSwipeId === tx.id}
-                  onOpenChange={(open) =>
-                    setOpenSwipeId(open ? tx.id : null)
-                  }
-                  onDelete={() => {
-                    setOpenSwipeId(tx.id)
-                    setPendingDeleteId(tx.id)
-                  }}
-                  contentRef={isHighlighted ? highlightRef : undefined}
-                  highlighted={isHighlighted}
-                  completeLater={tx.complete_later}
-                  onContentClick={() =>
-                    navigate(`/transaksi/${tx.id}`, { replace: true })
-                  }
-                >
-                  <span className="text-xl leading-none" aria-hidden>
-                    {parentIcon}
-                  </span>
-                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
-                      <p className="truncate text-xs font-semibold leading-none text-neutral-800 dark:text-white">
-                        {parentName}
-                      </p>
-                      <OwnerBadge owner={tx.owner} size="inline" />
-                    </div>
-
-                    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
-                      {childName ? (
-                        <p className="flex min-w-0 items-center gap-1 text-xs leading-none text-neutral-400">
-                          {childIcon ? (
-                            <span className="shrink-0" aria-hidden>
-                              {childIcon}
-                            </span>
-                          ) : null}
-                          <span className="truncate">{childName}</span>
-                          {(tx.category_id &&
-                            sinkingCategoryIds.has(tx.category_id)) ||
-                          transferToSinking ? (
-                            <SinkingFundLabel />
-                          ) : null}
-                        </p>
-                      ) : (
-                        <span className="invisible truncate text-xs leading-none">
-                          .
-                        </span>
-                      )}
-                      <CircleBadge
-                        circle={
-                          isCircle(tx.circle) ? tx.circle : 'hd_family'
-                        }
-                        size="inline"
-                      />
-                    </div>
-
-                    {tx.complete_later ? (
-                      <>
-                        {note ? (
-                          <p className="min-w-0 line-clamp-2 break-words text-xs leading-snug text-neutral-500 dark:text-neutral-400">
-                            {note}
-                          </p>
-                        ) : null}
-                        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
-                          {budgetGroup ? (
-                            <p className="truncate text-left text-xs leading-none">
-                              <BudgetGroupBadge group={budgetGroup} />
-                            </p>
-                          ) : (
-                            <span className="invisible truncate text-xs leading-none">
-                              .
-                            </span>
-                          )}
-                          <p
-                            className={`truncate text-xs font-semibold leading-none whitespace-nowrap ${
-                              tx.amount <= 0
-                                ? 'text-neutral-400'
-                                : tx.type === 'expense'
-                                  ? AMOUNT_OUT_CLASS
-                                  : tx.type === 'income'
-                                    ? AMOUNT_IN_CLASS
-                                    : 'text-violet-600 dark:text-violet-300'
-                            }`}
-                          >
-                            {amountLabel}
-                          </p>
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
-                          {note ? (
-                            <p className="truncate text-xs leading-none text-neutral-500 dark:text-neutral-400">
-                              {note}
-                            </p>
-                          ) : (
-                            <span className="invisible truncate text-xs leading-none">
-                              .
-                            </span>
-                          )}
-                          <p
-                            className={`truncate text-xs font-semibold leading-none whitespace-nowrap ${
-                              tx.amount <= 0
-                                ? 'text-neutral-400'
-                                : tx.type === 'expense'
-                                  ? AMOUNT_OUT_CLASS
-                                  : tx.type === 'income'
-                                    ? AMOUNT_IN_CLASS
-                                    : 'text-violet-600 dark:text-violet-300'
-                            }`}
-                          >
-                            {amountLabel}
-                          </p>
-                        </div>
-                        {budgetGroup || planKind || showOverspendLabel ? (
-                          <>
-                            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
-                              {planKind ? (
-                                <p
-                                  className={`truncate text-left text-xs font-medium leading-none ${
-                                    planKind === 'unplanned'
-                                      ? 'text-amber-600 dark:text-amber-400'
-                                      : CIRCLE_TEXT_CLASS.hd_family
-                                  }`}
-                                >
-                                  {HISTORY_PLAN_KIND_LABELS[planKind]}
-                                </p>
-                              ) : (
-                                <span className="invisible truncate text-xs leading-none">
-                                  .
-                                </span>
-                              )}
-                              {budgetGroup ? (
-                                <p className="truncate text-xs leading-none whitespace-nowrap">
-                                  <BudgetGroupBadge group={budgetGroup} />
-                                </p>
-                              ) : showOverspendLabel ? (
-                                <p
-                                  className={`truncate text-xs font-medium leading-none whitespace-nowrap ${BUDGET_GROUP_TEXT_CLASS.needs}`}
-                                >
-                                  {HISTORY_OVERSPEND_LABEL}
-                                </p>
-                              ) : null}
-                            </div>
-                            {budgetGroup && showOverspendLabel ? (
-                              <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
-                                <span className="invisible truncate text-xs leading-none">
-                                  .
-                                </span>
-                                <p
-                                  className={`truncate text-xs font-medium leading-none whitespace-nowrap ${BUDGET_GROUP_TEXT_CLASS.needs}`}
-                                >
-                                  {HISTORY_OVERSPEND_LABEL}
-                                </p>
-                              </div>
-                            ) : null}
-                          </>
-                        ) : null}
-                      </>
-                    )}
-                  </div>
-                </HistoryTxSwipeRow>
-              )
-            })
+        return (
+          <HistoryTxSwipeRow
+            key={tx.id}
+            id={tx.id}
+            sortable={canReorder}
+            open={openSwipeId === tx.id}
+            onOpenChange={(open) => setOpenSwipeId(open ? tx.id : null)}
+            onDelete={() => {
+              setOpenSwipeId(tx.id)
+              setPendingDeleteId(tx.id)
+            }}
+            contentRef={isHighlighted ? highlightRef : undefined}
+            highlighted={isHighlighted}
+            completeLater={tx.complete_later}
+            onContentClick={() =>
+              navigate(`/transaksi/${tx.id}`, { replace: true })
+            }
+          >
+            <HistoryTxRowBody
+              tx={tx}
+              sinkingCategoryIds={sinkingCategoryIds}
+              planKind={planKind}
+              showOverspendLabel={showOverspendLabel}
+            />
+          </HistoryTxSwipeRow>
+        )
+      })
       return (
         <CollapsibleDayGroup
           key={`${persistPrefix}:${date}`}

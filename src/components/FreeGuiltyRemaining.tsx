@@ -6,6 +6,11 @@ import {
   type MonthBudgetProgress,
 } from '../lib/freeGuiltyProgress'
 import { makeMoneyPlanBucket } from '../lib/moneyPlan'
+import {
+  monthBudgetDetailPath,
+  monthBudgetDetailTitle,
+  type MonthBudgetDetailGroup,
+} from '../lib/monthBudgetDetail'
 
 const INSET_SURFACE = 'ml-3 bg-white shadow-sm dark:bg-neutral-800'
 
@@ -16,15 +21,30 @@ function isPlannedProjectionTrack(track: BudgetTrackProgress): boolean {
   )
 }
 
-/** Buffer → Needs, Guilt-Free Fund → Wants. */
+/** Planned Needs and Buffer use Needs; Planned Wants and Guilt-Free Fund use Wants. */
+function trackGroup(track: BudgetTrackProgress): MonthBudgetDetailGroup {
+  return track.label === BUDGET_TRACK_LABELS.buffer ||
+    track.label === BUDGET_TRACK_LABELS.plannedNeeds
+    ? 'needs'
+    : 'wants'
+}
+
 function overspendDetailRows(
   track: BudgetTrackProgress,
   overspend: { planned: number; unplanned: number },
-): { label: string; amount: number }[] {
-  const group = track.label === BUDGET_TRACK_LABELS.buffer ? 'Needs' : 'Wants'
+): { label: string; amount: number; to: string }[] {
+  const group = trackGroup(track)
   return [
-    { label: `Planned ${group} Overspend`, amount: overspend.planned },
-    { label: `Unplanned ${group} Overspend`, amount: overspend.unplanned },
+    {
+      label: monthBudgetDetailTitle(group, 'planned-overspend'),
+      amount: overspend.planned,
+      to: monthBudgetDetailPath(group, 'planned-overspend'),
+    },
+    {
+      label: monthBudgetDetailTitle(group, 'unplanned-overspend'),
+      amount: overspend.unplanned,
+      to: monthBudgetDetailPath(group, 'unplanned-overspend'),
+    },
   ]
 }
 
@@ -52,6 +72,16 @@ function BudgetTrackRow({ track }: { track: BudgetTrackProgress }) {
       showZeroTarget
       alwaysShowProjection={showProjectionSlots}
       detailRows={detailRows}
+      upcomingTo={
+        showProjectionSlots
+          ? monthBudgetDetailPath(trackGroup(track), 'upcoming')
+          : undefined
+      }
+      unscheduledTo={
+        showProjectionSlots
+          ? monthBudgetDetailPath(trackGroup(track), 'unscheduled')
+          : undefined
+      }
     />
   )
 }

@@ -3,6 +3,7 @@ import type { MoneyPlanBucket } from '../lib/moneyPlan'
 import type { BudgetGroup, Circle, Owner } from '../lib/types'
 import { isCircle, isOwner } from '../lib/types'
 import type { ReactNode } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { BudgetGroupBadge } from './BudgetGroupBadge'
 import { CircleBadge } from './CircleBadge'
 import { OwnerBadge } from './OwnerBadge'
@@ -28,6 +29,72 @@ function spendStatusColorClass(displayPct: number): string {
 function fundStatusColorClass(displayPct: number): string {
   if (displayPct < 100) return 'text-red-500'
   return 'text-emerald-500'
+}
+
+function RowChevron() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden
+      className="shrink-0 text-neutral-400"
+    >
+      <path
+        d="M9 6l6 6-6 6"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+/** Tappable text that opens a Month Budget detail page. */
+function DrillLink({
+  to,
+  className = '',
+  children,
+}: {
+  to: string
+  className?: string
+  children: ReactNode
+}) {
+  const navigate = useNavigate()
+  return (
+    <button
+      type="button"
+      onClick={() => navigate(to)}
+      className={`inline-flex items-center gap-0.5 py-0.5 text-left active:opacity-60 ${className}`.trim()}
+    >
+      {children}
+      <RowChevron />
+    </button>
+  )
+}
+
+/** Full-width tappable row (label left, amount right) for detail rows. */
+function DetailRowLink({
+  to,
+  className,
+  children,
+}: {
+  to: string
+  className: string
+  children: ReactNode
+}) {
+  const navigate = useNavigate()
+  return (
+    <button
+      type="button"
+      onClick={() => navigate(to)}
+      className={`${className} py-0.5 active:opacity-60`}
+    >
+      {children}
+    </button>
+  )
 }
 
 export type PlanBudgetDetailStack = {
@@ -94,6 +161,8 @@ export function PlanBudgetRow({
   showZeroTarget = false,
   alwaysShowProjection = false,
   detailRows,
+  upcomingTo,
+  unscheduledTo,
 }: {
   bucket: MoneyPlanBucket
   hint?: ReactNode
@@ -167,7 +236,11 @@ export function PlanBudgetRow({
    * Extra label / amount lines under the title block (Month Budget Buffer
    * and Guilt-Free Fund overspend split). Shown even when the amount is 0.
    */
-  detailRows?: { label: string; amount: number }[]
+  detailRows?: { label: string; amount: number; to?: string }[]
+  /** Makes the Upcoming line open its detail page. */
+  upcomingTo?: string
+  /** Makes the Unscheduled line open its detail page. */
+  unscheduledTo?: string
 }) {
   const upcomingSafe = Math.max(0, Math.round(upcoming))
   const unscheduledSafe = Math.max(0, Math.round(unscheduled))
@@ -295,13 +368,25 @@ export function PlanBudgetRow({
     alwaysShowProjection || unscheduledSafe > 0
       ? `Unscheduled ${formatRupiah(unscheduledSafe)}`
       : null
+  const upcomingNode: ReactNode =
+    upcomingLabel != null && upcomingTo ? (
+      <DrillLink to={upcomingTo}>{upcomingLabel}</DrillLink>
+    ) : (
+      upcomingLabel
+    )
+  const unscheduledNode: ReactNode =
+    unscheduledLabel != null && unscheduledTo ? (
+      <DrillLink to={unscheduledTo}>{unscheduledLabel}</DrillLink>
+    ) : (
+      unscheduledLabel
+    )
   const splitProjectionRows = upcomingLabel != null && unscheduledLabel != null
   const hintUnderTitle =
     !useDetailStack &&
     showMetrics &&
     !splitProjectionRows &&
     (hint || upcomingLabel || unscheduledLabel)
-      ? (hint ?? upcomingLabel ?? unscheduledLabel)
+      ? (hint ?? upcomingNode ?? unscheduledNode)
       : null
   const showUnderTitleRow =
     ceilingStatusUnderTitle ||
@@ -444,7 +529,7 @@ export function PlanBudgetRow({
               <div className="mt-0.5 space-y-0.5">
                 <div className="flex items-baseline justify-between gap-2">
                   <p className="min-w-0 text-[11px] text-neutral-400">
-                    {upcomingLabel}
+                    {upcomingNode}
                   </p>
                   {ceilingOver || (!projectedStatusText && ceilingStatusText) ? (
                     <p
@@ -456,7 +541,7 @@ export function PlanBudgetRow({
                 </div>
                 <div className="flex items-baseline justify-between gap-2">
                   <p className="min-w-0 text-[11px] text-neutral-400">
-                    {unscheduledLabel}
+                    {unscheduledNode}
                   </p>
                   {projectedStatusText ? (
                     <p className="shrink-0 text-right text-[11px] tabular-nums whitespace-nowrap text-neutral-400">
@@ -522,17 +607,32 @@ export function PlanBudgetRow({
             ) : null}
             {showMetrics && detailRows && detailRows.length > 0 ? (
               <div className="mt-0.5 space-y-0.5">
-                {detailRows.map((row) => (
-                  <div
-                    key={row.label}
-                    className="flex items-baseline justify-between gap-2 text-[11px] text-neutral-400"
-                  >
-                    <p className="min-w-0">{row.label}</p>
-                    <p className="shrink-0 text-right tabular-nums whitespace-nowrap">
-                      {formatRupiah(row.amount)}
-                    </p>
-                  </div>
-                ))}
+                {detailRows.map((row) => {
+                  const content = (
+                    <>
+                      <span className="min-w-0 text-left">{row.label}</span>
+                      <span className="flex shrink-0 items-center gap-0.5 text-right tabular-nums whitespace-nowrap">
+                        {formatRupiah(row.amount)}
+                        {row.to ? <RowChevron /> : null}
+                      </span>
+                    </>
+                  )
+                  const rowClass =
+                    "flex w-full items-baseline justify-between gap-2 text-[11px] text-neutral-400"
+                  return row.to ? (
+                    <DetailRowLink
+                      key={row.label}
+                      to={row.to}
+                      className={rowClass}
+                    >
+                      {content}
+                    </DetailRowLink>
+                  ) : (
+                    <div key={row.label} className={rowClass}>
+                      {content}
+                    </div>
+                  )
+                })}
               </div>
             ) : null}
             {alertHint ? (

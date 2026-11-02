@@ -1096,3 +1096,117 @@ export function sumEstimateOverspendByOwner(
   }
   return { suami, istri }
 }
+
+/**
+ * One line behind a Month Budget Upcoming / Unscheduled amount. These are
+ * projections (no transaction yet): `occurredOn` is the unchecked date for
+ * Upcoming and null for Unscheduled.
+ */
+export type MonthBudgetProjectionItem = {
+  bill: RecurringBill
+  occurredOn: string | null
+  amount: number
+}
+
+/** Walk items in order and cut the running total at `limit`. */
+function trimProjectionItems(
+  items: MonthBudgetProjectionItem[],
+  limit: number | undefined,
+): MonthBudgetProjectionItem[] {
+  if (limit == null) return items
+  let remaining = Math.max(0, Math.round(limit))
+  const out: MonthBudgetProjectionItem[] = []
+  for (const item of items) {
+    if (remaining <= 0) break
+    const amount = Math.min(item.amount, remaining)
+    if (amount <= 0) continue
+    out.push({ ...item, amount })
+    remaining -= amount
+  }
+  return out
+}
+
+/**
+ * Items behind Month Budget Upcoming (Planned Needs / Planned Wants):
+ * unchecked future occurrences on recurring lines, each capped to the room
+ * left on its line. Passing the track's displayed Upcoming as `limit`
+ * guarantees the rows sum to that number.
+ */
+export function listMonthBudgetUpcomingItems(input: {
+  estimateRows: EstimateProgressRow[]
+  bills: RecurringBill[]
+  overridesByBillId: Map<string, RecurringBillMonthOverride>
+  skippedOccurrenceKeys?: Set<string>
+  logByOccurrenceKey: Map<string, RecurringBillLog>
+  yearMonth: string
+  today: string
+  group: BudgetGroup
+  limit?: number
+}): MonthBudgetProjectionItem[] {
+  const billById = new Map(input.bills.map((bill) => [bill.id, bill] as const))
+  const items: MonthBudgetProjectionItem[] = []
+  for (const row of input.estimateRows) {
+    if (row.group !== input.group) continue
+    const bill = billById.get(row.billId)
+    if (!bill || !bill.is_recurring) continue
+    const override = input.overridesByBillId.get(bill.id)
+    const unit = plannedAmountForUpcomingOccurrence(bill, override)
+    let room = Math.max(0, row.planned - row.actual)
+    for (const occurredOn of occurrencesInMonth(
+      bill,
+      input.yearMonth,
+      override,
+    )) {
+      if (room <= 0) break
+      if (occurredOn <= input.today) continue
+      if (
+        isOccurrenceSkipped(
+          bill.id,
+          occurredOn,
+          input.skippedOccurrenceKeys,
+          override,
+          bill.interval_unit,
+        )
+      ) {
+        continue
+      }
+      if (hasOccurrenceLog(bill, occurredOn, input.logByOccurrenceKey)) {
+        continue
+      }
+      const amount = Math.min(unit, room)
+      if (amount <= 0) continue
+      items.push({ bill, occurredOn, amount })
+      room -= amount
+    }
+  }
+  items.sort((a, b) => {
+    const dateA = a.occurredOn ?? ''
+    const dateB = b.occurredOn ?? ''
+    if (dateA !== dateB) return dateA < dateB ? -1 : 1
+    return a.bill.name.localeCompare(b.bill.name, 'en', { sensitivity: 'base' })
+  })
+  return trimProjectionItems(items, input.limit)
+}
+
+/**
+ * Items behind Month Budget Unscheduled: remaining room on non-recurring
+ * estimate lines (no checklist date).
+ */
+export function listMonthBudgetUnscheduledItems(input: {
+  estimateRows: EstimateProgressRow[]
+  bills: RecurringBill[]
+  group: BudgetGroup
+  limit?: number
+}): MonthBudgetProjectionItem[] {
+  const billById = new Map(input.bills.map((bill) => [bill.id, bill] as const))
+  const items: MonthBudgetProjectionItem[] = []
+  for (const row of input.estimateRows) {
+    if (row.group !== input.group) continue
+    const bill = billById.get(row.billId)
+    if (!bill || bill.is_recurring) continue
+    const amount = Math.max(0, row.planned - row.actual)
+    if (amount <= 0) continue
+    items.push({ bill, occurredOn: null, amount })
+  }
+  return trimProjectionItems(items, input.limit)
+}

@@ -93,6 +93,7 @@ export function PlanBudgetRow({
   footerNoteClassName,
   showZeroTarget = false,
   alwaysShowProjection = false,
+  detailRows,
 }: {
   bucket: MoneyPlanBucket
   hint?: ReactNode
@@ -162,6 +163,11 @@ export function PlanBudgetRow({
    * Needs/Wants keep a stable height before those amounts arrive.
    */
   alwaysShowProjection?: boolean
+  /**
+   * Extra label / amount lines under the title block (Month Budget Buffer
+   * and Guilt-Free Fund overspend split). Shown even when the amount is 0.
+   */
+  detailRows?: { label: string; amount: number }[]
 }) {
   const upcomingSafe = Math.max(0, Math.round(upcoming))
   const unscheduledSafe = Math.max(0, Math.round(unscheduled))
@@ -512,6 +518,21 @@ export function PlanBudgetRow({
                     {secondaryCeilingStatusText}
                   </p>
                 ) : null}
+              </div>
+            ) : null}
+            {showMetrics && detailRows && detailRows.length > 0 ? (
+              <div className="mt-0.5 space-y-0.5">
+                {detailRows.map((row) => (
+                  <div
+                    key={row.label}
+                    className="flex items-baseline justify-between gap-2 text-[11px] text-neutral-400"
+                  >
+                    <p className="min-w-0">{row.label}</p>
+                    <p className="shrink-0 text-right tabular-nums whitespace-nowrap">
+                      {formatRupiah(row.amount)}
+                    </p>
+                  </div>
+                ))}
               </div>
             ) : null}
             {alertHint ? (

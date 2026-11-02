@@ -595,6 +595,12 @@ export interface BudgetTrackProgress {
   /** Inset + lighter gray surface (Buffer, Guilt-Free Fund). */
   emphasize: boolean
   barClass: string
+  /**
+   * Buffer / Guilt-Free only: what the used amount is made of.
+   * `planned` = per-line overspend on estimate lines; `unplanned` = spend
+   * outside estimates. planned + unplanned = used. Null on Planned tracks.
+   */
+  overspend: { planned: number; unplanned: number } | null
 }
 
 export interface MonthBudgetProgress {
@@ -751,6 +757,14 @@ export function buildMonthBudgetProgress(input: {
   guiltFreeSpent: number
   /** Needs + Wants per-line estimate overspend (excludes unplanned). */
   overspendTotal?: number
+  /** Needs per-line estimate overspend (Buffer, planned part). */
+  needsOverspend?: number
+  /** Needs outside estimates (Buffer, unplanned part). */
+  unplannedNeeds?: number
+  /** Wants per-line estimate overspend (Guilt-Free, planned part). */
+  wantsOverspend?: number
+  /** Wants outside estimates (Guilt-Free, unplanned part). */
+  unplannedWants?: number
   /** Upcoming Needs that still fit on Planned lines. */
   needsUpcoming?: number
   /** Upcoming Wants that still fit on Planned lines. */
@@ -789,6 +803,8 @@ export function buildMonthBudgetProgress(input: {
     wantsUsed + wantsUpcoming,
   )
 
+  const nonNeg = (n: number | undefined) => Math.max(0, Math.round(n ?? 0))
+
   const bufferOverEfLoan = Math.max(0, bufferSpent - buffer)
   const guiltFreeOverEfLoan = Math.max(0, gfSpent - guiltFree)
 
@@ -807,6 +823,7 @@ export function buildMonthBudgetProgress(input: {
       unscheduled: needsUnscheduled,
       emphasize: false,
       barClass: 'bg-rose-500',
+      overspend: null,
     },
     buffer: {
       label: BUDGET_TRACK_LABELS.buffer,
@@ -817,6 +834,10 @@ export function buildMonthBudgetProgress(input: {
       unscheduled: 0,
       emphasize: true,
       barClass: 'bg-amber-500',
+      overspend: {
+        planned: nonNeg(input.needsOverspend),
+        unplanned: nonNeg(input.unplannedNeeds),
+      },
     },
     plannedWants: {
       label: BUDGET_TRACK_LABELS.plannedWants,
@@ -827,6 +848,7 @@ export function buildMonthBudgetProgress(input: {
       unscheduled: wantsUnscheduled,
       emphasize: false,
       barClass: 'bg-sky-500',
+      overspend: null,
     },
     guiltFree: {
       label: BUDGET_TRACK_LABELS.guiltFree,
@@ -837,6 +859,10 @@ export function buildMonthBudgetProgress(input: {
       unscheduled: 0,
       emphasize: true,
       barClass: 'bg-emerald-500',
+      overspend: {
+        planned: nonNeg(input.wantsOverspend),
+        unplanned: nonNeg(input.unplannedWants),
+      },
     },
   }
 }

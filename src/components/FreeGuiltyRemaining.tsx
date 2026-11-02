@@ -16,10 +16,25 @@ function isPlannedProjectionTrack(track: BudgetTrackProgress): boolean {
   )
 }
 
+/** Buffer → Needs, Guilt-Free Fund → Wants. */
+function overspendDetailRows(
+  track: BudgetTrackProgress,
+  overspend: { planned: number; unplanned: number },
+): { label: string; amount: number }[] {
+  const group = track.label === BUDGET_TRACK_LABELS.buffer ? 'Needs' : 'Wants'
+  return [
+    { label: `Planned ${group} Overspend`, amount: overspend.planned },
+    { label: `Unplanned ${group} Overspend`, amount: overspend.unplanned },
+  ]
+}
+
 function BudgetTrackRow({ track }: { track: BudgetTrackProgress }) {
   const showProjectionSlots = isPlannedProjectionTrack(track)
   const upcoming = track.upcoming > 0 ? track.upcoming : 0
   const unscheduled = track.unscheduled > 0 ? track.unscheduled : 0
+  const detailRows = track.overspend
+    ? overspendDetailRows(track, track.overspend)
+    : undefined
   return (
     <PlanBudgetRow
       bucket={makeMoneyPlanBucket(
@@ -36,6 +51,7 @@ function BudgetTrackRow({ track }: { track: BudgetTrackProgress }) {
       unscheduled={unscheduled}
       showZeroTarget
       alwaysShowProjection={showProjectionSlots}
+      detailRows={detailRows}
     />
   )
 }

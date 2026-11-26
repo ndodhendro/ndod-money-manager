@@ -5,6 +5,14 @@ import { FormattedAmountInput } from './FormattedAmountInput'
 import { daysInMonth, type MonthCursor } from '../lib/monthCursor'
 import type { RecurringBill } from '../lib/recurringBillsApi'
 
+/** Due-day option for a known month, e.g. "Day 26 · Thursday". */
+function dueDayOptionLabel(year: number, month: number, day: number): string {
+  const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(
+    new Date(year, month, day),
+  )
+  return `Day ${day} · ${weekday}`
+}
+
 interface RecurringMonthOverrideSheetProps {
   open: boolean
   bill: RecurringBill | null
@@ -150,7 +158,7 @@ export function RecurringMonthOverrideSheet({
             >
               {Array.from({ length: maxDay }, (_, i) => i + 1).map((d) => (
                 <option key={d} value={d}>
-                  Day {d}
+                  {dueDayOptionLabel(cursor.year, cursor.month, d)}
                 </option>
               ))}
             </select>

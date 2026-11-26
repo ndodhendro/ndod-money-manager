@@ -37,6 +37,9 @@ import {
 import {
   buildSinkingGoalsRow,
   computeSinkingFundPace,
+  SINKING_OVER_TARGET_BAR_CLASS,
+  SINKING_OVER_TARGET_PCT_CLASS,
+  sinkingProgressOverTarget,
   type SinkingPaceStatus,
 } from '../../lib/sinkingFundPace'
 import {
@@ -126,6 +129,7 @@ function sinkingGoalsRowForBucket(input: {
     headlineAmount: undefined as ReactNode,
     badge: null as { label: string; className: string } | null,
     barClass: input.barFallback,
+    pctClassName: undefined as string | undefined,
     footerNote: undefined as string | undefined,
     footerNoteClassName: undefined as string | undefined,
   }
@@ -143,9 +147,12 @@ function sinkingGoalsRowForBucket(input: {
     bills: input.bills,
   })
   if (!pace) {
+    const overTarget = sinkingProgressOverTarget(onHand, target)
     return {
       ...fallback,
       ...cashAndProgress(onHand),
+      barClass: overTarget ? SINKING_OVER_TARGET_BAR_CLASS : input.barFallback,
+      pctClassName: overTarget ? SINKING_OVER_TARGET_PCT_CLASS : undefined,
     }
   }
 
@@ -155,6 +162,7 @@ function sinkingGoalsRowForBucket(input: {
     ...cashAndProgress(row.progress),
     badge: row.badge,
     barClass: row.barClass,
+    pctClassName: row.pctClassName,
     footerNote: row.footerText,
     footerNoteClassName: row.footerClass,
   }
@@ -487,6 +495,7 @@ export function PlanEmergency() {
                       missedByBucketId.get(child.id) ?? 0,
                     )}
                     barClass={row.barClass}
+                    pctClassName={row.pctClassName}
                     mode="floor"
                     showToGo={false}
                     surfaceClassName="bg-neutral-100 dark:bg-neutral-700/70"
@@ -516,6 +525,7 @@ export function PlanEmergency() {
             missedByBucketId.get(node.bucket.id) ?? 0,
           )}
           barClass={row.barClass}
+          pctClassName={row.pctClassName}
           mode="floor"
           showToGo={false}
           trailing={allocateTrailing(node.bucket)}

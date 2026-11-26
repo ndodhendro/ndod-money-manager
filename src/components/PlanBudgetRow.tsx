@@ -158,6 +158,7 @@ export function PlanBudgetRow({
   unscheduled = 0,
   footerNote,
   footerNoteClassName,
+  pctClassName,
   showZeroTarget = false,
   alwaysShowProjection = false,
   detailRows,
@@ -222,6 +223,8 @@ export function PlanBudgetRow({
   /** Overrides the floor footer left text (e.g. sinking pace vs expected). */
   footerNote?: string | null
   footerNoteClassName?: string
+  /** Overrides the percent label color (e.g. sinking fund past 100%). */
+  pctClassName?: string
   /**
    * Keep ceiling amounts, remaining line, and bar visible when target is 0
    * so Month Budget cards do not change height while data loads.
@@ -294,6 +297,7 @@ export function PlanBudgetRow({
         : spendStatusColorClass(displayPct)
       : null
   const pctLabelClass =
+    pctClassName ??
     ceilingStatusColor ??
     (floorOver
       ? 'text-emerald-600 dark:text-emerald-400'

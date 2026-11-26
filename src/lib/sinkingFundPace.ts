@@ -122,11 +122,28 @@ export const SINKING_PACE_BAR_CLASS: Record<SinkingPaceStatus, string> = {
   at_risk: 'bg-red-500',
 }
 
+/**
+ * Funded past the target. Same green as the Safe badge and “Ahead by” text
+ * (`emerald-600` / `emerald-400`), not the brighter pace-bar green.
+ */
+export const SINKING_OVER_TARGET_PCT_CLASS = SINKING_PACE_BADGE_CLASS.safe
+export const SINKING_OVER_TARGET_BAR_CLASS =
+  'bg-emerald-600 dark:bg-emerald-400'
+
+export function sinkingProgressOverTarget(
+  progress: number,
+  target: number,
+): boolean {
+  return target > 0 && progress > target
+}
+
 export type SinkingGoalsRow = {
   progress: number
   available: number
   badge: { label: string; className: string }
   barClass: string
+  /** Percent label when funded is past the target. */
+  pctClassName?: string
   footerText: string
   footerClass: string
 }
@@ -142,14 +159,19 @@ export function buildSinkingGoalsRow(input: {
 }): SinkingGoalsRow {
   const { pace, onHand } = input
   const delta = sinkingPaceDeltaLabel(pace.funded, pace.expected)
+  const progress = Math.max(0, Math.round(pace.funded))
+  const overTarget = sinkingProgressOverTarget(progress, pace.target)
   return {
-    progress: Math.max(0, Math.round(pace.funded)),
+    progress,
     available: Math.max(0, Math.round(onHand)),
     badge: {
       label: sinkingPaceLabel(pace.status),
       className: SINKING_PACE_BADGE_CLASS[pace.status],
     },
-    barClass: SINKING_PACE_BAR_CLASS[pace.status],
+    barClass: overTarget
+      ? SINKING_OVER_TARGET_BAR_CLASS
+      : SINKING_PACE_BAR_CLASS[pace.status],
+    pctClassName: overTarget ? SINKING_OVER_TARGET_PCT_CLASS : undefined,
     footerText: delta.text,
     footerClass: SINKING_PACE_DELTA_CLASS[delta.tone],
   }
